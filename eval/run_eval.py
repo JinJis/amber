@@ -202,8 +202,16 @@ def run_scenario_desk_feed(sc: dict) -> dict:
                 _studio_as(email, "POST", f"/watchlists/{created['id']}/items", it)
     code, feed = _studio_as(email, "GET", "/desk-feed")
     cards = feed.get("cards") or []
-    answer = "\n".join(
-        f"[{c.get('kind')}] {c.get('hook')} → “{c.get('question')}”" for c in cards) or "(no cards)"
+
+    def _render(c: dict) -> str:
+        # render each card WITH its cited sources inline so the (prose-oriented) judge can see the
+        # feed IS sourced — the cards carry citations structurally; the deep rubric grades text.
+        srcs = ", ".join(f"{ci.get('source')}{(' ' + ci['as_of']) if ci.get('as_of') else ''}"
+                         for ci in (c.get("citations") or []) if ci.get("source"))
+        tail = f"  [출처: {srcs}]" if srcs else ""
+        return f"[{c.get('kind')}] {c.get('hook')} → “{c.get('question')}”{tail}"
+
+    answer = "\n".join(_render(c) for c in cards) or "(no cards)"
     cites = sorted({(ci.get("source") or "?") for c in cards for ci in (c.get("citations") or [])})
     return {"tools": feed.get("used_tools") or [], "statuses": [code], "citations": cites,
             "answer": answer, "cards": cards, "artifacts": [], "cadences": [], "cite_urls": [],
