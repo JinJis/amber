@@ -111,10 +111,12 @@ Gaps that block the killer feature (verified in code, 2026-07-03):
 | Milestone | Name | Outcome | Depends on | Status |
 |---|---|---|---|---|
 | **FLAG-1** | Chat-first feature flags | 대시보드 + 알림봇 hidden behind env flags, default off | — | ⬜ planned (do first) |
+| **OPS-1** | Admin ingestion error detail | per-ticker real error messages, grouped summaries, retry-failed-only | — | ⬜ planned (do early) |
 | **M0** | Deep History Data Plane | max-history prices + VIX + regime/episode store + analytics engine + `/history/*` API through the gateway | — | ⬜ planned |
 | **M1** | History Lab in Chat | agent answers "지금 낙폭 닷컴버블이랑 비교해줘" with analogue + base-rate artifacts, guardrail framing, new chart panes | M0 | ⬜ planned |
 | **M2** | History Lab Surface | dedicated 히스토리 랩 view: century ribbon, THEN\|NOW split, day scrubber, era news + point-in-time macro | M1 | ⬜ planned |
 | **M-DESK** | Proactive Desk (턴 제로) | the empty chat becomes a live, sourced briefing: what to ask today — news/filings/calendar/price-move suggestion cards, watchlist nudge & pulse | basic: FLAG-1 · history hooks: M0 | ⬜ planned |
+| **M-QUANT** | Analysis→Artifact engine | declarative, deterministic multi-series computation (`/compute/series`) + numeric-integrity verify + scatter/distribution artifacts — the general "여러 데이터 → 통계 분석 → 차트/표" pipeline | — (M0 shares the analytics module) | ⬜ planned |
 | **M3** | Earnings Command Center | earnings season in chat: calendar/surprise artifacts, transcript archive + QoQ tone diff | — (parallel to M2) | ⬜ planned |
 | **M4** | Filing Intelligence | 10-K risk-factor YoY redline, 8-K/주요사항 event timeline | — | ⬜ planned |
 | **M5** | UX Overhaul (chat-first) | new IA (탐색·히스토리·관심·설정), command palette, ticker context header, a11y + FE refactor completion | M2 | ⬜ planned |
@@ -123,10 +125,11 @@ Gaps that block the killer feature (verified in code, 2026-07-03):
 Status legend: ⬜ planned · 🚧 in progress · ✅ done. **Update a task's marker in the same PR
 that completes it.**
 
-Recommended build order: **FLAG-1 → M-DESK(basic: DK-1/2/3) → M0 → M1 → (M2 ∥ M3) → M4 →
-M5 → M6.** M-DESK basic needs only existing tools and fixes the first-session cold-start —
-ship it first; its history-percentile hooks (DK-3b) land right after M0. M0/M1 are the value
-proof; M2 is the demo-day surface; M3 is the daily-retention feature.
+Recommended build order: **FLAG-1 → OPS-1 → M-DESK(basic: DK-1/2/3) → M0 → M1 →
+(M2 ∥ M-QUANT) → M3 → M4 → M5 → M6.** M-DESK basic needs only existing tools and fixes the
+first-session cold-start — ship it first; its history-percentile hooks (DK-3b) land right
+after M0. M0/M1 are the value proof; M2 is the demo-day surface; M-QUANT generalizes the
+same analytics discipline to every quantitative question; M3 is the daily-retention feature.
 
 ### FLAG-1 · Chat-first feature flags — ⬜
 - **What**: env flags `FEATURE_BOARD` and `FEATURE_ALERTS` (default **false**; documented in
@@ -141,6 +144,26 @@ proof; M2 is the demo-day surface; M3 is the daily-retention feature.
   onboarding completes without channels/board; no scheduler ticks in logs. With both flags
   true, current behavior is fully restored (existing board/alert unit tests still green).
   Unit tests cover both flag states for onboarding + rail view list + scheduler gate.
+
+### OPS-1 · Admin ingestion error detail — ⬜
+- **Problem** (observed 2026-07-03): a KR prices sweep reports
+  `failed: ['000010', '000030', …]` — ticker codes only, the actual exception is discarded.
+  Impossible to tell a Yahoo 404 from a rate-limit from a parse bug.
+- **What**: (a) in every pipeline's per-item loop, catch per-ticker failures as
+  `(ticker, error_class, message[:500], upstream_status?/url?)` instead of appending bare
+  codes; (b) persist structured `IngestionJob.error_details` JSON —
+  `[{error: "HTTPError 404 …", tickers: […], count}]` **grouped by identical message** — and
+  emit one `PipelineActivity` row (level=error) per group, not per ticker; (c) admin job
+  detail page renders the grouped table (error → count → expandable ticker list, copyable)
+  with the raw message monospace; the jobs list shows `실패 47 · 원인 2종` instead of the
+  truncated code dump; (d) **"실패 종목만 재시도"** button on the job detail → enqueues a
+  run scoped to the failed tickers (reuse the manual ticker-scoped run pattern).
+- **Files**: `datasets/app/pipelines.py` (per-item try/except in each pipeline's loop),
+  IngestionJob model (+`error_details` JSON column, additive migration), admin job views.
+- **Accept**: unit test with a connector stub failing 3 tickers on two distinct errors →
+  job row carries 2 groups with real messages; admin page shows the grouped table + retry
+  button; retry enqueues exactly the failed tickers; old jobs without `error_details` still
+  render (fallback to legacy string).
 
 ---
 
@@ -389,7 +412,102 @@ deep-links; tapping a card composes an editable chat turn. Suggestions are descr
 - **Accept**: eval ≥ bar with the new scenarios; a regression in card sourcing fails the
   judge.
 
-## 8. M3 — Earnings Command Center
+## 8. M-QUANT — Analysis→Artifact engine
+
+The general answer to "여러 가격·종목·미시·거시 데이터를 받아 통계/수학 분석을 하고 차트·표·
+그림으로 보여준다"를 **잘** 하는 방법. Four principles govern every task here:
+
+1. **The LLM never does arithmetic.** Every figure in an answer originates from a tool
+   result. Gemini decides *which* computation to run and narrates the result; a
+   deterministic engine computes it. The synthesis verify step enforces this (QT-2).
+2. **Computation is a declarative spec, not generated code.** The agent emits a JSON
+   compute spec (inputs = catalog tool refs, ops = whitelisted pure transforms); the engine
+   executes it deterministically. Reproducible, cacheable, metered, safe — and the spec
+   itself becomes the 계산 근거 (the existing `Computation` schema + `ComputationPanel`).
+3. **Alignment is explicit, never silent.** Trading calendars, frequencies (daily prices ×
+   monthly CPI), currencies/units: joins follow a declared policy; unit mismatches can never
+   share a chart axis; macro joins use release dates (no look-ahead — same invariant as the
+   History Lab scrubber).
+4. **The result's shape picks the artifact.** series→`timeseries`/`compare` ·
+   matrix→`heatmap` · point pairs→`scatter` · distribution→`distribution` · scalars→`stat`
+   with 계산 근거 — mapping lives in one place (agent artifact builder), not per-feature.
+
+Descriptive statistics only: rolling correlation/beta/spread/seasonality are historical
+descriptions and allowed; anything that *fits and extrapolates* (trend projection, forecast
+regression lines) is refused with the guardrail label — same boundary as History Lab.
+
+### QT-1 · `/compute/series` — declarative transform engine — ⬜
+- **What**: `datasets/app/analytics/compute.py` (pure executor) + router
+  `datasets/app/routers/compute.py` + manifest connector `quant_compute` (new category
+  **`퀀트 분석`** in `_CATEGORY`, cadence `daily`, cost `medium`). Spec:
+
+  ```json
+  {
+    "inputs": [
+      {"id": "spx",  "tool": "prices",           "args": {"market": "US", "ticker": "^GSPC", "years": 20}, "field": "close"},
+      {"id": "cpi",  "tool": "macro/indicators",  "args": {"series": "CPIAUCSL"},                           "field": "value"}
+    ],
+    "align":  {"freq": "M", "method": "last", "join": "inner", "ffill_limit": 0, "use_release_dates": true},
+    "ops": [
+      {"op": "yoy",          "in": "cpi",                 "out": "cpi_yoy"},
+      {"op": "returns",      "in": "spx", "kind": "log",  "out": "spx_ret"},
+      {"op": "rolling_corr", "in": ["spx_ret", "cpi_yoy"], "window": 36, "out": "corr"}
+    ],
+    "output": ["corr"]
+  }
+  ```
+
+  Whitelisted ops v1 (each a pure, unit-tested function): `returns` (log/simple), `cumret`,
+  `rebase`, `zscore`, `lag`, `spread`, `ratio`, `yoy`/`mom`, `rolling_mean/std/corr/beta`,
+  `drawdown`, `percentile_rank`, `seasonality` (calendar-bucket aggregates), `histogram`,
+  `corr_matrix`. Unknown op → 422 listing supported ops (never silently skipped);
+  predictive ops don't exist here by construction. Limits: ≤8 inputs, ≤50k points/series,
+  request timeout, cost metered by input size.
+- **Entitlement**: the gateway forwards the caller's activated-connector list
+  (`X-Activated-Connectors`); compute rejects any `inputs[].tool` outside it — no
+  entitlement bypass through composition.
+- **Output**: series/matrix + a full `Computation` block (method, formula per op, each
+  input with its own source+as_of, steps) so ComputationPanel renders end-to-end;
+  `source: "derived: yahoo prices + FRED via compute-v1"`.
+- **Accept**: golden-file tests for every op (hand-computed fixtures incl. NaN/gap,
+  mixed-frequency join, ffill limit); coverage.sh hits the tool through the gateway;
+  unentitled-input rejection tested; catalog integrity green.
+
+### QT-2 · Numeric integrity in the agent — ⬜
+- **What**: (a) planner guidance: any derived figure (상관, 스프레드, YoY, 상대성과…) must
+  come from `quant_compute` or an existing analytics tool — synthesis prompt forbids
+  in-token arithmetic; (b) upgrade the existing verify step to a **number audit**: every
+  numeral in the draft answer must match a value in citations/artifacts/computations
+  (tolerance = display rounding); mismatch → regenerate the sentence or drop the claim,
+  and the audit result feeds the existing confidence score; (c) refusal path: "추세선으로
+  예측해줘" → guardrail offer of the descriptive alternative (rolling stats, historical
+  base rates).
+- **Accept**: unit tests with a rigged draft containing an unsupported number → audit
+  catches it; +2 eval scenarios ("최근 3년 코스피와 미국 CPI 상관관계 보여줘" → compute
+  spec + chart + 계산 근거; "이 상관관계로 다음 달 예측해줘" → refused/reframed with label);
+  eval ≥ bar.
+
+### QT-3 · `scatter` + `distribution` artifact kinds — ⬜
+- **What**: extend `web/lib/types.ts` + agent artifact builder + `ArtifactCard` renderers:
+  `scatter` (points with x/y labels+units, optional zero/identity reference lines — **no
+  fitted lines**), `distribution` (bins + a marked "현재 값" position). Wire the existing
+  `ComputationPanel` to every computed artifact (the backend `computation` block now real
+  via QT-1 — closes the half-built gap noted 2026-07-03). Corr matrices reuse `heatmap`.
+- **Accept**: TS build green; component tests for both kinds + the 계산 근거 chip opening
+  ComputationPanel with real inputs; UX_SPEC §4/§6 conventions followed (mono numbers,
+  ProvenanceFooter mandatory).
+
+### QT-4 · Alignment & unit safety — ⬜
+- **What**: series carry unit/currency metadata from their connector manifests through
+  compute into artifacts; chart rule: same axis ⇒ same unit, else auto second pane or
+  rebase-to-100 with an explicit note chip; calendar joins (`inner`/`union`) draw gaps for
+  union-missing points; `use_release_dates: true` uses macro release dates so a January CPI
+  print aligns to its February publication (no look-ahead).
+- **Accept**: unit tests — KRW×USD same-axis refused (artifact renders two panes); monthly
+  CPI × daily prices inner-join produces monthly output; release-date alignment verified
+  against a FRED fixture with known publication lag.
+
+## 9. M3 — Earnings Command Center
 
 ### EC-1 · Transcript archive backfill — ⬜
 Extend `transcript_text` pipeline to walk historical quarters per ticker (Alpha Vantage
@@ -418,7 +536,7 @@ artifact (existing `heatmap` kind). Add follow-up chips for all three to `_CAPAB
 **Accept**: each question renders its artifact with FMP+SEC citations; deep-links open the
 existing viewers; eval scenario added.
 
-## 9. M4 — Filing Intelligence
+## 10. M4 — Filing Intelligence
 
 ### FI-1 · Risk-factor section extraction — ⬜
 Deterministic section splitter for 10-K/10-Q Item 1A (and DART 사업보고서 '이사의 경영진단'
@@ -440,7 +558,7 @@ their **structural item codes** — 1.01, 2.02, 5.02… — which are data, not 
 in chat. **Accept**: timeline artifact for a ticker shows classified events with links;
 markers land on correct dates.
 
-## 10. M5 — UX Overhaul, chat-first (spec: UX_SPEC.md — read it first)
+## 11. M5 — UX Overhaul, chat-first (spec: UX_SPEC.md — read it first)
 
 - **UX-1** Navigation & IA — ⬜ chat-first rail: 탐색 · 히스토리 · 관심 · 설정 (대시보드/
   알림봇 render only when their flags are on), view-state → URL (shareable deep links;
@@ -460,7 +578,7 @@ markers land on correct dates.
   moment ("우리는 전망하지 않습니다 — 역사를 보여줍니다"). Channel/board steps appear only
   behind their flags.
 
-## 11. M6 — Horizon (re-approve before starting)
+## 12. M6 — Horizon (re-approve before starting)
 
 Standing analysts + scheduled briefs (U4 successor — now much stronger with History Lab
 content: "주간 히스토리 브리프"), publish/clone gallery (U5 successor; reuse the
@@ -472,7 +590,7 @@ tasks.
 
 ---
 
-## 12. Test & eval accounting
+## 13. Test & eval accounting
 
 Every task adds tests; keep this table updated in the same PR (Definition of Done).
 "Current" starts at the baseline and moves only when a PR lands. The right column is the
@@ -480,18 +598,18 @@ Every task adds tests; keep this table updated in the same PR (Definition of Don
 
 | Service | Baseline (2026-07-03) | Current | Planned additions (minimum) |
 |---|---|---|---|
-| datasets | 148 | 148 | ≥32 HL-1/2/3 (analytics fixtures), ≥12 HL-4, ≥9 HL-5, ≥7 EC-1, ≥14 FI-1/2/3, ≥8 HL-8/EC-2 store/router |
-| agent-engine | 111 | 111 | ≥10 HL-6/7 (guardrail allow/deny, artifact builders), ≥8 DK-1 (feed states, citation-drop), ≥8 EC-3, ≥6 HL-9 |
+| datasets | 148 | 148 | ≥4 OPS-1 (error grouping/retry), ≥32 HL-1/2/3 (analytics fixtures), ≥12 HL-4, ≥9 HL-5, ≥22 QT-1/4 (op golden files, align/unit safety), ≥7 EC-1, ≥14 FI-1/2/3, ≥8 HL-8/EC-2 store/router |
+| agent-engine | 111 | 111 | ≥10 HL-6/7 (guardrail allow/deny, artifact builders), ≥8 DK-1 (feed states, citation-drop), ≥8 QT-2 (number audit), ≥8 EC-3, ≥6 HL-9 |
 | studio-api | 40 | 40 | ≥5 FLAG-1 (flag states: onboarding/rail/scheduler gate), ≥6 DK-3 (cache/invalidate/last-seen), ≥7 HL-12/14 BFF |
-| control-plane | 13 | 13 | 0 (manifest-derived; coverage.sh guards the new tools) |
-| mcp | 9 | 9 | ≥2 HL-4 (new tools listed, unentitled 403) |
+| control-plane | 13 | 13 | ≥1 QT-1 (activated-connectors header forwarding); rest manifest-derived (coverage.sh guards) |
+| mcp | 9 | 9 | ≥3 HL-4/QT-1 (new tools listed, unentitled 403) |
 | rag | 20 | 20 | ≥4 HL-5 (era_news/dossier doc types), ≥2 FI-1 (section filter) |
-| web | TS build only | TS build only | UX-4 adds a vitest runner; then component tests for DK-2 (3 states), HL-7/10/11/12/13, EC-4 |
-| eval scenarios | 32 | 32 | +4 HL-6, +2 DK-4, +1 EC-3, +2 M2 flows, +1 FI |
+| web | TS build only | TS build only | UX-4 adds a vitest runner; then component tests for DK-2 (3 states), HL-7/10/11/12/13, QT-3 (scatter/distribution/계산 근거), EC-4 |
+| eval scenarios | 32 | 32 | +4 HL-6, +2 DK-4, +2 QT-2, +1 EC-3, +2 M2 flows, +1 FI |
 
 Eval bar: maintain ≥ current score (`eval/RUBRIC.md`); run before every push.
 
-## 13. Non-goals (unchanged)
+## 14. Non-goals (unchanged)
 
 No forecasts, price targets, momentum scores, or advice — in any milestone, including
 History Lab (that's the point). No non-Gemini models. No keyword routers. No client-side

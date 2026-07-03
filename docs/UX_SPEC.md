@@ -146,6 +146,11 @@ follow-up chips), extended by this roadmap:
   zero-line, event-date chips (first 12 + expander) → each chip deep-links the lab scrubber.
 - **Chart panes** (HL-8): underwater toggle, regime shading on ≥5Y ranges (4%-alpha ink
   zones + tiny mono era labels), vol-context ribbon under the legend.
+- **Computed artifacts** (M-QUANT, QT-3): `scatter` (x/y units labeled, zero/identity
+  reference lines only — **never a fitted/trend line**) and `distribution` (bins + "현재 값"
+  marker); every computed artifact carries a `계산 근거` chip opening ComputationPanel
+  (method → formula → sourced inputs → steps). Unit-mismatched series never share an axis —
+  auto second pane or rebase-to-100 with a note chip (QT-4).
 - **Follow-up chips**: existing behavior; new History-Lab and earnings chips per HL-9/EC-4.
 - **Refusal turn**: unchanged amber GuardrailLabel, but prediction-adjacent asks get the
   productive redirect: "전망 대신, 과거의 기록을 보여드릴게요" + the descriptive offer

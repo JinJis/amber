@@ -12,7 +12,7 @@
 >
 > **Docs map (read before building):**
 > - **The plan — pull tasks here:** [`docs/ROADMAP.md`](./docs/ROADMAP.md) (milestones FLAG-1,
->   M0–M6, M-DESK; one task per PR)
+>   OPS-1, M0–M6, M-DESK, M-QUANT; one task per PR)
 > - **History Lab implementation contract:** [`docs/HISTORY_LAB_SPEC.md`](./docs/HISTORY_LAB_SPEC.md)
 > - **UX spec (chat-first, all new screens):** [`docs/UX_SPEC.md`](./docs/UX_SPEC.md)
 > - **How the services fit together (current state):** [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
