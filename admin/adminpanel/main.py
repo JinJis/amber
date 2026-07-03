@@ -673,6 +673,7 @@ async def queue_job_detail(request: Request, job_id: int):
     if ing:
         ing_status = ing.get("status")
         err = ing.get("error")
+        details = ing.get("error_details") or []
         ing_html = (
             "<h2>파이프라인 실행 (IngestionJob)</h2>"
             f"<div class=tablewrap><table><tbody>"
@@ -681,8 +682,7 @@ async def queue_job_detail(request: Request, job_id: int):
             f"<tr><td class=muted>시작</td><td class=muted>{_esc((ing.get('started_at') or '')[:19])} "
             f"→ {_esc((ing.get('ended_at') or '—')[:19])}</td></tr>"
             f"</tbody></table></div>"
-            + (f"<div class='logbox {('err' if ing_status == 'error' else '')}'>{_esc(err)}</div>"
-               if err else "<p class=muted>기록된 오류 메모가 없습니다.</p>"))
+            + _error_detail_html(ing, details, err))
     else:
         ing_html = ("<h2>파이프라인 실행 (IngestionJob)</h2>"
                     "<p class=muted>이 작업과 매칭되는 IngestionJob 기록이 없습니다 "
@@ -696,6 +696,51 @@ async def queue_job_detail(request: Request, job_id: int):
     body = (f"<p><a href='/queue'>← 큐로</a></p><h1 style='margin:0 0 4px'>작업 #{_esc(job_id)} 로그</h1>"
             + head + act_html + ev_html + ing_html)
     return HTMLResponse(page("/queue", f"Job {job_id}", body, refresh=running))
+
+
+# OPS-1: an IngestionJob's `kind` maps to a runnable pipeline id for the retry-failed action.
+# For 재무 backfill the recorded kind is "backfill" but the pipeline registry id is "financials".
+_RETRY_PIPELINE = {"backfill": "financials"}
+
+
+def _error_detail_html(ing: dict, details: list, err: str | None) -> str:
+    """OPS-1: render grouped per-cause failures (원인 → 건수 → 종목 목록) + a '실패 종목만 재시도'
+    button that re-enqueues just those tickers. Falls back to the legacy single-string logbox for old
+    jobs that predate error_details."""
+    if not details:
+        if err:
+            cls = "err" if ing.get("status") == "error" else ""
+            return f"<div class='logbox {cls}'>{_esc(err)}</div>"
+        return "<p class=muted>기록된 오류 메모가 없습니다.</p>"
+
+    rows = ""
+    all_failed: list[str] = []
+    for g in details:
+        tickers = g.get("tickers") or []
+        all_failed += tickers
+        chips = ", ".join(_esc(t) for t in tickers)
+        rows += (f"<tr><td class=err>{_esc(g.get('error'))}</td>"
+                 f"<td class=mono>{_esc(g.get('count'))}</td>"
+                 f"<td><details><summary class=muted>종목 {_esc(len(tickers))}</summary>"
+                 f"<div class=mono style='white-space:normal'>{chips}</div></details></td></tr>")
+    table = ("<div class=tablewrap><table><thead><tr><th>원인</th><th>건수</th><th>실패 종목</th></tr></thead>"
+             f"<tbody>{rows}</tbody></table></div>")
+
+    retry = ""
+    pid = _RETRY_PIPELINE.get(ing.get("kind"), ing.get("kind"))
+    mkt = ing.get("market") or ""
+    if all_failed and pid and mkt:
+        # de-dup while preserving order, cap so the form/query never blows up
+        seen: dict[str, None] = {}
+        for t in all_failed:
+            seen.setdefault(t, None)
+        tick_val = " ".join(list(seen)[:500])
+        retry = (f"<form class=ops method=post action='/ops/pipelines/run' style='margin-top:10px'>"
+                 f"<input type=hidden name=pipelines value='{_esc(pid)}'>"
+                 f"<input type=hidden name=market value='{_esc(mkt)}'>"
+                 f"<input type=hidden name=tickers value='{_esc(tick_val)}'>"
+                 f"<button class=p>실패 종목만 재시도 ▶ ({len(seen)})</button></form>")
+    return table + retry
 
 
 def _activity_feed(acts: list) -> str:

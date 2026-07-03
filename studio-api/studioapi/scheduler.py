@@ -79,9 +79,12 @@ async def _loop() -> None:
 
 
 def start(task_holder: list) -> None:
-    """Start the loop if enabled, appending the task to ``task_holder`` for shutdown."""
-    if not settings.alerts_scheduler_enabled:
-        log.info("alerts scheduler disabled")
+    """Start the loop only when the 알림봇 feature is on AND the scheduler switch is enabled, appending
+    the task to ``task_holder`` for shutdown. Chat-first (FLAG-1): feature_alerts defaults off, so no
+    scheduler ticks unless an operator explicitly turns the alert surface on."""
+    if not (settings.feature_alerts and settings.alerts_scheduler_enabled):
+        log.info("alerts scheduler disabled (feature_alerts=%s, enabled=%s)",
+                 settings.feature_alerts, settings.alerts_scheduler_enabled)
         return
     task_holder.append(asyncio.create_task(_loop()))
     log.info("alerts scheduler started (tick=%ss)", settings.alerts_tick_seconds)

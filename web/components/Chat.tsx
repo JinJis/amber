@@ -559,7 +559,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
   return (
     <FeaturesProvider value={features}>
     {onboarded === false && (
-      <Onboarding onDone={() => { setOnboarded(true); setView(features.dashboard ? "dashboard" : "explore"); loadHandles(); }} />
+      <Onboarding features={features} onDone={() => { setOnboarded(true); setView(features.dashboard ? "dashboard" : "explore"); loadHandles(); }} />
     )}
     <div className={`shell ${view === "explore" ? "with-ctx" : "no-right"}`}
       style={view === "explore" ? { gridTemplateColumns: `210px minmax(0,1fr) ${ctxWidth}px` } : undefined}>

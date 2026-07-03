@@ -110,8 +110,8 @@ Gaps that block the killer feature (verified in code, 2026-07-03):
 
 | Milestone | Name | Outcome | Depends on | Status |
 |---|---|---|---|---|
-| **FLAG-1** | Chat-first feature flags | 대시보드 + 알림봇 hidden behind env flags, default off | — | ⬜ planned (do first) |
-| **OPS-1** | Admin ingestion error detail | per-ticker real error messages, grouped summaries, retry-failed-only | — | ⬜ planned (do early) |
+| **FLAG-1** | Chat-first feature flags | 대시보드 + 알림봇 hidden behind env flags, default off | — | ✅ done |
+| **OPS-1** | Admin ingestion error detail | per-ticker real error messages, grouped summaries, retry-failed-only | — | ✅ done |
 | **M0** | Deep History Data Plane | max-history prices + VIX + regime/episode store + analytics engine + `/history/*` API through the gateway | — | ⬜ planned |
 | **M1** | History Lab in Chat | agent answers "지금 낙폭 닷컴버블이랑 비교해줘" with analogue + base-rate artifacts, guardrail framing, new chart panes | M0 | ⬜ planned |
 | **M2** | History Lab Surface | dedicated 히스토리 랩 view: century ribbon, THEN\|NOW split, day scrubber, era news + point-in-time macro | M1 | ⬜ planned |
@@ -131,39 +131,45 @@ first-session cold-start — ship it first; its history-percentile hooks (DK-3b)
 after M0. M0/M1 are the value proof; M2 is the demo-day surface; M-QUANT generalizes the
 same analytics discipline to every quantitative question; M3 is the daily-retention feature.
 
-### FLAG-1 · Chat-first feature flags — ⬜
-- **What**: env flags `FEATURE_BOARD` and `FEATURE_ALERTS` (default **false**; documented in
-  `.env.example`, surfaced to the client via the existing config/session payload — never a
-  client-side secret). When off: the 대시보드 and 알림봇 views disappear from the rail and
-  view state, pin buttons (📌) and alert bells (🔔) are hidden on artifacts, onboarding skips
-  the channel step and the board-template step (lands directly in chat with a watchlist),
-  and the alert **scheduler loop does not start** in studio-api. BFF board/alert routes stay
-  functional (flag gates UI entry, not data) so nothing breaks for flipped-on installs.
-  No board/alert code is deleted or refactored.
-- **Accept**: with flags unset, the rail shows only 탐색·관심(+히스토리 when M2 lands)·설정;
-  onboarding completes without channels/board; no scheduler ticks in logs. With both flags
-  true, current behavior is fully restored (existing board/alert unit tests still green).
-  Unit tests cover both flag states for onboarding + rail view list + scheduler gate.
+### FLAG-1 · Chat-first feature flags — ✅ done
+- **What**: env flags `FEATURE_DASHBOARD` and `FEATURE_ALERTS` (default **false**; documented
+  in `.env.example`, read server-side and passed to the client tree via `FeaturesProvider` —
+  never a client-side secret). When off: the 대시보드/알림봇 views are gone from the rail +
+  view router, pin buttons (📌) and alert bells (🔔) are hidden on artifacts, onboarding skips
+  the channel step and the board-template landing (creates the watchlists, drops the user into
+  탐색), and the alert **scheduler loop does not start** in studio-api (`feature_alerts`
+  gate). BFF board/alert routes stay functional (flag gates UI entry, not data). No board/
+  alert code deleted or refactored.
+- **Delivered**: `web/lib/features.ts` (defaults flipped to off; explicit on/off parser),
+  `features-context.tsx` (default off), `Onboarding.tsx` (dynamic feature-gated steps),
+  `Chat.tsx` (passes features to onboarding), studio-api `config.py` (`feature_alerts`),
+  `scheduler.py` (start() gated on `feature_alerts and alerts_scheduler_enabled`),
+  `.env.example`. Note: the pre-existing env var is `FEATURE_DASHBOARD` (not `FEATURE_BOARD`)
+  — kept to avoid renaming a wired flag.
+- **Tests**: studio-api `test_scheduler_start_gated_by_feature_alerts` (3 flag combinations);
+  web build green (Next typecheck). Web component tests for onboarding/rail land with the
+  vitest runner in UX-4.
 
-### OPS-1 · Admin ingestion error detail — ⬜
-- **Problem** (observed 2026-07-03): a KR prices sweep reports
-  `failed: ['000010', '000030', …]` — ticker codes only, the actual exception is discarded.
+### OPS-1 · Admin ingestion error detail — ✅ done
+- **Problem** (observed 2026-07-03): a KR prices sweep reported
+  `failed: ['000010', '000030', …]` — ticker codes only, the actual exception discarded.
   Impossible to tell a Yahoo 404 from a rate-limit from a parse bug.
-- **What**: (a) in every pipeline's per-item loop, catch per-ticker failures as
-  `(ticker, error_class, message[:500], upstream_status?/url?)` instead of appending bare
-  codes; (b) persist structured `IngestionJob.error_details` JSON —
-  `[{error: "HTTPError 404 …", tickers: […], count}]` **grouped by identical message** — and
-  emit one `PipelineActivity` row (level=error) per group, not per ticker; (c) admin job
-  detail page renders the grouped table (error → count → expandable ticker list, copyable)
-  with the raw message monospace; the jobs list shows `실패 47 · 원인 2종` instead of the
-  truncated code dump; (d) **"실패 종목만 재시도"** button on the job detail → enqueues a
-  run scoped to the failed tickers (reuse the manual ticker-scoped run pattern).
-- **Files**: `datasets/app/pipelines.py` (per-item try/except in each pipeline's loop),
-  IngestionJob model (+`error_details` JSON column, additive migration), admin job views.
-- **Accept**: unit test with a connector stub failing 3 tickers on two distinct errors →
-  job row carries 2 groups with real messages; admin page shows the grouped table + retry
-  button; retry enqueues exactly the failed tickers; old jobs without `error_details` still
-  render (fallback to legacy string).
+- **Delivered**: (a) `run_ticker_job` now captures each per-ticker failure as
+  `"{ExcClass}: {msg}"[:500]`; (b) `group_ticker_errors()` groups by identical message →
+  `IngestionJob.error_details` JSON `[{error, tickers[], count}]` sorted by count desc (new
+  additive `Text` column, auto-created by `create_all`), with the `error` field now a
+  readable summary `실패 N · 원인 M종`; one `PipelineActivity` row per cause (not per ticker);
+  (c) admin job detail renders `_error_detail_html` — grouped table (원인 → 건수 →
+  expandable 종목 목록) + a **"실패 종목만 재시도"** form reusing `/ops/pipelines/run` scoped
+  to the failed tickers; legacy jobs without `error_details` fall back to the old logbox;
+  (d) `latest_job`/`list_jobs` serialize `error_details`. `run_backfill` also records a
+  grouped (single-cause) detail since the bulk loaders don't surface per-ticker messages.
+- **Files**: `datasets/app/store/models.py`, `datasets/app/store/jobs.py`,
+  `admin/adminpanel/main.py`.
+- **Tests**: `test_group_ticker_errors_sorts_by_cause_and_count`,
+  `test_run_ticker_job_groups_real_errors_by_cause` (3 tickers / 2 causes → real messages +
+  summary), extended `test_run_backfill_records_job` + `test_run_ticker_job_best_effort` to
+  the new format. Admin suite green.
 
 ---
 
@@ -598,9 +604,9 @@ Every task adds tests; keep this table updated in the same PR (Definition of Don
 
 | Service | Baseline (2026-07-03) | Current | Planned additions (minimum) |
 |---|---|---|---|
-| datasets | 148 | 148 | ≥4 OPS-1 (error grouping/retry), ≥32 HL-1/2/3 (analytics fixtures), ≥12 HL-4, ≥9 HL-5, ≥22 QT-1/4 (op golden files, align/unit safety), ≥7 EC-1, ≥14 FI-1/2/3, ≥8 HL-8/EC-2 store/router |
+| datasets | 148 | 193 (measured) | ✅ OPS-1 (+2 grouping/runner); then ≥32 HL-1/2/3, ≥12 HL-4, ≥9 HL-5, ≥22 QT-1/4, ≥7 EC-1, ≥14 FI-1/2/3, ≥8 HL-8/EC-2 |
 | agent-engine | 111 | 111 | ≥10 HL-6/7 (guardrail allow/deny, artifact builders), ≥8 DK-1 (feed states, citation-drop), ≥8 QT-2 (number audit), ≥8 EC-3, ≥6 HL-9 |
-| studio-api | 40 | 40 | ≥5 FLAG-1 (flag states: onboarding/rail/scheduler gate), ≥6 DK-3 (cache/invalidate/last-seen), ≥7 HL-12/14 BFF |
+| studio-api | 40 | 52 (measured) | ✅ FLAG-1 scheduler gate (+1); then ≥6 DK-3 (cache/invalidate/last-seen), ≥7 HL-12/14 BFF |
 | control-plane | 13 | 13 | ≥1 QT-1 (activated-connectors header forwarding); rest manifest-derived (coverage.sh guards) |
 | mcp | 9 | 9 | ≥3 HL-4/QT-1 (new tools listed, unentitled 403) |
 | rag | 20 | 20 | ≥4 HL-5 (era_news/dossier doc types), ≥2 FI-1 (section filter) |

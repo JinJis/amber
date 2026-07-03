@@ -61,7 +61,11 @@ class IngestionJob(Base):
     rows: Mapped[int] = mapped_column(Integer, default=0)
     total: Mapped[int] = mapped_column(Integer, default=0)  # tickers to process
     done: Mapped[int] = mapped_column(Integer, default=0)   # tickers processed (live progress)
-    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)  # short summary ("실패 47 · 원인 2종")
+    # OPS-1: real per-ticker failures grouped by cause — JSON [{error, tickers[], count}] sorted by
+    # count desc. Lets the admin show WHICH error hit WHICH tickers + a "retry failed only" action,
+    # instead of the old bare `failed: ['000010', …]` code dump.
+    error_details: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

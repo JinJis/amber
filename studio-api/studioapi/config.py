@@ -19,7 +19,12 @@ class Settings(BaseSettings):
     agent_engine_url: str = "http://127.0.0.1:8003"      # AGENT_ENGINE_URL
     database_url: str = "sqlite:///./studio.db"          # DATABASE_URL
     http_timeout_seconds: float = 120.0
-    # Notification-alert scheduler (F3): the background worker fires due alerts every tick.
+    # Chat-first feature flag (FLAG-1): the 알림봇 surface. Default OFF — the alert scheduler does not
+    # start unless this is on (shares the FEATURE_ALERTS env with the web rail so both flip together).
+    feature_alerts: bool = False                         # FEATURE_ALERTS
+    # Notification-alert scheduler (F3): the background worker fires due alerts every tick. Gated by
+    # feature_alerts above; this second switch stays as a fine-grained kill-switch (disable in a
+    # flags-on install without touching the UI).
     alerts_scheduler_enabled: bool = True                # ALERTS_SCHEDULER_ENABLED
     alerts_tick_seconds: int = 60                        # ALERTS_TICK_SECONDS
 

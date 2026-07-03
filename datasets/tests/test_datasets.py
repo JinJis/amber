@@ -393,6 +393,46 @@ async def test_run_backfill_records_job(monkeypatch):
     assert out["status"] == "success" and out["rows"] == 120 and out["failed"] == ["MSFT"]
     row = next(j for j in J.list_jobs(50) if j["id"] == out["job_id"])
     assert row["status"] == "success" and row["rows"] == 120
+    # OPS-1: even the message-less bulk loader path records a grouped, retriable failure (not bare codes)
+    assert row["error"] == "실패 1 · 원인 1종"
+    assert row["error_details"] and row["error_details"][0]["tickers"] == ["MSFT"]
+
+
+def test_group_ticker_errors_sorts_by_cause_and_count():
+    from app.store.jobs import group_ticker_errors
+
+    g = group_ticker_errors({"000010": "ValueError: x", "000030": "ValueError: x", "000060": "KeyError: y"})
+    assert g[0]["error"] == "ValueError: x" and g[0]["count"] == 2
+    assert set(g[0]["tickers"]) == {"000010", "000030"}
+    assert g[1]["error"] == "KeyError: y" and g[1]["count"] == 1
+
+
+async def test_run_ticker_job_groups_real_errors_by_cause():
+    """OPS-1: a per-ticker failure records the REAL error message grouped by cause + a human summary,
+    replacing the old bare `failed: ['000010', …]` dump (the KR-prices sweep symptom)."""
+    from app.store.db import init_db
+    from app.store import jobs as J
+
+    init_db()
+
+    async def ingest_one(t: str) -> int:
+        if t in ("000010", "000030"):
+            raise ValueError("no timestamp in payload")
+        if t == "000060":
+            raise KeyError("close")
+        return 5
+
+    out = await J.run_ticker_job("prices", "KR", "4t", ["000010", "000030", "000060", "005930"], ingest_one)
+    assert out["status"] == "success" and out["rows"] == 5
+    assert sorted(out["failed"]) == ["000010", "000030", "000060"]
+
+    row = next(j for j in J.list_jobs(50) if j["kind"] == "prices" and j["market"] == "KR")  # newest = ours
+    assert row["error"] == "실패 3 · 원인 2종"           # readable summary, not a code dump
+    details = row["error_details"]
+    assert len(details) == 2                             # two distinct causes
+    assert details[0]["count"] == 2 and set(details[0]["tickers"]) == {"000010", "000030"}
+    assert "no timestamp" in details[0]["error"]         # the real exception message survives
+    assert details[1]["count"] == 1 and details[1]["tickers"] == ["000060"]
 
 
 def test_reap_stale_running_jobs_and_latest_job():
@@ -1798,8 +1838,8 @@ async def test_run_ticker_job_best_effort(monkeypatch):
     finished: dict = {}
     monkeypatch.setattr(J, "start_job", lambda *a, **k: 7)
     monkeypatch.setattr(J, "update_progress", lambda *a, **k: None)
-    monkeypatch.setattr(J, "finish_job", lambda job, status, rows=0, error=None:
-                        finished.update(job=job, status=status, rows=rows, error=error))
+    monkeypatch.setattr(J, "finish_job", lambda job, status, rows=0, error=None, error_details=None:
+                        finished.update(job=job, status=status, rows=rows, error=error, error_details=error_details))
 
     async def ingest_one(t):
         if t == "BAD":
@@ -1809,7 +1849,10 @@ async def test_run_ticker_job_best_effort(monkeypatch):
     out = await J.run_ticker_job("prices", "US", "spec", ["AAPL", "BAD", "MSFT"], ingest_one)
     assert out["status"] == "success" and out["rows"] == 8
     assert out["per_ticker"] == {"AAPL": 5, "BAD": -1, "MSFT": 3} and out["failed"] == ["BAD"]
-    assert finished == {"job": 7, "status": "success", "rows": 8, "error": "failed: ['BAD']"}
+    # OPS-1: readable summary + grouped detail carrying the real exception (not a bare code dump)
+    assert finished["job"] == 7 and finished["status"] == "success" and finished["rows"] == 8
+    assert finished["error"] == "실패 1 · 원인 1종"
+    assert finished["error_details"] == [{"error": "RuntimeError: upstream down", "tickers": ["BAD"], "count": 1}]
 
 
 async def test_run_prices_ingest_is_incremental(monkeypatch):
