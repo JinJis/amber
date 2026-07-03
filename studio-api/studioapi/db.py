@@ -54,14 +54,18 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
 
 def _add_missing_columns() -> None:
-    """Lightweight forward migration for legacy SQLite stores: ADD COLUMN for new fields on existing
-    tables (create_all only creates missing TABLES, not columns). SQLite-only — Postgres starts from
-    the full schema via create_all, and these ALTER decls (e.g. ``BOOLEAN DEFAULT 0``) are SQLite-
-    flavored. Idempotent; skips columns already present."""
-    if engine.dialect.name != "sqlite":
+    """Lightweight forward migration: ADD COLUMN for fields added to a model AFTER its table was first
+    created (``create_all`` only creates missing TABLES, never columns on an existing one). Runs for
+    BOTH real runtimes — SQLite (unit tests) and Postgres (compose) — since a long-lived Postgres DB
+    hits exactly this gap when the schema evolves. Idempotent: skips columns already present, and the
+    type/default decls are chosen per dialect."""
+    dialect = engine.dialect.name
+    if dialect not in ("sqlite", "postgresql"):
         return
     from sqlalchemy import inspect, text
 
+    ts = "TIMESTAMP" if dialect == "postgresql" else "DATETIME"      # SQLAlchemy DateTime → TIMESTAMP on PG
+    bool_default = "false" if dialect == "postgresql" else "0"
     inspector = inspect(engine)
     names = inspector.get_table_names()
     if "pinned_artifacts" in names:
@@ -71,15 +75,15 @@ def _add_missing_columns() -> None:
             for col, decl in add.items():
                 if col not in existing:
                     conn.execute(text(f"ALTER TABLE pinned_artifacts ADD COLUMN {col} {decl}"))
-    # F1: onboarding flag on users (default 0 = not yet onboarded)
     if "users" in names:
         ucols = {c["name"] for c in inspector.get_columns("users")}
         with engine.begin() as conn:
+            # F1: onboarding flag on users (default = not yet onboarded)
             if "onboarded" not in ucols:
-                conn.execute(text("ALTER TABLE users ADD COLUMN onboarded BOOLEAN DEFAULT 0"))
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN onboarded BOOLEAN DEFAULT {bool_default}"))
             # M-DESK: last visit timestamp for the desk feed's "since last visit" windows
             if "last_seen_at" not in ucols:
-                conn.execute(text("ALTER TABLE users ADD COLUMN last_seen_at DATETIME"))
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN last_seen_at {ts}"))
 
 
 def init_db() -> None:

@@ -72,7 +72,27 @@ engine = _make_engine()
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
 
+def _add_missing_columns() -> None:
+    """Forward-migrate: ADD COLUMN for fields added after a table was first created (``create_all``
+    only builds missing TABLES, not new columns on an existing one). Runs for SQLite (unit tests) and
+    Postgres (compose) alike — a long-lived Postgres store hits this gap when the schema grows.
+    Idempotent; skips columns already present."""
+    dialect = engine.dialect.name
+    if dialect not in ("sqlite", "postgresql"):
+        return
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    if "ingestion_jobs" in inspector.get_table_names():
+        cols = {c["name"] for c in inspector.get_columns("ingestion_jobs")}
+        # OPS-1: grouped per-cause failure detail (JSON as TEXT — portable across both dialects)
+        if "error_details" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE ingestion_jobs ADD COLUMN error_details TEXT"))
+
+
 def init_db() -> None:
     from app.store import models  # noqa: F401  (register mappers)
 
     Base.metadata.create_all(engine)
+    _add_missing_columns()
