@@ -12,6 +12,7 @@ from app.models.generated import (
     TickersResponse,
 )
 from app.providers.registry import get_company_provider
+from app.routers._common import tickers_response
 from app.symbols import Market, build_ref
 
 router = APIRouter(tags=["Company Information"])
@@ -30,8 +31,7 @@ async def get_company_facts(
 
 @router.get("/company/facts/tickers", response_model=TickersResponse)
 async def get_company_facts_tickers(market: MarketParam = Market.US) -> TickersResponse:
-    tickers = await get_company_provider(market).list_tickers()
-    return TickersResponse(resource="company_facts", tickers=tickers)
+    return await tickers_response(market, "company_facts")
 
 
 @router.get("/company/facts/ciks", response_model=CiksResponse)

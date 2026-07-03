@@ -27,6 +27,7 @@ NAV = [
     ("/", "Overview", "▦"),
     ("/catalog", "Catalog", "◈"),
     ("/pipelines", "Pipelines", "⏣"),
+    ("/queue", "Queue", "⚙"),
     ("/upstream", "Upstream", "📡"),
     ("/data", "Data", "▤"),
     ("/users", "Users", "⚇"),
@@ -53,6 +54,22 @@ def badge(text: str, kind: str = "") -> str:
 
 def sdot(kind: str = "") -> str:
     return f"<span class='sdot {kind}'></span>"
+
+
+def tile(k, v, ic, href, small=False) -> str:
+    """A clickable at-a-glance metric tile (icon · label · value), linking to its section."""
+    inner = f"<div class='k'>{ic} {_esc(k)}</div><div class='v {'sm' if small else ''}'>{_esc(v)}</div>"
+    return f"<a class=tile href='{href}' style='display:block'>{inner}</a>"
+
+
+# Status → CSS-class / Korean-label maps, centralized so every view colours a status the same way.
+JOB_STATUS_CLASS = {"success": "ok", "error": "err", "running": "run"}      # IngestionJob status
+QUEUE_STATUS_CLASS = {"todo": "warn", "doing": "run", "succeeded": "ok", "failed": "err",
+                      "cancelled": "", "aborting": "warn", "aborted": ""}   # Procrastinate job status
+QUEUE_STATUS_LABEL = {"todo": "대기", "doing": "실행중", "succeeded": "완료", "failed": "실패",
+                      "cancelled": "취소됨", "aborting": "중단중", "aborted": "중단됨"}
+UPSTREAM_DOT = {"ok": "ok", "degraded": "warn", "key-missing": "warn", "down": "err"}
+UPSTREAM_LABEL = {"ok": "정상", "degraded": "불안정", "key-missing": "키 없음", "down": "다운"}
 
 
 def progress(done, total, kind: str = "") -> str:

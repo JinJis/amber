@@ -60,6 +60,22 @@ def test_ratelimit_unit():
     assert rl.allow("k") and rl.allow("k") and not rl.allow("k")
 
 
+def test_ratelimit_key_isolation_and_window_reset(monkeypatch):
+    # one key exhausting its quota must NOT affect another key (per-key buckets), and crossing the
+    # minute boundary resets the window. (Fake the clock so the window advance is deterministic.)
+    import types
+
+    import controlplane.ratelimit as RL
+
+    clock = [1_000_000.0]
+    monkeypatch.setattr(RL, "time", types.SimpleNamespace(time=lambda: clock[0]))
+    rl = RateLimiter(2)
+    assert rl.allow("a") and rl.allow("a") and not rl.allow("a")   # key A exhausted
+    assert rl.allow("b") and rl.allow("b") and not rl.allow("b")   # key B independent, unaffected
+    clock[0] += 60                                                  # next minute window
+    assert rl.allow("a") and rl.allow("b")                          # both reset
+
+
 # --- gateway end-to-end ---------------------------------------------------
 def _make_project(name: str):
     t = client.post("/admin/tenants", json={"name": name}, headers=ADMIN).json()

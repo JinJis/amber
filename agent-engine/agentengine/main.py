@@ -16,20 +16,22 @@ from agentengine.agent import refresh_artifact, run_agent
 from agentengine.chat import stream_chat
 from agentengine.client import PlatformClient
 from agentengine.config import settings
-from agentengine.kpi import extract_kpis
+from agentengine.logging_config import install_request_logging, setup_logging
 from agentengine.models import (
     AgentSpec,
     ArtifactRefreshRequest,
     ChatRequest,
     CompileRequest,
-    KpiRequest,
     RunRequest,
 )
+
+setup_logging()
 
 app = FastAPI(
     title="Platform Agent Engine", version="0.1.0",
     description="Run agents over activated connectors + RAG, via the gateway, with provenance + guardrails.",
 )
+install_request_logging(app)
 
 
 @app.get("/health", tags=["Meta"])
@@ -54,19 +56,6 @@ async def artifact_refresh(body: ArtifactRefreshRequest, x_api_key: Annotated[st
     if a is None:
         raise HTTPException(404, "Could not refresh — tool unavailable or produced no artifact.")
     return {"artifact": a.model_dump()}
-
-
-@app.post("/agent/kpis", tags=["Agent"], summary="Extract a company's reported KPIs from its filing-text corpus, each cited to its source passage")
-async def kpis(body: KpiRequest, x_api_key: Annotated[str | None, Header(alias="X-API-KEY")] = None) -> dict:
-    spec = body.spec
-    backend = (spec.backend if spec and spec.backend else settings.llm_backend)
-    client = PlatformClient(x_api_key)
-    try:
-        tools = await client.fetch_tools()
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(502, f"Catalog unavailable: {exc}")
-    return await extract_kpis(client, tools, body.ticker, body.market,
-                              backend=backend, model=settings.model, top_k=body.top_k)
 
 
 @app.post("/agent/chat", tags=["Agent"], summary="Streaming multi-turn chat (SSE)")

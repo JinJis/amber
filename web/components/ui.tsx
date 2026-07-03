@@ -1,12 +1,13 @@
 "use client";
 
 // ── ValueGraph design-system primitives ────────────────────────────────────
-// Single source of truth for the recurring UI patterns from docs/wireframe.dc.html
-// (see docs/DESIGN_SYSTEM.md). Every screen composes these instead of re-deriving
+// Single source of truth for the recurring UI patterns from the wireframes
+// (see docs/deprecate/DESIGN_SYSTEM.md — design docs being rewritten). Every screen composes these instead of re-deriving
 // markup/classes, so the visual language stays unified. Tokens live in globals.css
 // :root; these primitives own the structural classNames that consume them.
 
-import { ButtonHTMLAttributes, ReactNode } from "react";
+import { ButtonHTMLAttributes, ReactNode, useEffect } from "react";
+import { cadenceLabel } from "@/lib/alerts";
 
 // ── Button ──────────────────────────────────────────────────────────────────
 // primary = ink fill · ghost = hairline · danger = light red outline.
@@ -63,6 +64,19 @@ export function FreshnessDot({ f }: { f?: string }) {
   const label = FRESH_LABEL[f] || f;
   return <span className={`fdot ${f}`} title={label} aria-label={label} />;
 }
+// Periodicity tag — a periodic datasource (cadence != one_shot) is alertable once pinned; a
+// one-shot value is just a figure. Cadence labels come from lib/alerts (single source — FE-03).
+export function CadenceTag({ c }: { c?: string | null }) {
+  if (!c) return null;
+  const periodic = c !== "one_shot";
+  const label = cadenceLabel(c);
+  return (
+    <span className={`cad-tag ${periodic ? "periodic" : "oneshot"}`}
+      title={periodic ? `주기성 데이터 (${label}) — 대시보드에 고정하면 알림봇 설정 가능` : "단발성 데이터 — 고정 시 값으로 표시 (알림 없음)"}>
+      {periodic ? `↻ ${label}` : "단발성"}
+    </span>
+  );
+}
 // One legend, reused everywhere a freshness dot appears (the signature legend).
 export function TrustLegend() {
   return (
@@ -87,13 +101,23 @@ export function Mascot({ size }: { size?: number }) {
 
 // ── Modal shell ───────────────────────────────────────────────────────────--
 // Backdrop + centered panel + head with close. Click-outside / esc closes.
+// The single modal shell (FE-06): backdrop-click + ✕ close, plus a `className` for per-modal
+// styling (alert-sheet / widget-gallery) and a11y (role=dialog · aria-modal · Escape-to-close).
 export function Modal(
-  { title, onClose, wide, children, footer }:
-  { title: ReactNode; onClose: () => void; wide?: boolean; children: ReactNode; footer?: ReactNode },
+  { title, onClose, wide, className, children, footer }:
+  { title: ReactNode; onClose: () => void; wide?: boolean; className?: string; children: ReactNode; footer?: ReactNode },
 ) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  const cls = ["modal", wide && "wide", className].filter(Boolean).join(" ");
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className={`modal ${wide ? "wide" : ""}`} onClick={(e) => e.stopPropagation()}>
+      <div className={cls} role="dialog" aria-modal="true"
+        aria-label={typeof title === "string" ? title : undefined}
+        onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>{title}</h3>
           <button className="x" onClick={onClose} aria-label="닫기">✕</button>

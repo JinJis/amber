@@ -28,3 +28,16 @@ export async function proxyStudio(path: string, init: RequestInit = {}): Promise
     headers: { "Content-Type": "application/json" },
   });
 }
+
+const SSE_HEADERS = { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" };
+
+// Pipe an SSE stream from studio-api back to the browser (FE-05) — the streaming twin of
+// proxyStudio, used by the chat + run-resume routes (the only two that bypassed studioFetch).
+// Auth + the service-token/email headers come from studioFetch; we forward the body as
+// text/event-stream (or an error if the caller is unauthorized / the upstream stream is missing).
+export async function streamStudioEvents(path: string, init: RequestInit = {}): Promise<Response> {
+  const r = await studioFetch(path, init);
+  if (!r) return new Response("unauthorized", { status: 401 });
+  if (!r.ok || !r.body) return new Response("upstream stream unavailable", { status: r.status || 502 });
+  return new Response(r.body, { headers: SSE_HEADERS });
+}

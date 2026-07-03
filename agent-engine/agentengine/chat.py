@@ -23,7 +23,7 @@ from typing import AsyncIterator
 from agentengine import guardrails
 from agentengine.agent import (
     _artifacts, _citations, _NARRATIVE_GUIDE, _NEWS_BRIEF_GUIDE, _VALUE_CHAIN_GUIDE, analyze_task,
-    anchor_markers, build_narrative_artifact, call_sig, fallback_answer, filter_tools, has_anchors,
+    anchor_markers, call_sig, fallback_answer, filter_tools, has_anchors,
     number_sources, refine_evidence,
 )
 from agentengine.client import PlatformClient
@@ -41,6 +41,35 @@ def _last_user(messages: list[dict]) -> str:
         if m.get("role") == "user":
             return m.get("content", "")
     return messages[-1].get("content", "") if messages else ""
+
+
+async def _followups_event(task: str, final_text: str, citations: list[dict],
+                           bk: str | None, conversation: list | None = None) -> dict | None:
+    """Build the 'suggestions' SSE event for a finished answer. Always non-empty when there's an
+    answer — suggest_followups uses the deep LLM on gemini and a deterministic capability-aware
+    fallback otherwise — so the chip row renders on EVERY answer path (conceptual + data). The
+    recent transcript is passed so the chips DEEPEN the thread instead of restarting it."""
+    if not (final_text or "").strip():
+        return None
+    from agentengine.agent import _intake_context, suggest_followups
+    tickers = sorted({c.get("ticker") for c in citations if c.get("ticker")})
+    kinds = sorted({c.get("kind") for c in citations if c.get("kind")})
+    ctx_bits = []
+    if tickers:
+        ctx_bits.append("다룬 종목: " + ", ".join(tickers[:5]))
+    if kinds:
+        ctx_bits.append("사용한 데이터: " + ", ".join(kinds))
+    # recent prior turns → the suggester builds on the conversation (심화), not generic chips
+    transcript = _intake_context(conversation) if conversation else ""
+    conv_block = f"최근 대화:\n{transcript}\n\n" if transcript and transcript != "(no prior turns)" else ""
+    eff_backend = bk or settings.llm_backend
+    logger.info("chat: requesting follow-up chips (backend=%s, answer_len=%d, tickers=%s, kinds=%s)",
+                eff_backend, len(final_text), tickers, kinds)
+    sugg = await suggest_followups(task, final_text, settings.model, bk,
+                                   context=" · ".join(ctx_bits) or None, tickers=tickers, kinds=kinds,
+                                   conversation=conv_block)
+    logger.info("chat: follow-up chips → %d suggestion(s)", len(sugg))
+    return {"type": "suggestions", "items": sugg} if sugg else None
 
 
 def _chunks(text: str, size: int = 28) -> list[str]:
@@ -163,6 +192,9 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
         yield {"type": "thinking", "phase": "synthesize", "text": "답변을 작성하는 중…"}
         async for ev in _synthesize({}, [], system):
             yield ev
+        sev = await _followups_event(task, final_text, [], bk, conversation=messages)
+        if sev:
+            yield sev
         yield {"type": "done", "citations": [], "artifacts": [], "refused": False, "used": []}
         return
 
@@ -337,29 +369,18 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
         # degrades to an honest message instead of breaking the stream.
         yield {"type": "token", "text": f"답변 생성 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요. ({type(e).__name__}: {str(e)})"}
 
-    # PH-VIZ-2: attach sourced event markers (dividends/splits/earnings this turn) + price
-    # lines to the price chart, then re-emit the enriched artifacts in `done` (the streamed
-    # `artifact` events went out before the later tool results existed).
-    from agentengine.artifacts import enrich_chart_markers, enrich_chart_overlays
-    enrich_chart_markers(art_objs, history)
-    # PH-VIZ-4: fold any technical-indicator artifact (SMA/EMA/Bollinger + RSI/MACD) onto
-    # the same-ticker price chart so the overlays render on the price; else it stands alone.
-    enrich_chart_overlays(art_objs)
-    # PH-VIZ-3: Gemini annotates the price chart from the question (lines/levels/zones),
-    # validated to historical points only (no projection). Gemini-only; best-effort.
-    from agentengine.annotations import annotate_charts
-    await annotate_charts(art_objs, task, settings.model, spec.backend if spec else settings.llm_backend)
+    # PH-VIZ: attach sourced event markers + price lines, fold technical overlays onto the price
+    # chart, then (bounded) let Gemini annotate it — re-emitted in `done` since the streamed
+    # `artifact` events went out before the later tool results existed. Shared with run_agent via
+    # enrich_artifacts; the annotate step is capped so it never delays `done` (RF-10).
+    from agentengine.artifacts import enrich_artifacts
+    await enrich_artifacts(art_objs, history, task, settings.model,
+                           spec.backend if spec else settings.llm_backend,
+                           annotate_timeout=settings.gemini_enrich_timeout_seconds)
 
-    # CE-4: parse the structured answer into a pinnable 종목 내러티브 card (deterministic split;
-    # None when the answer wasn't sectioned, e.g. stub backend → no narrative card).
-    if (intake.narrative or intake.news_brief or intake.value_chain) and final_text:
-        tk = next((c.get("ticker") for c in citations if c.get("ticker")),
-                  next((o.ticker for o in art_objs if getattr(o, "ticker", None)), None))
-        na = build_narrative_artifact(final_text, tk)
-        if na and na.title not in seen_artifacts:
-            seen_artifacts.add(na.title)
-            art_objs.append(na)
-            yield {"type": "artifact", "artifact": na.model_dump()}
+    # (The 종목 내러티브 card was removed — it duplicated the answer + the context panel. The
+    # narrative/news-brief/value-chain intake flags still steer the synthesis into a structured,
+    # sourced answer; we just no longer emit a separate narrative artifact.)
 
     if art_objs:
         artifacts = [o.model_dump() for o in art_objs]
@@ -395,20 +416,10 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
         yield {"type": "token", "text": " " + anchor_markers(used_idx)}
     used = [c.get("index") for c in citations if c.get("used")]
 
-    # PH-THINK: capability-aware deep follow-up chips. Pass which tickers + data kinds were used
-    # so the parallel suggester proposes concrete questions that showcase our differentiators.
-    if final_text and (bk or settings.llm_backend) == "gemini":
-        from agentengine.agent import suggest_followups
-        tickers = sorted({c.get("ticker") for c in citations if c.get("ticker")})
-        kinds = sorted({c.get("kind") for c in citations if c.get("kind")})
-        ctx_bits = []
-        if tickers:
-            ctx_bits.append("다룬 종목: " + ", ".join(tickers[:5]))
-        if kinds:
-            ctx_bits.append("사용한 데이터: " + ", ".join(kinds))
-        sugg = await suggest_followups(task, final_text, settings.model, bk,
-                                       context=" · ".join(ctx_bits) or None)
-        if sugg:
-            yield {"type": "suggestions", "items": sugg}
+    # PH-THINK: capability-aware follow-up chips — ALWAYS shown after a real answer (deep LLM when
+    # gemini, deterministic capability-aware fallback otherwise), so the chip row is never empty.
+    sev = await _followups_event(task, final_text, citations, bk, conversation=messages)
+    if sev:
+        yield sev
 
     yield {"type": "done", "citations": citations, "artifacts": artifacts, "refused": False, "used": used}

@@ -14,6 +14,7 @@ from sqlalchemy import select
 from studioapi.db import SessionLocal
 from studioapi.deps import current_user, require_service
 from studioapi.models import Prompt, User
+from studioapi.orm_helpers import idempotent_clone
 
 router = APIRouter(prefix="/prompts", tags=["Prompts"], dependencies=[Depends(require_service)])
 
@@ -265,18 +266,13 @@ async def import_prompt(prompt_id: str, user: User = Depends(current_user)) -> d
         src = db.get(Prompt, prompt_id)
         if src is None or src.user_email is not None:
             raise HTTPException(404, "Community prompt not found.")
-        # idempotent: if already imported, return the existing copy
-        existing = db.execute(
-            select(Prompt).where(Prompt.user_email == user.email, Prompt.source_id == src.id)
-        ).scalars().first()
-        if existing:
-            return _out(existing)
-        copy = Prompt(
-            user_email=user.email, title=src.title, description=src.description, body=src.body,
-            category=src.category, community=False, source_id=src.id,
+        # idempotent clone keyed on source_id (shared with future analyst/agent cloning — RF-13)
+        copy, created = idempotent_clone(
+            db, Prompt, src, user.email,
+            fields=("title", "description", "body", "category"), overrides={"community": False},
         )
-        db.add(copy)
-        db.commit()
+        if created:
+            db.commit()
         return _out(copy)
 
 

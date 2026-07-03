@@ -13,8 +13,15 @@ Each series id below was verified live against the DBnomics API (returns data).
 from __future__ import annotations
 
 import asyncio
+import datetime
 
 from app.http import fetch_json
+from app.providers.us import bls as bls_api
+
+# An observation older than this is clearly abnormal for these (monthly/quarterly) series — a
+# frozen upstream, not a real release lag. We FLAG it (honesty: never present a year-old value as
+# current) so the card/agent can show staleness. The DBnomics BLS mirror froze ~17mo at 2025-01.
+_STALE_AFTER_DAYS = 270
 
 # slug → {name, series (DBnomics provider/dataset/series), unit, region, group}
 # `group` (하위요인) buckets the catalog so it browses by theme: 물가/고용/성장/금리.
@@ -40,16 +47,66 @@ INDICATORS: dict[str, dict] = {
                    "unit": "%", "region": "US", "group": "성장"},
     "industrial_production": {"name": "US Industrial Production Index", "series": "FED/G17/IP_B50001_S",
                              "unit": "index", "region": "US", "group": "성장"},
-    # 금리 (rates)
-    "treasury_10y": {"name": "US 10Y Treasury Yield", "series": "OECD/KEI/IRLTLT01.USA.ST.M",
+    # 금리 (rates) — Fed H.15 constant-maturity Treasuries via DBnomics (fresh, monthly). The
+    # prior OECD/KEI series froze at 2024-01 (surfaced by the staleness flag).
+    "treasury_10y": {"name": "US 10Y Treasury Yield", "series": "FED/H15/RIFLGFCY10_N.M",
                      "unit": "%", "region": "US", "group": "금리"},
-    "treasury_3m": {"name": "US 3M Interbank Rate", "series": "OECD/KEI/IR3TIB01.USA.ST.M",
+    "treasury_3m": {"name": "US 3M Treasury Yield", "series": "FED/H15/RIFLGFCM03_N.M",
                     "unit": "%", "region": "US", "group": "금리"},
 }
 
 
 def _source_url(series: str) -> str:
     return f"https://db.nomics.world/{series}"
+
+
+def _is_bls(series: str) -> bool:
+    return (series or "").startswith("BLS/")
+
+
+def _bls_id(series: str) -> str:
+    """`BLS/ln/LNS14000000` → `LNS14000000` (the BLS public-API series id)."""
+    return series.split("/")[-1]
+
+
+def _days_old(date_str: str) -> int | None:
+    """Approximate age in days of a 'YYYY-MM[-DD]' / 'YYYY-Qx' / 'YYYY' observation date."""
+    if not date_str:
+        return None
+    try:
+        parts = str(date_str).split("-")
+        y = int(parts[0])
+        if len(parts) >= 2 and parts[1].upper().startswith("Q"):
+            m = (int(parts[1][1]) - 1) * 3 + 1
+        elif len(parts) >= 2:
+            m = int(parts[1])
+        else:
+            m = 12  # annual → treat as year-end
+        d = int(parts[2]) if len(parts) >= 3 else 1
+        return (datetime.date.today() - datetime.date(y, m, min(d, 28))).days
+    except Exception:  # noqa: BLE001 — unparseable date → unknown age
+        return None
+
+
+def _row(slug: str, obs: list[dict]) -> dict | None:
+    """Assemble a panel row (latest + prior + change + freshness) from ascending observations."""
+    if not obs:
+        return None
+    meta = INDICATORS[slug]
+    latest = obs[-1]
+    prior = obs[-2] if len(obs) > 1 else None
+    days_old = _days_old(latest["date"])
+    return {
+        "slug": slug, "name": meta["name"], "unit": meta.get("unit"), "group": meta.get("group"),
+        "latest": latest["value"], "as_of": latest["date"],
+        "prior": prior["value"] if prior else None,
+        "change": (latest["value"] - prior["value"]) if prior else None,
+        "days_old": days_old,
+        "stale": days_old is not None and days_old > _STALE_AFTER_DAYS,
+        "source": "BLS" if _is_bls(meta["series"]) else "DBnomics",
+        "source_url": bls_api.series_page(_bls_id(meta["series"])) if _is_bls(meta["series"])
+        else _source_url(meta["series"]),
+    }
 
 
 def list_indicators(region: str | None = None, group: str | None = None) -> list[dict]:
@@ -69,40 +126,45 @@ def list_regions() -> list[str]:
 
 
 async def region_panel(region: str = "US", limit: int = 2) -> dict:
-    """국가경제 panel: latest observation + prior + change for each indicator in a region
-    (concurrent, best-effort — an indicator whose series fails upstream is dropped, never faked)."""
+    """국가경제 panel: latest + prior + change + freshness for each indicator in a region.
+
+    BLS series (frozen on DBnomics) are fetched fresh from the BLS API in ONE batched request
+    (rate-limit friendly); the rest come from DBnomics concurrently. Best-effort — an indicator
+    whose series fails upstream is dropped, never faked; a stale-but-present value is flagged."""
     region = (region or "US").upper()
     slugs = [k for k, v in INDICATORS.items() if v["region"] == region]
-    fetched = await asyncio.gather(*[fetch_indicator(s, limit=max(2, limit)) for s in slugs])
-    rows: list[dict] = []
-    for slug, res in zip(slugs, fetched):
-        obs = (res or {}).get("observations") or []
-        if not obs:
-            continue
-        latest = obs[-1]
-        prior = obs[-2] if len(obs) > 1 else None
-        change = (latest["value"] - prior["value"]) if prior else None
-        rows.append({"slug": slug, "name": res["name"], "unit": res.get("unit"), "group": INDICATORS[slug].get("group"),
-                     "latest": latest["value"], "as_of": latest["date"],
-                     "prior": prior["value"] if prior else None, "change": change,
-                     "source_url": res.get("source_url")})
-    return {"region": region, "source": "DBnomics", "indicators": rows}
+    bls_slugs = [s for s in slugs if _is_bls(INDICATORS[s]["series"])]
+    dbn_slugs = [s for s in slugs if not _is_bls(INDICATORS[s]["series"])]
+
+    async def _bls_obs() -> dict[str, list[dict]]:
+        if not bls_slugs:
+            return {}
+        try:
+            raw = await bls_api.fetch_bls([_bls_id(INDICATORS[s]["series"]) for s in bls_slugs])
+        except Exception:  # noqa: BLE001 — whole BLS batch unavailable → those drop, never faked
+            return {}
+        return {s: raw.get(_bls_id(INDICATORS[s]["series"]), []) for s in bls_slugs}
+
+    bls_map, dbn_fetched = await asyncio.gather(
+        _bls_obs(),
+        asyncio.gather(*[_dbnomics_obs(s, limit=max(2, limit)) for s in dbn_slugs]),
+    )
+    obs_by_slug = {**bls_map, **dict(zip(dbn_slugs, dbn_fetched))}
+    rows = [r for s in slugs if (r := _row(s, obs_by_slug.get(s) or []))]
+    return {"region": region, "source": "BLS · DBnomics", "indicators": rows}
 
 
-async def fetch_indicator(slug: str, limit: int = 24) -> dict | None:
-    """One indicator's recent observations + its DBnomics source link. None if unknown/failed."""
-    meta = INDICATORS.get((slug or "").strip().lower())
-    if not meta:
-        return None
-    series = meta["series"]
+async def _dbnomics_obs(slug: str, limit: int = 24) -> list[dict]:
+    """Ascending observations for a DBnomics-backed slug ([] on failure)."""
+    series = INDICATORS[slug]["series"]
     try:
         data = await fetch_json("dbnomics", f"https://api.db.nomics.world/v22/series/{series}",
                                 params={"observations": "1"})
-    except Exception:  # noqa: BLE001 — upstream/network → graceful (None)
-        return None
+    except Exception:  # noqa: BLE001 — upstream/network → graceful ([])
+        return []
     docs = (data.get("series") or {}).get("docs") or [] if isinstance(data, dict) else []
     if not docs:
-        return None
+        return []
     doc = docs[0]
     obs: list[dict] = []
     for period, value in zip(doc.get("period") or [], doc.get("value") or []):
@@ -110,6 +172,36 @@ async def fetch_indicator(slug: str, limit: int = 24) -> dict | None:
             obs.append({"date": period, "value": float(value)})
         except (TypeError, ValueError):
             continue  # "NA" / missing → dropped, never faked
-    return {"slug": (slug or "").lower(), "name": meta["name"], "unit": meta.get("unit"),
-            "region": meta.get("region"), "source": "DBnomics", "source_url": _source_url(series),
-            "observations": obs[-limit:]}
+    return obs[-limit:]
+
+
+async def fetch_indicator(slug: str, limit: int = 24) -> dict | None:
+    """One indicator's recent observations + source link + freshness. None if unknown/failed.
+
+    BLS series read from the BLS public API (DBnomics' BLS mirror froze at 2025-01); everything
+    else from keyless DBnomics. The latest value carries `as_of` + `stale` so a frozen upstream is
+    surfaced, never shown as if current."""
+    slug = (slug or "").strip().lower()
+    meta = INDICATORS.get(slug)
+    if not meta:
+        return None
+    series = meta["series"]
+    if _is_bls(series):
+        try:
+            raw = await bls_api.fetch_bls([_bls_id(series)])
+        except Exception:  # noqa: BLE001 — graceful (None)
+            return None
+        obs = (raw.get(_bls_id(series)) or [])[-limit:]
+        source, source_url = "BLS", bls_api.series_page(_bls_id(series))
+    else:
+        obs = await _dbnomics_obs(slug, limit=limit)
+        source, source_url = "DBnomics", _source_url(series)
+    if not obs:
+        return None
+    latest = obs[-1]
+    days_old = _days_old(latest["date"])
+    return {"slug": slug, "name": meta["name"], "unit": meta.get("unit"),
+            "region": meta.get("region"), "source": source, "source_url": source_url,
+            "as_of": latest["date"], "days_old": days_old,
+            "stale": days_old is not None and days_old > _STALE_AFTER_DAYS,
+            "observations": obs}

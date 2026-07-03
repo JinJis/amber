@@ -87,7 +87,8 @@ async def _gemini_annotate(model: str, question: str, digest: str, ticker: str) 
     cfg = types.GenerateContentConfig(system_instruction=_SYSTEM, temperature=0.1,
                                       response_mime_type="application/json", response_schema=_SCHEMA)
     try:
-        client = genai.Client()
+        from agentengine.gemini_io import genai_client
+        client = genai_client()  # bounded request timeout (no infinite SSE hang)
         resp = await asyncio.to_thread(
             client.models.generate_content, model=model,
             contents=[types.Content(role="user", parts=[types.Part.from_text(text=user)])], config=cfg)

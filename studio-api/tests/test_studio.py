@@ -137,39 +137,6 @@ def test_messages_of_unknown_conversation_is_empty(monkeypatch):
     assert r.status_code == 200 and r.json()["messages"] == []
 
 
-@respx.mock
-def test_portfolio_crud_and_analytics(monkeypatch):
-    _cfg(monkeypatch)
-    _mock_control_plane()
-    h = _hdr("pf@u.com")
-    # create a portfolio + add two holdings (upsert on re-add)
-    pid = client.post("/portfolios", headers=h, json={"name": "코어"}).json()["id"]
-    client.post(f"/portfolios/{pid}/holdings", headers=h,
-                json={"market": "US", "ticker": "AAPL", "shares": 10, "cost_basis": 150})
-    client.post(f"/portfolios/{pid}/holdings", headers=h,
-                json={"market": "US", "ticker": "MSFT", "shares": 5, "cost_basis": 300})
-    detail = client.get(f"/portfolios/{pid}", headers=h).json()
-    assert {x["ticker"] for x in detail["holdings"]} == {"AAPL", "MSFT"}
-
-    # analytics: live price per holding + a backtest, both via the gateway (mocked)
-    respx.get("http://cp.test/prices/snapshot").mock(side_effect=lambda req: httpx.Response(
-        200, json={"snapshot": {"price": 200.0 if req.url.params.get("ticker") == "AAPL" else 400.0}}))
-    respx.post("http://cp.test/backtest").mock(return_value=httpx.Response(200, json={
-        "metrics": {"total_return": 0.25}, "curve": [{"date": "2024-01-02", "value": 10000.0}]}))
-    a = client.get(f"/portfolios/{pid}/analytics", headers=h).json()
-    # AAPL 10×200=2000, MSFT 5×400=2000 → total 4000, equal weights, gain vs cost
-    assert a["total_value"] == 4000.0
-    byt = {p["ticker"]: p for p in a["positions"]}
-    assert byt["AAPL"]["value"] == 2000.0 and byt["AAPL"]["weight"] == 0.5
-    assert byt["AAPL"]["gain"] == 2000.0 - 1500.0  # (200-150)*10
-    assert a["backtest"]["metrics"]["total_return"] == 0.25 and a["total_gain"] is not None
-
-    # scoping + delete
-    assert client.get(f"/portfolios/{pid}", headers=_hdr("other-pf@u.com")).status_code == 404
-    assert client.delete(f"/portfolios/{pid}", headers=h).status_code == 200
-    assert all(p["id"] != pid for p in client.get("/portfolios", headers=h).json()["portfolios"])
-
-
 async def test_run_manager_survives_leave_and_resumes():
     # generation lives server-side: a run keeps going after a tail (the client) stops, and a
     # fresh tail (re-entering the conversation) replays the buffer then continues live.
@@ -282,11 +249,12 @@ def test_agent_create_get_update_delete(monkeypatch):
     _mock_control_plane()
     email = "builder@u.com"
     created = client.post("/agents", headers=_hdr(email), json={
-        "name": "My Filings Bot", "description": "filings only", "model": "stub",
+        "name": "My Filings Bot", "description": "filings only",
         "system_prompt": "Cite filings.", "data_sources": ["sec_edgar", "rag"],
     }).json()
     aid = created["id"]
     assert created["editable"] and created["data_sources"] == ["sec_edgar", "rag"]
+    assert created["model"] == "gemini"  # gemini-only (invariant #7)
     # it appears in the list alongside templates
     assert aid in {a["id"] for a in client.get("/agents", headers=_hdr(email)).json()["agents"]}
     # update
@@ -298,11 +266,13 @@ def test_agent_create_get_update_delete(monkeypatch):
 
 
 @respx.mock
-def test_agent_invalid_model_rejected(monkeypatch):
+def test_agent_model_is_gemini_only(monkeypatch):
+    # Gemini-only (invariant #7): any requested model (incl. legacy "stub" or a bogus value) is
+    # accepted and normalized to gemini — there is no other backend to reject toward.
     _cfg(monkeypatch)
     _mock_control_plane()
-    r = client.post("/agents", headers=_hdr("v@u.com"), json={"name": "bad", "model": "gpt-9"})
-    assert r.status_code == 422
+    r = client.post("/agents", headers=_hdr("v@u.com"), json={"name": "coerced", "model": "gpt-9"})
+    assert r.status_code == 200 and r.json()["model"] == "gemini"
 
 
 @respx.mock
@@ -727,50 +697,21 @@ def test_watchlists_are_user_scoped(monkeypatch):
 
 
 @respx.mock
-def test_evidence_proxy_streams_png_or_204(monkeypatch):
-    """PH-PROV2: studio-api proxies the highlighted-evidence PNG from the gateway with the
-    user's tenant key, and degrades to 204 when the gateway has nothing."""
+def test_evidence_html_proxy_streams_html_or_204(monkeypatch):
+    """studio-api proxies the original filing HTML from the gateway with the user's tenant key
+    (for the in-app viewer), and degrades to 204 when the gateway has no markup."""
     _cfg(monkeypatch)
     _mock_control_plane()
-    route = respx.get("http://cp.test/evidence")
-    route.mock(return_value=httpx.Response(200, content=b"\x89PNG-ev", headers={"content-type": "image/png"}))
-    q = "market=US&accession=0000320193-24-000123&concept=Revenues&report_period=2024-09-28"
-    r = client.get(f"/evidence?{q}", headers=_hdr("e@u.com"))
-    assert r.status_code == 200 and r.headers["content-type"].startswith("image/")
-    assert r.content == b"\x89PNG-ev"
+    route = respx.get("http://cp.test/evidence/html")
+    route.mock(return_value=httpx.Response(
+        200, content=b"<html><body>filing</body></html>",
+        headers={"content-type": "text/html; charset=utf-8"}))
+    q = "market=US&accession=0000320193-24-000123&cik=320193"
+    r = client.get(f"/evidence/html?{q}", headers=_hdr("e@u.com"))
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/html")
+    assert b"filing" in r.content
 
-    route.mock(return_value=httpx.Response(204))  # gateway → no evidence
-    r2 = client.get(f"/evidence?{q}", headers=_hdr("e@u.com"))
-    assert r2.status_code == 204
-
-
-@respx.mock
-def test_evidence_doc_proxy_streams_pdf_or_204(monkeypatch):
-    """PH-PROV3: studio-api proxies the real source-filing PDF (원문 열기) from the gateway
-    with the user's tenant key, and degrades to 204 when none is cached."""
-    _cfg(monkeypatch)
-    _mock_control_plane()
-    route = respx.get("http://cp.test/evidence/doc")
-    route.mock(return_value=httpx.Response(200, content=b"%PDF-1.4 ev", headers={"content-type": "application/pdf"}))
-    q = "market=KR&accession=20260310002820"
-    r = client.get(f"/evidence/doc?{q}", headers=_hdr("e@u.com"))
-    assert r.status_code == 200 and r.headers["content-type"] == "application/pdf"
-    assert r.content == b"%PDF-1.4 ev"
-
-    route.mock(return_value=httpx.Response(204))
-    assert client.get(f"/evidence/doc?{q}", headers=_hdr("e@u.com")).status_code == 204
+    route.mock(return_value=httpx.Response(204))  # gateway → no markup
+    assert client.get(f"/evidence/html?{q}", headers=_hdr("e@u.com")).status_code == 204
 
 
-@respx.mock
-def test_kpis_proxies_to_agent_engine(monkeypatch):
-    # PH-DATA-5: /kpis forwards the user's tenant key to agent-engine /agent/kpis.
-    _cfg(monkeypatch)
-    _mock_control_plane()
-    payload = {"ticker": "AAPL", "market": "US", "kpis": [{"name": "Net sales", "value": "391,035"}],
-               "citations": [{"tool": "rag__search", "evidence_image_url": "/evidence?x=1"}],
-               "artifact": {"kind": "kpi", "title": "AAPL — 핵심 지표 (KPI)"}}
-    route = respx.post("http://ae.test/agent/kpis").mock(return_value=httpx.Response(200, json=payload))
-    r = client.post("/kpis", json={"ticker": "AAPL", "market": "US"}, headers=_hdr("kpi@u.com"))
-    assert r.status_code == 200
-    assert r.json()["artifact"]["kind"] == "kpi"
-    assert route.calls.last.request.headers["X-API-KEY"] == "vgk_demo"  # tenant key forwarded → entitled + metered

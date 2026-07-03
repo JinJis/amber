@@ -6,20 +6,17 @@ cached + rate-limit-aware; issuance is ~1/min). Keys stay server-side (KIS_APP_K
 Descriptive market data — no advice/forecast.
 """
 
-from __future__ import annotations
-
-import asyncio
-import time
-
 import httpx
 
+from app.cache import TTLCache
 from app.config import settings
 from app.errors import bad_request, upstream_error
+from app.providers._parse_utils import parse_float as _f, parse_int as _i  # shared parsers (RF-02)
 from app.http import fetch_json
 
-# module-level token cache (token, expires_at_epoch); a lock so concurrent callers issue once.
-_token_cache: dict = {"token": None, "exp": 0.0}
-_token_lock = asyncio.Lock()
+# KIS tokens last ~24h; cache for 23h (less a 60s margin). The shared TTLCache is single-flight per
+# key, so concurrent callers issue exactly one token request — KIS limits issuance to ~1/min (RF-06).
+_token_cache = TTLCache(23 * 3600 - 60)
 
 
 def _creds() -> tuple[str, str]:
@@ -29,12 +26,7 @@ def _creds() -> tuple[str, str]:
 
 
 async def _token() -> str:
-    now = time.time()
-    if _token_cache["token"] and _token_cache["exp"] - 60 > now:
-        return _token_cache["token"]
-    async with _token_lock:
-        if _token_cache["token"] and _token_cache["exp"] - 60 > now:
-            return _token_cache["token"]
+    async def _issue() -> str:
         app_key, app_secret = _creds()
         try:
             async with httpx.AsyncClient(timeout=settings.http_timeout_seconds) as client:
@@ -48,9 +40,9 @@ async def _token() -> str:
         token = data.get("access_token")
         if not token:
             raise upstream_error("kis", f"no access_token ({data.get('msg1') or data})")
-        # KIS tokens last ~24h; cache for 23h to be safe.
-        _token_cache.update(token=token, exp=now + 23 * 3600)
         return token
+
+    return await _token_cache.get_or_set("kis:token", _issue)
 
 
 async def _get(path: str, tr_id: str, params: dict, output_key: str = "output") -> list:
@@ -62,20 +54,6 @@ async def _get(path: str, tr_id: str, params: dict, output_key: str = "output") 
         raise upstream_error("kis", str(data.get("msg1") or "KIS error")[:160])
     out = (data.get(output_key) if isinstance(data, dict) else None) or []
     return out if isinstance(out, list) else [out]
-
-
-def _i(v):
-    try:
-        return int(str(v).replace(",", "")) if v not in (None, "") else None
-    except (TypeError, ValueError):
-        return None
-
-
-def _f(v):
-    try:
-        return float(str(v).replace(",", "")) if v not in (None, "") else None
-    except (TypeError, ValueError):
-        return None
 
 
 async def volume_rank(limit: int = 30) -> dict:

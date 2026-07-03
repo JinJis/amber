@@ -18,42 +18,46 @@ from __future__ import annotations
 import httpx
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import MetaData, Table, and_, create_engine, text
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from adminpanel.config import DATABASES, settings
-from adminpanel.views import _cell, _esc, badge, login_page, page, progress, sdot
+from adminpanel.clients import _ok, _safe_get
+from adminpanel.config import settings
+from adminpanel.logging_config import install_request_logging, setup_logging
+# Reflected service-DB state + DB helpers live in state.py (RF-14); re-exported here so importers
+# (and tests) that reference `adminpanel.main.DB_STATUS` keep working.
+from adminpanel.state import (  # noqa: F401
+    DB_STATUS,
+    ENGINES,
+    TABLES,
+    _has,
+    _mount_database,
+    _query,
+    _table_counts,
+)
+from adminpanel.views import (
+    JOB_STATUS_CLASS,
+    QUEUE_STATUS_CLASS,
+    QUEUE_STATUS_LABEL,
+    UPSTREAM_DOT,
+    UPSTREAM_LABEL,
+    _cell,
+    _esc,
+    badge,
+    login_page,
+    page,
+    progress,
+    sdot,
+    tile,
+)
+
+setup_logging()
 
 app = FastAPI(title="ValueGraph Admin")
+install_request_logging(app)
 
-DB_STATUS: dict[str, dict] = {}   # key -> {title, tables:[...], error, meta:{table->{columns,pk}}}
-ENGINES: dict[str, object] = {}   # key -> sqlalchemy Engine
-TABLES: dict[str, dict] = {}      # key -> {table_name -> sqlalchemy Table} (for typed CRUD)
-
-
-def _mount_database(key: str, title: str, url: str) -> None:
-    """Reflect a service DB: capture table/column/pk metadata + Table objects (typed
-    CRUD) + the live engine, so the styled DB browser pages and edits rows directly."""
-    try:
-        engine = create_engine(url, connect_args={"check_same_thread": False} if url.startswith("sqlite") else {})
-        md = MetaData()
-        md.reflect(bind=engine)
-    except Exception as e:  # DB missing / unreachable — note it, keep the panel up
-        DB_STATUS[key] = {"title": title, "tables": [], "error": str(e)[:200], "meta": {}}
-        return
-
-    ENGINES[key] = engine
-    TABLES[key] = dict(md.tables)
-    meta: dict[str, dict] = {}
-    for tname, tbl in sorted(md.tables.items()):
-        meta[tname] = {"columns": [c.name for c in tbl.columns],
-                       "pk": [c.name for c in tbl.primary_key.columns]}
-    DB_STATUS[key] = {"title": title, "tables": sorted(meta), "error": None, "meta": meta}
-
-
-for _k, _t, _u in DATABASES:
-    _mount_database(_k, _t, _u)
+from adminpanel import db_browser  # noqa: E402
+app.include_router(db_browser.router)
 
 
 # --- auth -----------------------------------------------------------------
@@ -96,48 +100,16 @@ async def logout(request: Request):
     return RedirectResponse("/login", status_code=302)
 
 
-# --- shared data fetch ----------------------------------------------------
-async def _safe_get(client: httpx.AsyncClient, url: str) -> dict:
-    try:
-        r = await client.get(url, timeout=8)
-        return r.json() if r.headers.get("content-type", "").startswith("application/json") else {"_status": r.status_code}
-    except Exception as e:
-        return {"_error": str(e)[:120]}
-
-
-def _ok(d: dict) -> bool:
-    return isinstance(d, dict) and "_error" not in d and "_status" not in d
-
-
+# --- shared HTML bits (fetch helpers → clients.py; DB state/helpers → state.py — RF-14) ---------
 def _flash(msg: str) -> str:
     return f"<div class=flash>{_esc(msg)}</div>" if msg else ""
-
-
-def _table_counts(key: str) -> dict[str, int]:
-    out: dict[str, int] = {}
-    engine = ENGINES.get(key)
-    meta = DB_STATUS.get(key, {}).get("meta", {})
-    if engine is None:
-        return out
-    with engine.connect() as conn:
-        for tname in meta:
-            try:
-                out[tname] = conn.execute(text(f'SELECT COUNT(*) FROM "{tname}"')).scalar()
-            except Exception:
-                out[tname] = "?"
-    return out
-
-
-def _tile(k, v, ic, href, small=False) -> str:
-    inner = f"<div class='k'>{ic} {_esc(k)}</div><div class='v {'sm' if small else ''}'>{_esc(v)}</div>"
-    return f"<a class=tile href='{href}' style='display:block'>{inner}</a>"
 
 
 # --- Overview -------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 async def overview(request: Request, msg: str = ""):
     async with httpx.AsyncClient() as c:
-        sched = await _safe_get(c, f"{settings.datasets_url}/admin/scheduler")
+        queue = await _safe_get(c, f"{settings.datasets_url}/admin/queue")
         stats = await _safe_get(c, f"{settings.datasets_url}/admin/store/stats")
         jobs = await _safe_get(c, f"{settings.datasets_url}/admin/jobs")
         raginfo = await _safe_get(c, f"{settings.rag_url}/rag/info")
@@ -149,22 +121,26 @@ async def overview(request: Request, msg: str = ""):
     job_list = jobs.get("jobs") if isinstance(jobs, dict) else []
     running = [j for j in (job_list or []) if j.get("status") == "running"]
     errored = [j for j in (job_list or []) if j.get("status") == "error"][:5]
+    q_totals = queue.get("totals") or {}
+    q_pending, q_doing = q_totals.get("todo", 0), q_totals.get("doing", 0)
 
     tiles = "".join([
-        _tile("data sources", len(conns) if conns else "?", "◈", "/catalog"),
-        _tile("catalog tools", tool_count, "⚙", "/catalog"),
-        _tile("RAG embedder", raginfo.get("embedding_backend", "—"), "▤", "/data", small=True),
-        _tile("scheduler", sched.get("state", "—"), "⏣", "/pipelines", small=True),
-        _tile("store facts", stats.get("total_facts", "—"), "▦", "/data"),
-        _tile("jobs running", len(running), "●", "/pipelines"),
+        tile("data sources", len(conns) if conns else "?", "◈", "/catalog"),
+        tile("catalog tools", tool_count, "⚙", "/catalog"),
+        tile("RAG embedder", raginfo.get("embedding_backend", "—"), "▤", "/data", small=True),
+        tile("queue pending", q_pending if _ok(queue) else "—", "⚙", "/queue"),
+        tile("store facts", stats.get("total_facts", "—"), "▦", "/data"),
+        tile("queue running", q_doing if _ok(queue) else len(running), "●", "/queue"),
     ])
 
+    # the queue is healthy if the overview came back AND its job DB was reachable (no 'error' field)
+    queue_up = _ok(queue) and not queue.get("error")
     checks = [
         ("Gateway / catalog", _ok(catalog)),
-        ("Data plane (datasets)", _ok(stats) or _ok(sched)),
+        ("Data plane (datasets)", _ok(stats) or _ok(queue)),
         ("RAG", _ok(raginfo)),
         ("Agent engine", _ok(agentinfo)),
-        ("Scheduler", _ok(sched) and sched.get("state") in ("running", "enabled", "paused", "idle")),
+        ("Queue (Procrastinate)", queue_up),
     ]
     health = "".join(
         f"<div class=card><h3>{sdot('ok' if up else 'err')} {_esc(name)}</h3>"
@@ -191,7 +167,8 @@ async def overview(request: Request, msg: str = ""):
         + "<h2>Jump to</h2><div>"
         + "".join(f"<span class=pill><a href='{h}'>{_esc(l)}</a></span>"
                   for h, l in [("/catalog", "Catalog →"), ("/pipelines", "Pipelines →"),
-                               ("/data", "Data →"), ("/users", "Users →"), ("/db", "DB browser →")])
+                               ("/queue", "Queue →"), ("/data", "Data →"), ("/users", "Users →"),
+                               ("/db", "DB browser →")])
         + "</div>"
     )
     return HTMLResponse(page("/", "Overview", body, refresh=bool(running)))
@@ -250,10 +227,10 @@ async def catalog_view(request: Request):
     )
 
     summary = "".join([
-        _tile("connectors", len(conns), "◈", "/catalog"),
-        _tile("MCP tools", tool_count, "⚙", "/catalog"),
-        _tile("RAG embedder", raginfo.get("embedding_backend", "—"), "▤", "/data", small=True),
-        _tile("agent model", agentinfo.get("model", "—"), "✦", "/catalog", small=True),
+        tile("connectors", len(conns), "◈", "/catalog"),
+        tile("MCP tools", tool_count, "⚙", "/catalog"),
+        tile("RAG embedder", raginfo.get("embedding_backend", "—"), "▤", "/data", small=True),
+        tile("agent model", agentinfo.get("model", "—"), "✦", "/catalog", small=True),
     ])
 
     err = "<div class=warn>Gateway/catalog unreachable — start the stack to see live connectors.</div>" if not conns else ""
@@ -270,6 +247,10 @@ async def catalog_view(request: Request):
 def _interval_label(seconds: int) -> str:
     if not seconds:
         return "—"
+    if seconds % 604800 == 0:
+        return f"{seconds // 604800}주마다"
+    if seconds % 86400 == 0:
+        return f"{seconds // 86400}일마다"
     if seconds % 3600 == 0:
         return f"{seconds // 3600}시간마다"
     if seconds % 60 == 0:
@@ -277,15 +258,19 @@ def _interval_label(seconds: int) -> str:
     return f"{seconds}초마다"
 
 
-def _pipeline_card(p: dict, scheduled: set[str], interval: int) -> str:
-    """Visualize one pipeline: source → store, schedule, and its latest run (status/rows/error)."""
-    is_sched = p["id"] in scheduled
-    sched_txt = (f"⏱ {_interval_label(interval)}" if is_sched else "수동 전용")
-    sched_cls = "ok" if is_sched else ""
+def _pipeline_card(p: dict, cron_by_pid: dict[str, str]) -> str:
+    """Visualize one pipeline: source → store, cron sweep, latest run (status/rows/error), run-now."""
+    pid = p["id"]
+    cron = cron_by_pid.get(pid)
+    # each pipeline has its OWN cadence (min_interval_seconds) → shown as a human label next to its cron.
+    cadence = p.get("min_interval_seconds") or 0
+    sched_txt = (f"⏱ {_interval_label(cadence)}" if cron else "수동 전용")
+    sched_cls = "ok" if cron else ""
+    cron_txt = f" <span class=muted><code>{_esc(cron)}</code></span>" if cron else ""
     j = p.get("latest") or {}
     if j:
         st = j.get("status")
-        kind = {"success": "ok", "error": "err", "running": "run"}.get(st, "")
+        kind = JOB_STATUS_CLASS.get(st, "")
         tot, dn = j.get("total") or 0, j.get("done") or 0
         last = (f"<div class=sub>최근 실행 {badge(_esc(st), kind)} · 수집 {_esc(j.get('rows', 0))}행"
                 + (f" · {dn}/{tot}" if tot else "") + f"<br><span class=muted>{_esc((j.get('started_at') or '')[:19])}</span>")
@@ -295,12 +280,37 @@ def _pipeline_card(p: dict, scheduled: set[str], interval: int) -> str:
     else:
         last = "<div class=sub muted>아직 실행 기록 없음</div>"
     markets = " ".join(badge(m) for m in p.get("markets", []))
+    # 원천 API · 쿼리 — operators can see EXACTLY which upstream endpoint + request each pipeline issues.
+    api_lines = p.get("upstream") or []
+    fetch = p.get("fetch") or ""
+    detail = ""
+    if api_lines or fetch:
+        body = "\n".join(api_lines)
+        if fetch:
+            body += ("\n\n" if body else "") + "fetch: " + fetch
+        detail = (f"<details class=errlog><summary>원천 API · 쿼리</summary>"
+                  f"<pre>{_esc(body)}</pre></details>")
+    if cron:
+        # cron-scheduled pipeline → one-click sweep over the configured universe.
+        run_now = (f"<form class=ops method=post action='/ops/queue/sweep/{_esc(pid)}'>"
+                   f"<button class=p>지금 수집 ▶</button></form>")
+    else:
+        # manual-only pipeline (no auto-cron — these are rate-limited/metered: e.g. Alpha Vantage
+        # 25 calls/day, Document AI per-page). Run is TICKER-SCOPED on purpose: a full-universe run
+        # would blow the quota/cost, so that stays only in the backfill form below. Enter a few tickers.
+        mkt = (p.get("markets") or ["US"])[0]
+        run_now = (
+            f"<form class=ops method=post action='/ops/pipelines/run'>"
+            f"<input type=hidden name=pipelines value='{_esc(pid)}'>"
+            f"<input type=hidden name=market value='{_esc(mkt)}'>"
+            f"<input name=tickers required placeholder='AAPL MSFT … (티커 직접 입력)' size=26>"
+            f"<button class=p>지금 수집 ▶</button></form>")
     return (
-        f"<div class=card><h3>{_esc(p['label'])} {badge(sched_txt, sched_cls)}</h3>"
+        f"<div class=card><h3>{_esc(p['label'])} {badge(sched_txt, sched_cls)}{cron_txt}</h3>"
         f"<div class=sub>{_esc(p.get('desc') or '')}</div>"
         f"<div class=flow><span class=pill>{_esc(p.get('source'))}</span> <span class=arrow>→</span> "
         f"<span class=pill><code>{_esc(p.get('store'))}</code></span> {markets}</div>"
-        f"{last}</div>"
+        f"{detail}{last}<div class=opsrow>{run_now}</div></div>"
     )
 
 
@@ -312,50 +322,44 @@ async def pipelines(request: Request, msg: str = ""):
         universes = await _safe_get(c, f"{settings.datasets_url}/admin/universes")
 
     registry = pdata.get("pipelines") or []
-    sched = pdata.get("scheduler") or {}
-    scheduled = set(sched.get("pipelines") or [])
-    interval = sched.get("interval_seconds") or 0
-    sstate = sched.get("state", pdata.get("_error", "?"))
-    sbadge = badge(sstate, "run" if sstate == "running" else ("warn" if sstate == "paused" else "ok"))
+    queue = pdata.get("queue") or {}
+    periodic = queue.get("periodic") or []
+    cron_by_pid = {s["pipeline_id"]: s["cron"] for s in periodic}
+    totals = queue.get("totals") or {}
+    queue_up = not queue.get("error") and "totals" in queue
 
     job_list = jobs.get("jobs") if isinstance(jobs, dict) else []
     running = any(j.get("status") == "running" for j in (job_list or []))
 
-    # --- scheduler banner: state · cadence · scope · last sweep ---
-    uni_total = sched.get("universe_total", 0)
-    uni_breakdown = " · ".join(f"{_esc(u['market'])} {_esc(u['count'])}" for u in (sched.get("universe") or [])) or "비어 있음"
-    last_sweep = ""
-    if sched.get("last_summary"):
-        parts = []
-        for mkt, res in (sched["last_summary"] or {}).items():
-            if isinstance(res, dict):
-                oks = sum(1 for v in res.values() if v == "ok")
-                parts.append(f"{_esc(mkt)} {oks}/{len(res)} ok")
-        last_sweep = " · ".join(parts)
-    sched_banner = (
-        "<div class=card><h3>⏣ 스케줄러 " + sbadge + "</h3>"
-        f"<div class=flow><span class=pill>주기 <b>{_esc(_interval_label(interval))}</b></span>"
-        f"<span class=pill>대상 <b>{_esc(uni_total)}</b>종목 ({uni_breakdown})</span>"
-        f"<span class=pill>파이프라인 <b>{_esc(len(scheduled))}</b>개</span>"
-        f"<span class=pill>실행 {_esc(sched.get('run_count', 0))}회</span></div>"
-        f"<div class=sub>마지막 스윕: {_esc(sched.get('last_run_at') or '없음')}"
-        + (f" · {last_sweep}" if last_sweep else "") + "</div>"
+    # --- queue banner: the Procrastinate scheduler (worker) — cron sweeps + live job counts ---
+    qstate = ("run" if totals.get("doing") else "ok") if queue_up else "err"
+    qbadge = badge("가동중" if queue_up else "큐 DB 연결 안됨", qstate)
+    counts = (f"<span class=pill>대기 <b>{_esc(totals.get('todo', 0))}</b></span>"
+              f"<span class=pill>실행중 <b>{_esc(totals.get('doing', 0))}</b></span>"
+              f"<span class=pill>완료 <b>{_esc(totals.get('succeeded', 0))}</b></span>"
+              f"<span class=pill>실패 <b>{_esc(totals.get('failed', 0))}</b></span>") if queue_up else ""
+    sweeps = " · ".join(f"{_esc(s['label'])} <code>{_esc(s['cron'])}</code>" for s in periodic) or "없음"
+    queue_banner = (
+        "<div class=card><h3>⚙ 큐 스케줄러 (Procrastinate · 워커) " + qbadge + "</h3>"
+        f"<div class=flow>{counts}<span class=pill>크론 스윕 <b>{_esc(len(periodic))}</b>개</span></div>"
+        f"<div class=sub>자동 수집(크론): {sweeps}</div>"
+        "<div class=sub muted>워커가 정해진 크론에 유니버스를 스윕해 작업을 큐에 넣고 재시도와 함께 처리합니다. "
+        "개별 작업 모니터링·재시도·취소는 <a href=/queue>Queue →</a>. 자동 수집을 멈추려면 워커를 중지하세요 "
+        "(<code>docker compose stop worker</code>).</div>"
         "<div class=opsrow>"
-        "<form class=ops method=post action=/ops/scheduler/run><button class=p>지금 실행</button></form>"
-        "<form class=ops method=post action=/ops/scheduler/resume><button>가동(Resume)</button></form>"
-        "<form class=ops method=post action=/ops/scheduler/pause><button>일시정지</button></form>"
+        "<a class='btn p' href=/queue>큐 작업 보기 →</a>"
         "<form class=ops method=post action=/ops/selftest><button>self-test</button></form>"
         "</div></div>"
     )
 
     # --- per-pipeline visualization cards ---
-    cards = "".join(_pipeline_card(p, scheduled, interval) for p in registry) or "<div class=empty>파이프라인 레지스트리를 불러오지 못했어요.</div>"
+    cards = "".join(_pipeline_card(p, cron_by_pid) for p in registry) or "<div class=empty>파이프라인 레지스트리를 불러오지 못했어요.</div>"
 
     # --- unified backfill: pick universe + pipelines, run together ---
-    # CE-0: a one-click "full universe" option = the scheduler's configured spec (multi-preset,
+    # CE-0: a one-click "full universe" option = the sweep's configured spec (multi-preset,
     # resolved dynamically server-side), so the operator can deep-backfill everything at once.
-    full_spec = sched.get("universe_spec") or ""
-    full_opt = (f"<option value='{_esc(full_spec)}'>★ 전체 유니버스 (스케줄러: {_esc(full_spec)})</option>"
+    full_spec = queue.get("universe") or ""
+    full_opt = (f"<option value='{_esc(full_spec)}'>★ 전체 유니버스 (스윕: {_esc(full_spec)})</option>"
                 if full_spec else "")
     preset_opts = full_opt + "".join(
         f"<option value='{_esc(u['id'])}'>{_esc(u['label'])} · {_esc(u['market'])} ({_esc(u['count'])})</option>"
@@ -383,7 +387,7 @@ S&amp;P·코스피·코스닥 전체는 직접 입력란에 티커를 붙여넣�
         rows = ""
         for j in job_list:
             st = j.get("status")
-            kind = {"success": "ok", "error": "err", "running": "run"}.get(st, "")
+            kind = JOB_STATUS_CLASS.get(st, "")
             tot, dn = j.get("total") or 0, j.get("done") or 0
             ptxt = f"{dn}/{tot}" if tot else "—"
             err = j.get("error") or ""
@@ -421,7 +425,7 @@ S&amp;P·코스피·코스닥 전체는 직접 입력란에 티커를 붙여넣�
     body = (_flash(msg)
             + "<p class=hint>모든 데이터 파이프라인을 한곳에서 — 무엇을 어떤 경로로 수집해 어디에 쌓는지, "
               "주기·상태·에러를 시각화합니다. 작업이 도는 동안 자동 새로고침됩니다.</p>"
-            + "<h2>스케줄러</h2><div class=grid>" + sched_banner + "</div>"
+            + "<h2>큐 스케줄러</h2><div class=grid>" + queue_banner + "</div>"
             + "<h2>파이프라인</h2><div class=grid>" + cards + "</div>"
             + backfill
             + f"<h2>수집 작업 {'· ⟳ live' if running else ''}</h2>" + jobs_html
@@ -436,12 +440,10 @@ async def upstream_view(request: Request):
     async with httpx.AsyncClient() as c:
         data = await _safe_get(c, f"{settings.datasets_url}/admin/upstream-health")
     ups = data.get("upstreams") or []
-    _DOT = {"ok": "ok", "degraded": "warn", "key-missing": "warn", "down": "err"}
-    _LABEL = {"ok": "정상", "degraded": "불안정", "key-missing": "키 없음", "down": "다운"}
     if ups:
         rows = "".join(
-            f"<tr><td>{sdot(_DOT.get(u['status'], 'err'))} {_esc(u['name'])}</td>"
-            f"<td>{badge(_LABEL.get(u['status'], u['status']), _DOT.get(u['status'], ''))}</td>"
+            f"<tr><td>{sdot(UPSTREAM_DOT.get(u['status'], 'err'))} {_esc(u['name'])}</td>"
+            f"<td>{badge(UPSTREAM_LABEL.get(u['status'], u['status']), UPSTREAM_DOT.get(u['status'], ''))}</td>"
             f"<td class=mono>{_esc(u.get('http_status') or '—')}</td>"
             f"<td class=mono>{_esc(u.get('latency_ms'))} ms</td>"
             f"<td>{'필요' if u.get('requires_key') else '불필요'}"
@@ -504,21 +506,6 @@ async def data_view(request: Request):
 
 
 # --- Users / tenants ------------------------------------------------------
-def _query(key: str, sql: str, params: dict | None = None) -> list:
-    engine = ENGINES.get(key)
-    if engine is None:
-        return []
-    try:
-        with engine.connect() as conn:
-            return conn.execute(text(sql), params or {}).fetchall()
-    except Exception:
-        return []
-
-
-def _has(key: str, table: str) -> bool:
-    return table in DB_STATUS.get(key, {}).get("meta", {})
-
-
 def _simple_table(key: str, table: str, cols: list[str], limit: int = 50) -> str:
     if not _has(key, table):
         return f"<div class=empty>No <code>{_esc(table)}</code> table.</div>"
@@ -553,12 +540,199 @@ async def users_view(request: Request):
     return HTMLResponse(page("/users", "Users", body))
 
 
-# --- ops actions (POST → redirect to /pipelines) --------------------------
-@app.post("/ops/scheduler/{action}")
-async def ops_scheduler(request: Request, action: str):
+# --- Queue (Procrastinate) — monitor + control ----------------------------
+
+
+@app.get("/queue", response_class=HTMLResponse)
+async def queue_view(request: Request, msg: str = "", status: str = ""):
     async with httpx.AsyncClient() as c:
-        await c.post(f"{settings.datasets_url}/admin/scheduler/{action}", timeout=20)
-    return RedirectResponse(f"/pipelines?msg=scheduler+{action}+requested", status_code=303)
+        ov = await _safe_get(c, f"{settings.datasets_url}/admin/queue")
+        jq = f"{settings.datasets_url}/admin/queue/jobs?limit=100" + (f"&status={status}" if status else "")
+        jobs = await _safe_get(c, jq)
+        act = await _safe_get(c, f"{settings.datasets_url}/admin/queue/activity?limit=50")
+
+    if not _ok(ov):
+        body = _flash(msg) + "<div class=warn>큐 정보를 불러오지 못했습니다 (datasets 연결 확인).</div>"
+        return HTMLResponse(page("/queue", "Queue", body))
+    if ov.get("error"):
+        # the overview rendered but the queue DB was unreachable — still show the cron schedule.
+        note = f"<div class=warn>큐 DB 연결 실패: {_esc(ov['error'])} — 워커/Postgres 상태를 확인하세요.</div>"
+    else:
+        note = ""
+
+    totals = ov.get("totals") or {}
+    tiles = "".join(tile(QUEUE_STATUS_LABEL[k], totals.get(k, 0), "●", f"/queue?status={k}", small=True)
+                    for k in ("todo", "doing", "succeeded", "failed") )
+
+    # periodic cron sweeps + a run-now button each
+    sweeps = ""
+    for s in (ov.get("periodic") or []):
+        sweeps += (f"<tr><td>{_esc(s['label'])}</td><td><code>{_esc(s['cron'])}</code></td>"
+                   f"<td class=muted>{_esc(s.get('source') or '')}</td>"
+                   f"<td><form class=ops method=post action='/ops/queue/sweep/{_esc(s['pipeline_id'])}'>"
+                   f"<button class=p>지금 수집 ▶</button></form></td></tr>")
+    sweeps_html = ("<div class=tablewrap><table><thead><tr><th>파이프라인</th><th>크론</th><th>원천</th>"
+                   f"<th></th></tr></thead><tbody>{sweeps}</tbody></table></div>")
+
+    # live jobs with retry/cancel controls
+    job_list = jobs.get("jobs") if isinstance(jobs, dict) else []
+    rows = ""
+    for j in (job_list or []):
+        st = j.get("status")
+        args = j.get("args") or {}
+        scope = f"{args.get('pipeline_id', j.get('task'))} · {args.get('market', '')}"
+        tcount = len(args.get("tickers") or []) if isinstance(args.get("tickers"), list) else ""
+        ctl = f"<a class='ops linkbtn' href='/queue/job/{_esc(j['id'])}'>로그</a>"
+        if st == "failed":
+            ctl += (f"<form class=ops method=post action='/ops/queue/jobs/{_esc(j['id'])}/retry'>"
+                    f"<button class=p>재시도</button></form>")
+        if st in ("todo", "doing", "failed"):
+            ctl += (f"<form class=ops method=post action='/ops/queue/jobs/{_esc(j['id'])}/cancel'>"
+                    f"<button class=danger>취소</button></form>")
+        rows += (
+            f"<tr><td>{_esc(j['id'])}</td><td>{badge(_esc(j.get('task')))}</td>"
+            f"<td class=muted>{_esc(j.get('queue'))}</td>"
+            f"<td class=wrap>{_esc(scope)}{f' · {tcount}종목' if tcount else ''}</td>"
+            f"<td>{badge(QUEUE_STATUS_LABEL.get(st, st), QUEUE_STATUS_CLASS.get(st, ''))}</td>"
+            f"<td>{_esc(j.get('attempts'))}</td>"
+            f"<td class=muted>{_esc((j.get('scheduled_at') or '')[:19])}</td>"
+            f"<td><div class=opsrow>{ctl}</div></td></tr>"
+        )
+    jobs_html = ("<div class=tablewrap><table><thead><tr><th>#</th><th>task</th><th>queue</th><th>scope</th>"
+                 "<th>status</th><th>시도</th><th>scheduled</th><th></th></tr></thead>"
+                 f"<tbody>{rows or '<tr><td colspan=8 class=muted>작업 없음</td></tr>'}</tbody></table></div>")
+
+    filt = " · ".join(
+        (f"<b>{QUEUE_STATUS_LABEL[k]}</b>" if status == k else f"<a href='/queue?status={k}'>{QUEUE_STATUS_LABEL[k]}</a>")
+        for k in ("todo", "doing", "succeeded", "failed")
+    )
+    running = bool(totals.get("doing") or totals.get("todo"))
+    act_list = act.get("activity") if isinstance(act, dict) else []
+    act_html = ("<h2>활동 로그" + (" · ⟳ live" if running else "") + "</h2>"
+                + "<p class=hint>실행 중인 파이프라인이 무엇을, 어디서, 어떤 결과로 수집하는지 실시간으로 보여줍니다.</p>"
+                + _activity_feed(act_list or []))
+    body = (_flash(msg) + note
+            + "<p class=hint>Procrastinate 큐 — Postgres가 브로커입니다(Redis 없음). 워커가 크론 스윕을 돌려 "
+              "작업을 큐에 넣고 재시도와 함께 처리합니다. 여기서 작업을 모니터링하고 재시도/취소할 수 있어요.</p>"
+            + "<div class=tiles>" + tiles + "</div>"
+            + act_html
+            + "<h2>자동 수집 (크론 스윕)</h2>" + sweeps_html
+            + f"<h2>작업 {'· ⟳ live' if running else ''}</h2>"
+            + f"<div class=hint>필터: 전체 · {filt}"
+            + (f" · <a href='/queue'>초기화</a>" if status else "") + "</div>"
+            + jobs_html)
+    return HTMLResponse(page("/queue", "Queue", body, refresh=running))
+
+
+# Procrastinate event types → (icon, css class) for the timeline.
+_EVENT_STYLE = {
+    "deferred": ("⏳", ""), "scheduled": ("⏱", ""), "started": ("▶", "run"),
+    "deferred_for_retry": ("↻", "warn"), "succeeded": ("✓", "ok"),
+    "failed": ("✗", "err"), "abort_requested": ("🛑", "warn"), "aborted": ("⛔", "err"),
+    "cancelled": ("⊘", ""),
+}
+
+
+@app.get("/queue/job/{job_id}", response_class=HTMLResponse)
+async def queue_job_detail(request: Request, job_id: int):
+    """Diagnostic page for one queue job — the Procrastinate event timeline + the linked pipeline
+    run's IngestionJob error note. This is where 'filing_text가 왜 안 되는지' becomes visible."""
+    async with httpx.AsyncClient() as c:
+        d = await _safe_get(c, f"{settings.datasets_url}/admin/queue/jobs/{job_id}")
+    if not _ok(d):
+        return HTMLResponse(page("/queue", f"Job {job_id}",
+                                 "<div class=warn>작업 정보를 불러오지 못했습니다.</div>"
+                                 "<p><a href='/queue'>← 큐로</a></p>"))
+    job = d.get("job") or {}
+    args = job.get("args") or {}
+    scope = f"{args.get('pipeline_id', job.get('task'))} · {args.get('market', '')}"
+    tcount = len(args.get("tickers") or []) if isinstance(args.get("tickers"), list) else ""
+    st = job.get("status")
+
+    head = (f"<div class=tablewrap><table><tbody>"
+            f"<tr><td class=muted>작업</td><td>#{_esc(job.get('id'))} · {badge(_esc(job.get('task')))} "
+            f"· {_esc(scope)}{f' · {tcount}종목' if tcount else ''}</td></tr>"
+            f"<tr><td class=muted>상태</td><td>{badge(QUEUE_STATUS_LABEL.get(st, st), QUEUE_STATUS_CLASS.get(st, ''))} "
+            f"· 시도 {_esc(job.get('attempts'))}</td></tr>"
+            f"<tr><td class=muted>lock</td><td><code>{_esc(job.get('lock') or '')}</code></td></tr>"
+            f"<tr><td class=muted>scheduled</td><td class=muted>{_esc((job.get('scheduled_at') or '')[:19])}</td></tr>"
+            f"</tbody></table></div>")
+
+    # event timeline — the smoking gun (deferred → started → abort_requested → failed, etc.)
+    ev_rows = ""
+    for e in (d.get("events") or []):
+        icon, cls = _EVENT_STYLE.get(e.get("type"), ("•", ""))
+        ev_rows += (f"<tr><td>{icon}</td><td>{badge(_esc(e.get('type')), cls)}</td>"
+                    f"<td class=muted>{_esc((e.get('at') or '')[:23].replace('T', ' '))}</td></tr>")
+    ev_html = ("<h2>이벤트 타임라인</h2><div class=tablewrap><table><thead><tr><th></th><th>type</th>"
+               f"<th>at (UTC)</th></tr></thead><tbody>{ev_rows or '<tr><td colspan=3 class=muted>이벤트 없음</td></tr>'}"
+               "</tbody></table></div>")
+
+    # linked IngestionJob — the per-pipeline run outcome + error note (e.g. 'FAILED ReadTimeout ×N')
+    ing = d.get("ingestion")
+    if ing:
+        ing_status = ing.get("status")
+        err = ing.get("error")
+        ing_html = (
+            "<h2>파이프라인 실행 (IngestionJob)</h2>"
+            f"<div class=tablewrap><table><tbody>"
+            f"<tr><td class=muted>상태</td><td>{badge(_esc(ing_status), JOB_STATUS_CLASS.get(ing_status, ''))} "
+            f"· {_esc(ing.get('done'))}/{_esc(ing.get('total'))} 처리 · {_esc(ing.get('rows'))} chunks</td></tr>"
+            f"<tr><td class=muted>시작</td><td class=muted>{_esc((ing.get('started_at') or '')[:19])} "
+            f"→ {_esc((ing.get('ended_at') or '—')[:19])}</td></tr>"
+            f"</tbody></table></div>"
+            + (f"<div class='logbox {('err' if ing_status == 'error' else '')}'>{_esc(err)}</div>"
+               if err else "<p class=muted>기록된 오류 메모가 없습니다.</p>"))
+    else:
+        ing_html = ("<h2>파이프라인 실행 (IngestionJob)</h2>"
+                    "<p class=muted>이 작업과 매칭되는 IngestionJob 기록이 없습니다 "
+                    "(작업이 시작 전 취소되었거나 기록 전 종료됨).</p>")
+
+    # live activity feed — what the run is fetching, from where, with what result (newest first)
+    running = st in ("doing", "todo")
+    act_html = ("<h2>활동 로그" + (" · ⟳ live" if running else "") + "</h2>"
+                + _activity_feed(d.get("activity") or []))
+
+    body = (f"<p><a href='/queue'>← 큐로</a></p><h1 style='margin:0 0 4px'>작업 #{_esc(job_id)} 로그</h1>"
+            + head + act_html + ev_html + ing_html)
+    return HTMLResponse(page("/queue", f"Job {job_id}", body, refresh=running))
+
+
+def _activity_feed(acts: list) -> str:
+    """Render the granular pipeline-activity lines as a monospace live log (newest first)."""
+    if not acts:
+        return "<p class=muted>아직 활동 기록이 없습니다 (작업이 시작되면 실시간으로 표시됩니다).</p>"
+    lines = ""
+    for a in acts:
+        lv = a.get("level")
+        cls = "err" if lv == "error" else ("warn" if lv == "warn" else "")
+        t = (a.get("at") or "")[11:19]      # HH:MM:SS
+        mk = a.get("market") or ""
+        lines += (f"<div class='actline {cls}'><span class=at>{_esc(t)}</span>"
+                  f"<span class=mk>{_esc(mk)}</span><span class=msg>{_esc(a.get('message'))}</span></div>")
+    return f"<div class='actfeed'>{lines}</div>"
+
+
+@app.post("/ops/queue/sweep/{pipeline_id}")
+async def ops_queue_sweep(request: Request, pipeline_id: str):
+    async with httpx.AsyncClient() as c:
+        r = await c.post(f"{settings.datasets_url}/admin/queue/sweep/{pipeline_id}", timeout=30)
+        ok = r.status_code == 200 and (r.json() or {}).get("deferred")
+    return RedirectResponse(f"/queue?msg={pipeline_id}+{'enqueued' if ok else 'failed'}", status_code=303)
+
+
+@app.post("/ops/queue/jobs/{job_id}/retry")
+async def ops_queue_retry(request: Request, job_id: int):
+    async with httpx.AsyncClient() as c:
+        await c.post(f"{settings.datasets_url}/admin/queue/jobs/{job_id}/retry", timeout=20)
+    return RedirectResponse(f"/queue?msg=job+{job_id}+retried", status_code=303)
+
+
+@app.post("/ops/queue/jobs/{job_id}/cancel")
+async def ops_queue_cancel(request: Request, job_id: int):
+    async with httpx.AsyncClient() as c:
+        await c.post(f"{settings.datasets_url}/admin/queue/jobs/{job_id}/cancel", timeout=20)
+    return RedirectResponse(f"/queue?msg=job+{job_id}+cancel+requested", status_code=303)
 
 
 @app.post("/ops/backfill")
@@ -642,226 +816,3 @@ async def ops_rag_search(request: Request, query: str = Form(...)):
             f"<div class=tablewrap><table><thead><tr><th>score</th><th>source</th><th>text</th></tr></thead>"
             f"<tbody>{rows}</tbody></table></div>")
     return HTMLResponse(page("/pipelines", "RAG search", body))
-
-
-# --- DB browser (styled CRUD; no sqladmin) --------------------------------
-_PAGE = 50
-
-
-@app.get("/db", response_class=HTMLResponse)
-async def db_index(request: Request):
-    cards = ""
-    for key, info in DB_STATUS.items():
-        if info["error"]:
-            cards += (f"<div class=card><h3>{_esc(info['title'])} <span class=muted>{key}</span></h3>"
-                      f"<div class=err>unavailable: {_esc(info['error'])}</div></div>")
-            continue
-        counts = _table_counts(key)
-        chips = "".join(
-            f"<span class=pill><a href='/db/{key}/{t}'>{_esc(t)}</a><span class=cnt>{_esc(counts.get(t, '?'))}</span></span>"
-            for t in info["meta"]) or "<span class=muted>(no tables)</span>"
-        cards += f"<div class=card><h3>{_esc(info['title'])} <span class=muted>{key}</span></h3>{chips}</div>"
-    body = ("<p class=hint>Every reflected service table — view, edit, create, delete in the panel theme.</p>"
-            "<div class=grid>" + cards + "</div>")
-    return HTMLResponse(page("/db", "DB browser", body))
-
-
-def _check(key: str, table: str):
-    info = DB_STATUS.get(key)
-    meta = (info or {}).get("meta", {})
-    if not info or table not in meta:
-        return None, None
-    return info, meta[table]
-
-
-def _crumb(key, table, extra="") -> str:
-    info = DB_STATUS.get(key, {})
-    return (f"<div class=crumb><a href=/db>DB browser</a> / {_esc(info.get('title', key))} "
-            f"<span class=muted>({_esc(key)})</span> / <a href='/db/{key}/{table}'>{_esc(table)}</a>{extra}</div>")
-
-
-@app.get("/db/{key}/{table}", response_class=HTMLResponse)
-async def browse_table(request: Request, key: str, table: str, page_: int = 0):
-    info, m = _check(key, table)
-    if not info:
-        return HTMLResponse(page("/db", "not found", "<div class=warn>unknown table</div>"), status_code=404)
-    cols, pk = m["columns"], m["pk"]
-    engine = ENGINES[key]
-    order = f'"{pk[0]}"' if pk else f'"{cols[0]}"'
-    p = max(page_, 0)
-    offset = p * _PAGE
-    with engine.connect() as conn:
-        total = conn.execute(text(f'SELECT COUNT(*) FROM "{table}"')).scalar() or 0
-        rows = conn.execute(text(f'SELECT * FROM "{table}" ORDER BY {order} LIMIT :l OFFSET :o'),
-                            {"l": _PAGE, "o": offset}).fetchall()
-    head = "".join(f"<th>{_esc(c)}</th>" for c in cols)
-    trs = ""
-    for i, row in enumerate(rows):
-        cells = "".join(f"<td class=wrap>{_cell(v, 80)}</td>" for v in row)
-        trs += f"<tr class=rowlink onclick=\"location='/db/{key}/{table}/row/{offset + i}'\">{cells}</tr>"
-    if not rows:
-        trs = f"<tr><td colspan={len(cols)} class=muted>no rows</td></tr>"
-
-    last = max((total - 1) // _PAGE, 0)
-    nav = ""
-    if p > 0:
-        nav += f"<a class=pg href='/db/{key}/{table}?page_={p - 1}'>← prev</a>"
-    nav += f"<span class=muted>rows {offset + 1 if total else 0}–{min(offset + _PAGE, total)} of {total}</span>"
-    if p < last:
-        nav += f"<a class=pg href='/db/{key}/{table}?page_={p + 1}'>next →</a>"
-    new_btn = (f"<a class='btn p' href='/db/{key}/{table}/new'>+ new row</a>" if pk
-               else "<span class=muted>read-only (no PK)</span>")
-
-    body = (_crumb(key, table)
-            + "<div class=top style='display:flex;justify-content:space-between;align-items:center;margin-bottom:12px'>"
-              f"<div class=pgbar>{nav}</div>{new_btn}</div>"
-            + f"<div class=tablewrap><table><thead><tr>{head}</tr></thead><tbody>{trs}</tbody></table></div>"
-            + "<p class=hint>Click a row to view / edit.</p>")
-    return HTMLResponse(page("/db", f"{table}", body))
-
-
-def _row_at(key: str, table: str, offset: int):
-    info, m = _check(key, table)
-    if not info:
-        return None, None
-    cols, pk = m["columns"], m["pk"]
-    engine = ENGINES[key]
-    order = f'"{pk[0]}"' if pk else f'"{cols[0]}"'
-    with engine.connect() as conn:
-        row = conn.execute(text(f'SELECT * FROM "{table}" ORDER BY {order} LIMIT 1 OFFSET :o'),
-                           {"o": max(offset, 0)}).fetchone()
-    return (dict(zip(cols, row)) if row is not None else None), m
-
-
-@app.get("/db/{key}/{table}/row/{offset}", response_class=HTMLResponse)
-async def row_detail(request: Request, key: str, table: str, offset: int):
-    rec, m = _row_at(key, table, offset)
-    if rec is None:
-        return HTMLResponse(page("/db", "not found", "<div class=warn>row not found</div>"), status_code=404)
-    kv = "".join(f"<tr><th class=kvk>{_esc(c)}</th><td class=kvv>{_cell(v)}</td></tr>" for c, v in rec.items())
-    back_page = offset // _PAGE
-    actions = ""
-    if m["pk"]:
-        actions = (f"<a class='btn p' href='/db/{key}/{table}/row/{offset}/edit'>✎ edit</a>"
-                   f"<form method=post action='/db/{key}/{table}/row/{offset}/delete' "
-                   "onsubmit=\"return confirm('Delete this row? This cannot be undone.')\" style='display:inline'>"
-                   "<button class=danger>🗑 delete</button></form>")
-    body = (_crumb(key, table, f" / row #{offset}")
-            + "<div class=top style='margin-bottom:12px'>"
-              f"<a class=pg href='/db/{key}/{table}?page_={back_page}'>← back to list</a></div>"
-            + f"<div class=tablewrap><table><tbody>{kv}</tbody></table></div>"
-            + f"<div class=actions>{actions}</div>")
-    return HTMLResponse(page("/db", f"{table} · row", body))
-
-
-def _coerce(col, raw: str):
-    if raw == "":
-        return None
-    try:
-        pyt = col.type.python_type
-    except Exception:
-        return raw
-    try:
-        if pyt is bool:
-            return raw.strip().lower() in ("1", "true", "yes", "on")
-        if pyt is int:
-            return int(raw)
-        if pyt is float:
-            return float(raw)
-    except (ValueError, TypeError):
-        return raw
-    return raw
-
-
-def _form_fields(tbl: Table, rec: dict | None) -> str:
-    out = ""
-    for col in tbl.columns:
-        val = "" if rec is None or rec.get(col.name) is None else rec.get(col.name)
-        tname = type(col.type).__name__
-        out += (f"<label class=fld><span class=nm>{_esc(col.name)} "
-                f"<code>{_esc(tname)}{' · PK' if col.primary_key else ''}</code></span>"
-                f"<input name='f_{_esc(col.name)}' value='{_esc(val)}'></label>")
-    return out
-
-
-@app.get("/db/{key}/{table}/row/{offset}/edit", response_class=HTMLResponse)
-async def edit_form(request: Request, key: str, table: str, offset: int):
-    rec, m = _row_at(key, table, offset)
-    if rec is None or not m["pk"]:
-        return HTMLResponse(page("/db", "not editable",
-                                 "<div class=warn>row not found or table has no primary key</div>"), status_code=404)
-    tbl = TABLES[key][table]
-    body = (_crumb(key, table, f" / row #{offset} / edit")
-            + f"<h2>Edit row</h2><form method=post action='/db/{key}/{table}/row/{offset}/edit'>"
-            + _form_fields(tbl, rec)
-            + f"<div class=actions><button class=p>Save</button>"
-              f"<a class=pg href='/db/{key}/{table}/row/{offset}'>cancel</a></div></form>")
-    return HTMLResponse(page("/db", f"{table} · edit", body))
-
-
-@app.post("/db/{key}/{table}/row/{offset}/edit")
-async def edit_save(request: Request, key: str, table: str, offset: int):
-    rec, m = _row_at(key, table, offset)
-    if rec is None or not m["pk"]:
-        return HTMLResponse(page("/db", "not editable", "<div class=warn>row gone</div>"), status_code=404)
-    tbl = TABLES[key][table]
-    form = await request.form()
-    vals = {c.name: _coerce(c, form.get(f"f_{c.name}", "")) for c in tbl.columns}
-    where = [tbl.c[pk] == rec[pk] for pk in m["pk"]]
-    try:
-        with ENGINES[key].begin() as conn:
-            conn.execute(tbl.update().where(and_(*where)).values(**vals))
-    except Exception as e:
-        body = (_crumb(key, table) + f"<div class=warn>update failed: {_esc(str(e)[:200])}</div>"
-                f"<a class=pg href='/db/{key}/{table}/row/{offset}/edit'>← back</a>")
-        return HTMLResponse(page("/db", "error", body), status_code=400)
-    return RedirectResponse(f"/db/{key}/{table}/row/{offset}", status_code=303)
-
-
-@app.post("/db/{key}/{table}/row/{offset}/delete")
-async def delete_row(request: Request, key: str, table: str, offset: int):
-    rec, m = _row_at(key, table, offset)
-    if rec is None or not m["pk"]:
-        return HTMLResponse(page("/db", "not deletable", "<div class=warn>row gone</div>"), status_code=404)
-    tbl = TABLES[key][table]
-    where = [tbl.c[pk] == rec[pk] for pk in m["pk"]]
-    with ENGINES[key].begin() as conn:
-        conn.execute(tbl.delete().where(and_(*where)))
-    return RedirectResponse(f"/db/{key}/{table}?msg=deleted", status_code=303)
-
-
-@app.get("/db/{key}/{table}/new", response_class=HTMLResponse)
-async def new_form(request: Request, key: str, table: str):
-    info, m = _check(key, table)
-    if not info or not m["pk"]:
-        return HTMLResponse(page("/db", "not creatable",
-                                 "<div class=warn>unknown table / no primary key</div>"), status_code=404)
-    tbl = TABLES[key][table]
-    body = (_crumb(key, table, " / new")
-            + "<h2>New row</h2><p class=hint>Leave a field blank to use its default / autoincrement.</p>"
-            + f"<form method=post action='/db/{key}/{table}/new'>" + _form_fields(tbl, None)
-            + f"<div class=actions><button class=p>Create</button>"
-              f"<a class=pg href='/db/{key}/{table}'>cancel</a></div></form>")
-    return HTMLResponse(page("/db", f"{table} · new", body))
-
-
-@app.post("/db/{key}/{table}/new")
-async def new_save(request: Request, key: str, table: str):
-    info, m = _check(key, table)
-    if not info or not m["pk"]:
-        return HTMLResponse(page("/db", "not creatable", "<div class=warn>unknown table</div>"), status_code=404)
-    tbl = TABLES[key][table]
-    form = await request.form()
-    vals = {}
-    for c in tbl.columns:
-        raw = form.get(f"f_{c.name}", "")
-        if raw != "":
-            vals[c.name] = _coerce(c, raw)
-    try:
-        with ENGINES[key].begin() as conn:
-            conn.execute(tbl.insert().values(**vals))
-    except Exception as e:
-        body = (_crumb(key, table) + f"<div class=warn>insert failed: {_esc(str(e)[:200])}</div>"
-                f"<a class=pg href='/db/{key}/{table}/new'>← back</a>")
-        return HTMLResponse(page("/db", "error", body), status_code=400)
-    return RedirectResponse(f"/db/{key}/{table}?msg=created", status_code=303)

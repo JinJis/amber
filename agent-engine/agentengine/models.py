@@ -13,7 +13,7 @@ class AgentSpec(BaseModel):
     # (``yahoo__prices``) or connector ids (``yahoo`` → all of its tools).
     allowed_tools: list[str] | None = None
     max_steps: int | None = None
-    backend: str | None = None  # planner override: 'stub' | 'gemini' (default = server setting)
+    backend: str | None = None  # legacy field — ignored; the platform is Gemini-only (invariant #7)
 
 
 class RunRequest(BaseModel):
@@ -33,16 +33,6 @@ class ChatRequest(BaseModel):
 
 class CompileRequest(BaseModel):
     description: str
-
-
-class KpiRequest(BaseModel):
-    """PH-DATA-5 / PH-9: extract a company's reported KPIs from its filing-text corpus,
-    each KPI cited to (and highlighted in) the source filing passage."""
-
-    ticker: str
-    market: str | None = None      # US | KR (inferred from the ticker when omitted)
-    top_k: int | None = None       # filing passages to consider (default in kpi.py)
-    spec: AgentSpec | None = None  # planner-backend override (stub|gemini)
 
 
 class ArtifactRefreshRequest(BaseModel):
@@ -65,15 +55,20 @@ class Citation(BaseModel):
     doc_type: str | None = None        # e.g. '10-K', 'news' (from RAG provenance)
     as_of: str | None = None           # ISO date the cited fact is as of
     freshness: str | None = None       # fresh | aging | stale (computed from as_of)
+    # periodicity of the source datasource (from the catalog) + its user-facing category.
+    # `cadence` gates the pin→alert flow: only a periodic source (cadence != one_shot) can carry
+    # a notification bot once pinned. Both ride along so they survive into the pinned widget spec.
+    cadence: str | None = None         # intraday|daily|event|scheduled|streaming|one_shot
+    category: str | None = None        # market|fundamentals|valuation|filings|gurus|macro|news|…
     snippet: str | None = None         # cited span / headline / computation — the preview body
     ticker: str | None = None
     page: str | None = None            # filing section / accession ref
     # the specific figures this citation actually contributed — rendered as an
     # extracted-data table in the preview (header row first, cited row marked).
     table: list[list[str]] | None = None
-    # PH-PROV2: a datasets `/evidence?…` endpoint URL — the frontend fetches a highlighted
-    # screenshot of the exact filing line this figure came from, lazily on viewer-open.
-    # Just the link (deterministic, no render) so the answer stream is never blocked.
+    # a datasets `/evidence?…` params URL (market/accession/concept/value/text/cik). The frontend
+    # opens the filing in-app from these and highlights the cited element — fetched lazily on
+    # viewer-open, so the answer stream is never blocked. (Field name kept for back-compat.)
     evidence_image_url: str | None = None
     # evidence flag: True iff this source actually backed the answer (cited [n] or
     # backs an artifact). The Live Context shows only evidence; consulted-but-unused
@@ -81,7 +76,7 @@ class Citation(BaseModel):
     used: bool = False
     # PH-THINK (verify pass): how well this source supports answering the question, scored
     # by the reviewer in one pass (high|medium|low) + a one-line rationale. Descriptive —
-    # never a forecast. None when the verify pass didn't run (stub / no key).
+    # never a forecast. None when the verify pass didn't run (no key / LLM unavailable).
     confidence: str | None = None
     confidence_why: str | None = None
 
@@ -209,6 +204,27 @@ class NarrativeSection(BaseModel):
     body: str
 
 
+class CalcRow(BaseModel):
+    """One labelled line in a computation trace — an input, an assumption, or a step result."""
+    label: str
+    value: str
+    source: str | None = None    # where this input came from (e.g. "SEC EDGAR · FY2024")
+
+
+class Computation(BaseModel):
+    """How a self-computed figure was derived. Our figures are either a single sourced datum OR the
+    OUTPUT of a formula over sourced inputs; for the latter there is no source *page* to open, so the
+    trust envelope is showing the math — what was queried, what was assumed, what formula, what came
+    out. Attached to the Artifact and rendered as a '계산 근거' panel. (Not a forecast: assumptions are
+    the user's, the base figures are sourced — same honesty contract as the valuation disclaimer.)"""
+    method: str                          # the approach (e.g. "2단계 FCF 할인 (DCF)")
+    formula: str | None = None           # the formula in words
+    inputs: list[CalcRow] = []           # the sourced base figures the calc consumed
+    assumptions: list[CalcRow] = []      # the tunable assumptions (growth, discount rate, …)
+    steps: list[CalcRow] = []            # intermediate results leading to the figure
+    note: str | None = None              # disclaimer / caveat
+
+
 class Artifact(BaseModel):
     """A typed, connector-backed figure emitted alongside prose (U3). The web renders
     it as an interactive card (TradingView Lightweight Charts); gaps are drawn, never hidden."""
@@ -238,6 +254,9 @@ class Artifact(BaseModel):
     table: list[list[str]] | None = None
     # for kind=narrative (CE-4): the structured 종목 내러티브 sections (heading + sourced body).
     sections: list[NarrativeSection] = []
+    # for self-computed figures (valuation/backtest/screener): the auditable derivation — what was
+    # queried, assumed, and the formula → the figure. Rendered as a '계산 근거' panel. (PH-DATA-6)
+    computation: Computation | None = None
     source: str | None = None
     as_of: str | None = None
     freshness: str | None = None
@@ -246,6 +265,10 @@ class Artifact(BaseModel):
     url: str | None = None       # canonical link to the filing/source the figures came from
     tool: str | None = None      # the tool that produced it (lets a pinned card ↻ refresh)
     args: dict | None = None     # the tool args, so a pinned card can re-fetch (U3-03)
+    # periodicity + category of the producing datasource (from the catalog). `cadence` gates the
+    # pin→alert flow: a pinned chart/table can carry a notification bot iff cadence != one_shot.
+    cadence: str | None = None   # intraday|daily|event|scheduled|streaming|one_shot
+    category: str | None = None  # market|fundamentals|valuation|filings|gurus|macro|news|…
 
 
 class Step(BaseModel):

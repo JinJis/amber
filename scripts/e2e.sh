@@ -16,15 +16,21 @@ DP=http://127.0.0.1:8000; CP=http://127.0.0.1:8010; RAG=http://127.0.0.1:8002
 A=(-H "X-Admin-Token: dev-admin-token"); J=(-H "Content-Type: application/json")
 PRICE_Q="ticker=AAPL&market=US&interval=day&start_date=2024-01-02&end_date=2024-01-05"
 
+# The platform is Gemini-only (the legacy stub planner was removed), so the agent legs need a
+# real key. Skip cleanly (exit 2) when none is present — same contract as e2e_live.sh.
+envval() { [ -f .env ] && grep -E "^$1=" .env | tail -1 | cut -d= -f2- | tr -d '"'"'"' ' || true; }
+GKEY="${GOOGLE_API_KEY:-${GEMINI_API_KEY:-}}"; [ -z "$GKEY" ] && GKEY="$(envval GOOGLE_API_KEY)"
+if [ -z "$GKEY" ]; then
+  echo "⏭️  SKIPPED — no GOOGLE_API_KEY (env or .env). The full e2e drives the Gemini agent; put a key in .env to run it."
+  exit 2
+fi
+
 section "bring up stack (build)"
 # Start from a clean slate: drop volumes so SQLite schemas match the current models
-# (create_all does not ALTER existing tables when columns are added).
+# (create_all does not ALTER existing tables when columns are added). Backend services only
+# (web is skipped to keep the e2e fast). Gemini planner via .env (GOOGLE_API_KEY).
 docker compose down -v >/dev/null 2>&1 || true
-# Backend services only (web is in the default stack but not exercised here, so we
-# name the services to skip its build and keep the e2e fast). Pin the stub planner
-# so this stays deterministic + key-free even when .env defaults to gemini.
-AGENT_LLM_BACKEND=stub \
-  docker compose up --build -d datasets rag control-plane agent-engine studio-api \
+docker compose up --build -d datasets rag control-plane agent-engine studio-api \
   || { echo "compose up failed"; exit 1; }
 for _ in $(seq 1 40); do
   st=$(docker inspect --format '{{.State.Health.Status}}' valuegraph-platform-control-plane-1 2>/dev/null || echo none)
@@ -84,7 +90,7 @@ echo "$MCP_OUT" | sed 's/^/    /'
 has "MCP exposes yahoo__prices + rag__search" "$MCP_OUT" 'TOOLS True True'
 has "MCP yahoo call -> 200 via yahoo" "$MCP_OUT" 'CALL 200 yahoo'
 
-section "Agent Engine (stub planner)"
+section "Agent Engine (Gemini planner)"
 AG=http://127.0.0.1:8003
 for _ in $(seq 1 20); do [ "$(curl -s -o /dev/null -w '%{http_code}' $AG/health)" = 200 ] && break; sleep 2; done
 RF=$(curl -s "${J[@]}" -X POST $AG/agent/run -H "X-API-KEY: $KEY" -d '{"task":"should I buy AAPL?"}')
@@ -107,12 +113,12 @@ has "studio lists the saved conversation" "$CV" '"id"'
 section "F1: agent builder (templates + custom agent restricts data sources)"
 SH=(-H "X-Service-Token: dev-service-token" -H "X-User-Email: e2e@user.com")
 AGENTS=$(curl -s "${SH[@]}" $SA/agents)
-has "studio seeds provided templates" "$AGENTS" 'tpl_research'
+has "studio seeds provided templates" "$AGENTS" 'tpl_desk'
 CONS=$(curl -s "${SH[@]}" $SA/connectors)
 has "studio exposes connectors for the builder" "$CONS" 'sec_edgar'
 # create an agent restricted to SEC filings only (no yahoo prices)
 AID=$(curl -s "${SH[@]}" "${J[@]}" -X POST $SA/agents \
-  -d '{"name":"Filings only","model":"stub","data_sources":["sec_edgar"]}' | jget '["id"]')
+  -d '{"name":"Filings only","data_sources":["sec_edgar"]}' | jget '["id"]')
 [ -n "$AID" ] && ok "custom agent created ($AID)" || fail "custom agent creation"
 # a price question routed through this agent must NOT reach yahoo (restricted out)
 SCA=$(curl -s "${SH[@]}" "${J[@]}" -X POST $SA/chat/stream \
@@ -129,6 +135,33 @@ PID=$(curl -s "${SH[@]}" "${J[@]}" -X POST $SA/prompts/cpr_earnings/import | jge
 MINE=$(curl -s "${SH[@]}" $SA/prompts)
 has "imported prompt lands in personal library" "$MINE" "$PID"
 has "imported copy records its source" "$MINE" 'cpr_earnings'
+
+section "F3: dashboard (template -> widget -> alert -> delivery)"
+# provided dashboard templates are seeded
+TPLS=$(curl -s "${SH[@]}" $SA/templates)
+has "studio seeds dashboard templates" "$TPLS" 'dt_semi'
+# default board exists (auto-created)
+BID=$(curl -s "${SH[@]}" $SA/boards | jget '["boards"][0]["id"]')
+[ -n "$BID" ] && ok "default dashboard exists ($BID)" || fail "default dashboard"
+# materialize a template's widgets onto the board
+NW=$(curl -s "${SH[@]}" "${J[@]}" -X POST $SA/board/from-template -d "{\"template_id\":\"dt_semi\",\"board_id\":\"$BID\"}" | jget '["created"]')
+[ "${NW:-0}" -ge 1 ] && ok "template created $NW widgets" || fail "from-template widget creation"
+PINS=$(curl -s "${SH[@]}" "$SA/board?board_id=$BID")
+has "dashboard now has widgets" "$PINS" 'yahoo__prices'
+# create a board-scope alert (telegram), then fire it — no creds => simulated, but a sourced delivery is recorded
+ALID=$(curl -s "${SH[@]}" "${J[@]}" -X POST $SA/alerts \
+  -d "{\"name\":\"E2E 금리\",\"scope\":\"board\",\"board_id\":\"$BID\",\"trigger_type\":\"rate\",\"params\":{\"target\":\"@mc\"},\"schedule\":{\"freq\":\"event\"},\"channels\":[\"telegram\"]}" | jget '["id"]')
+[ -n "$ALID" ] && ok "alert created ($ALID)" || fail "alert creation"
+FIRE=$(curl -s "${SH[@]}" "${J[@]}" -X POST $SA/alerts/$ALID/fire)
+has "alert fires (simulated, no creds)" "$FIRE" 'simulated'
+has "delivery carries as_of + source" "$FIRE" 'as_of'
+has "delivery carries a desk deep link" "$FIRE" 'deeplink'
+DLV=$(curl -s "${SH[@]}" "$SA/deliveries?alert_id=$ALID")
+has "delivery recorded in the feed" "$DLV" "$ALID"
+# channel link shows connected
+curl -s "${SH[@]}" "${J[@]}" -X POST $SA/channels -d '{"channel":"slack","config":{"webhook_url":"https://example.invalid/hook"}}' >/dev/null
+CHS=$(curl -s "${SH[@]}" $SA/channels)
+has "linked channel reports connected" "$CHS" 'connected'
 
 section "teardown"
 docker compose down -v >/dev/null 2>&1

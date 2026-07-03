@@ -18,9 +18,12 @@ from studioapi.config import settings
 from studioapi.db import SessionLocal
 from studioapi.deps import current_user, require_service
 from studioapi.models import Board, PinnedArtifact, User
+from studioapi.orm_helpers import get_owned
 
-# kinds a pin may carry: chart/table artifacts, a source/evidence card, or a text block.
-_ALLOWED_KINDS = {"timeseries", "candlestick", "compare", "table", "kpi", "narrative", "source", "text"}
+# kinds a pin (dashboard widget) may carry: chart/table artifacts, a source/evidence card, a text
+# block, or the dashboard-only feed/calendar widgets.
+_ALLOWED_KINDS = {"timeseries", "candlestick", "compare", "table", "kpi", "narrative",
+                  "source", "text", "feed", "calendar"}
 
 boards_router = APIRouter(prefix="/boards", tags=["Board"], dependencies=[Depends(require_service)])
 router = APIRouter(prefix="/board", tags=["Board"], dependencies=[Depends(require_service)])
@@ -71,9 +74,7 @@ async def create_board(body: BoardIn, user: User = Depends(current_user)) -> dic
 @boards_router.patch("/{board_id}", summary="Rename a board")
 async def rename_board(board_id: str, body: BoardIn, user: User = Depends(current_user)) -> dict:
     with SessionLocal() as db:
-        b = db.get(Board, board_id)
-        if b is None or b.user_email != user.email:
-            raise HTTPException(404, "Board not found.")
+        b = get_owned(db, Board, board_id, user.email, "Board not found.")
         b.name = (body.name or b.name)[:120]
         db.commit()
         db.refresh(b)
@@ -83,9 +84,7 @@ async def rename_board(board_id: str, body: BoardIn, user: User = Depends(curren
 @boards_router.delete("/{board_id}", summary="Delete a board and its pins")
 async def delete_board(board_id: str, user: User = Depends(current_user)) -> dict:
     with SessionLocal() as db:
-        b = db.get(Board, board_id)
-        if b is None or b.user_email != user.email:
-            raise HTTPException(404, "Board not found.")
+        b = get_owned(db, Board, board_id, user.email, "Board not found.")
         for p in db.execute(select(PinnedArtifact).where(PinnedArtifact.board_id == board_id)).scalars().all():
             db.delete(p)
         db.delete(b)
@@ -141,6 +140,35 @@ async def list_pins(board_id: str | None = None, user: User = Depends(current_us
         return {"board_id": bid, "pinned": [_row(p) for p in rows]}
 
 
+@router.get("/library", summary="All the user's pinned data assets across boards (the 탐색 pin pool)")
+async def pin_library(user: User = Depends(current_user)) -> dict:
+    """Every data asset the user pinned from 탐색 (chat) — across ALL boards — deduped by content.
+    This is the pool the dashboard widget gallery draws from: a widget is always something pinned
+    in 탐색. Text memos are excluded (not a datasource); newest first."""
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(PinnedArtifact).where(PinnedArtifact.user_email == user.email)
+            .order_by(PinnedArtifact.created_at.desc())
+        ).scalars().all()
+    seen: set = set()
+    out: list[dict] = []
+    for p in rows:
+        try:
+            spec = json.loads(p.spec)
+        except (ValueError, TypeError):
+            continue
+        if spec.get("kind") == "text":  # memos aren't pinned datasources
+            continue
+        # dedupe: the same asset pinned onto several boards is ONE library entry
+        key = (p.title, spec.get("tool"), spec.get("source"),
+               json.dumps(spec.get("args") or {}, sort_keys=True, ensure_ascii=False))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(_row(p))
+    return {"pins": out}
+
+
 @router.post("", summary="Pin an asset (chart/source/text) to one or more boards")
 async def pin(body: PinIn, user: User = Depends(current_user)) -> dict:
     kind = body.spec.get("kind")
@@ -169,9 +197,7 @@ async def pin(body: PinIn, user: User = Depends(current_user)) -> dict:
 @router.patch("/{pin_id}", summary="Update a pin's canvas layout and/or text content")
 async def update_pin(pin_id: str, body: UpdateIn, user: User = Depends(current_user)) -> dict:
     with SessionLocal() as db:
-        p = db.get(PinnedArtifact, pin_id)
-        if p is None or p.user_email != user.email:
-            raise HTTPException(404, "Pin not found.")
+        p = get_owned(db, PinnedArtifact, pin_id, user.email, "Pin not found.")
         for f in ("x", "y", "w", "h"):
             v = getattr(body, f)
             if v is not None:
@@ -187,9 +213,7 @@ async def update_pin(pin_id: str, body: UpdateIn, user: User = Depends(current_u
 @router.post("/{pin_id}/annotate", summary="Save the user's drawings on a pinned chart (PH-VIZ-5)")
 async def annotate_pin(pin_id: str, body: AnnotateIn, user: User = Depends(current_user)) -> dict:
     with SessionLocal() as db:
-        p = db.get(PinnedArtifact, pin_id)
-        if p is None or p.user_email != user.email:
-            raise HTTPException(404, "Pinned artifact not found.")
+        p = get_owned(db, PinnedArtifact, pin_id, user.email, "Pinned artifact not found.")
         spec = json.loads(p.spec)
         if body.user_annotations:
             spec["user_annotations"] = body.user_annotations
@@ -204,9 +228,7 @@ async def annotate_pin(pin_id: str, body: AnnotateIn, user: User = Depends(curre
 @router.post("/{pin_id}/refresh", summary="Re-fetch a pinned artifact (live, new as_of)")
 async def refresh_pin(pin_id: str, user: User = Depends(current_user)) -> dict:
     with SessionLocal() as db:
-        p = db.get(PinnedArtifact, pin_id)
-        if p is None or p.user_email != user.email:
-            raise HTTPException(404, "Pinned artifact not found.")
+        p = get_owned(db, PinnedArtifact, pin_id, user.email, "Pinned artifact not found.")
         spec = json.loads(p.spec)
     tool = spec.get("tool")
     if not tool:
@@ -239,9 +261,7 @@ async def refresh_pin(pin_id: str, user: User = Depends(current_user)) -> dict:
 @router.delete("/{pin_id}", summary="Remove a pinned asset")
 async def unpin(pin_id: str, user: User = Depends(current_user)) -> dict:
     with SessionLocal() as db:
-        p = db.get(PinnedArtifact, pin_id)
-        if p is None or p.user_email != user.email:
-            raise HTTPException(404, "Pinned artifact not found.")
+        p = get_owned(db, PinnedArtifact, pin_id, user.email, "Pinned artifact not found.")
         db.delete(p)
         db.commit()
         return {"deleted": pin_id}

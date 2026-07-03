@@ -87,9 +87,9 @@ def test_overview_renders_with_nav_and_health():
     assert "http-equiv" not in r.text and 'id=rauto' in r.text
 
 
-def test_overview_scheduler_enabled_state_is_healthy(monkeypatch):
-    # regression: the new scheduler state "enabled" must read as healthy on the Overview
-    # (was showing "unreachable / down" because the allowed-state list still said "idle").
+def test_overview_queue_reachable_reads_healthy(monkeypatch):
+    # The Overview's queue subsystem reads healthy when /admin/queue comes back with its job DB
+    # reachable (no 'error' field). Replaces the old scheduler-state health check.
     import httpx as _httpx
     _login()
 
@@ -105,12 +105,16 @@ def test_overview_scheduler_enabled_state_is_healthy(monkeypatch):
         async def __aenter__(self): return self
         async def __aexit__(self, *a): ...
         async def get(self, url, timeout=None):
-            return _Resp({"state": "enabled", "run_count": 2}) if url.endswith("/admin/scheduler") else _Resp({})
+            if url.endswith("/admin/queue"):
+                return _Resp({"totals": {"todo": 1, "doing": 0, "succeeded": 5, "failed": 0},
+                              "periodic": [], "tasks": ["run_pipeline"]})
+            return _Resp({})
 
     monkeypatch.setattr(_httpx, "AsyncClient", _Client)
     r = client.get("/")
     assert r.status_code == 200
-    assert "unreachable / down" not in r.text   # every subsystem (incl. scheduler) reads healthy
+    assert "Queue (Procrastinate)" in r.text
+    assert "unreachable / down" not in r.text   # every subsystem (incl. the queue) reads healthy
 
 
 def test_catalog_page_renders_without_services():
@@ -155,6 +159,75 @@ def test_ops_pipelines_run_posts_to_datasets(monkeypatch):
     assert r.status_code == 303 and r.headers["location"].startswith("/pipelines")
     assert captured["url"].endswith("/admin/pipelines/run")
     assert captured["json"]["preset"] == "us_mega" and captured["json"]["pipelines"] == ["prices", "news"]
+
+
+def test_queue_page_renders_jobs_and_controls(monkeypatch):
+    # The Queue page lists Procrastinate jobs with retry/cancel controls + the cron sweep schedule.
+    import httpx as _httpx
+    _login()
+
+    class _Resp:
+        def __init__(self, data):
+            self._d, self.status_code, self.headers = data, 200, {"content-type": "application/json"}
+
+        def json(self):
+            return self._d
+
+    class _Client:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): ...
+        async def get(self, url, timeout=None):
+            if url.endswith("/admin/queue"):
+                return _Resp({"totals": {"todo": 2, "doing": 1, "succeeded": 9, "failed": 1},
+                              "periodic": [{"task": "sweep_news", "pipeline_id": "news",
+                                            "cron": "0 * * * *", "label": "뉴스 → RAG", "source": "Google News"}],
+                              "tasks": ["run_pipeline"], "universe": "us_sp500"})
+            if "/admin/queue/jobs" in url:
+                return _Resp({"jobs": [
+                    {"id": 7, "task": "run_pipeline", "queue": "ingest", "status": "failed",
+                     "lock": "pipe:news:US", "args": {"pipeline_id": "news", "market": "US", "tickers": ["AAPL"]},
+                     "attempts": 3, "scheduled_at": "2026-06-25T00:00:00"}]})
+            return _Resp({})
+
+    monkeypatch.setattr(_httpx, "AsyncClient", _Client)
+    r = client.get("/queue")
+    assert r.status_code == 200
+    assert "Procrastinate" in r.text
+    assert "0 * * * *" in r.text                                   # the cron sweep schedule
+    assert "/ops/queue/sweep/news" in r.text                       # run-now button
+    assert "/ops/queue/jobs/7/retry" in r.text                     # a failed job → retry control
+    assert "/ops/queue/jobs/7/cancel" in r.text                    # …and cancel control
+
+
+def test_ops_queue_controls_proxy_to_datasets(monkeypatch):
+    import httpx as _httpx
+    _login()
+    seen = []
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"deferred": True}
+
+    class _Client:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): ...
+        async def post(self, url, json=None, timeout=None):
+            seen.append(url)
+            return _Resp()
+
+    monkeypatch.setattr(_httpx, "AsyncClient", _Client)
+    a = client.post("/ops/queue/sweep/prices", follow_redirects=False)
+    b = client.post("/ops/queue/jobs/5/retry", follow_redirects=False)
+    c = client.post("/ops/queue/jobs/5/cancel", follow_redirects=False)
+    assert a.status_code == b.status_code == c.status_code == 303
+    assert all(loc.headers["location"].startswith("/queue") for loc in (a, b, c))
+    assert seen[0].endswith("/admin/queue/sweep/prices")
+    assert seen[1].endswith("/admin/queue/jobs/5/retry")
+    assert seen[2].endswith("/admin/queue/jobs/5/cancel")
 
 
 def test_data_page_shows_store_empty_and_row_counts():

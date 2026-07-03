@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-import asyncio
-
 from app.deps import ApiKeyDep
 from app.errors import not_found
 from app.providers.registry import get_institutional_provider
@@ -20,6 +18,7 @@ from app.providers.us.gurus import (
     get_guru,
     list_gurus,
 )
+from app.routers._common import gather_best_effort
 from app.symbols import Market
 
 router = APIRouter(tags=["Superinvestors"])
@@ -93,15 +92,11 @@ async def guru_common(
         chosen = list_gurus()
     provider = get_institutional_provider(Market.US)
 
-    async def _one(g: dict) -> dict | None:
-        try:
-            holdings = await provider.by_filer(g["cik"], per_filer)
-            return {"guru": g, "holdings": holdings}
-        except Exception:
-            return None  # best-effort: skip a guru whose 13F is unavailable
+    async def _fetch(g: dict) -> dict:
+        return {"guru": g, "holdings": await provider.by_filer(g["cik"], per_filer)}
 
-    gathered = await asyncio.gather(*[_one(g) for g in chosen])
-    per_guru = [x for x in gathered if x]
+    # best-effort: skip a guru whose 13F is unavailable, never fabricate
+    per_guru = await gather_best_effort(chosen, _fetch)
     rows = common_holdings(per_guru, min_holders, limit)
     return {
         "resource": "gurus_common",

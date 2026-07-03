@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     # Read the shared platform env first, then any service-local .env override.
     model_config = SettingsConfigDict(env_file=("../.env", ".env"), env_file_encoding="utf-8", extra="ignore")
 
+    # App log verbosity (DEBUG|INFO|WARNING|…); a bare shared `LOG_LEVEL` env overrides it.
+    log_level: str = "INFO"
+
     # Control-plane store (tenants, keys, activations, usage, audit).
     database_url: str = "sqlite:///./controlplane.db"
     # The backend services this gateway fronts (chosen per connector via its manifest `service`).

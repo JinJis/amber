@@ -11,13 +11,11 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Query
 
 from app.deps import ApiKeyDep, MarketParam
-from app.errors import bad_request
+from app.routers._common import validate_interval
 from app.store.technical import technical_indicators
 from app.symbols import Market
 
 router = APIRouter(tags=["Market Data"])
-
-_INTERVALS = ["day", "week", "month", "year"]
 
 
 @router.get("/technical-indicators", dependencies=[ApiKeyDep],
@@ -30,8 +28,7 @@ async def get_technical_indicators(
     end_date: date | None = Query(None, description="End date (default: today)."),
     market: MarketParam = Market.US,
 ) -> dict:
-    if interval not in _INTERVALS:
-        raise bad_request(f"interval must be one of {_INTERVALS}.")
+    validate_interval(interval)
     end = end_date or date.today()
     start = start_date or (end - timedelta(days=400))
     return await technical_indicators(market.value, ticker, indicators, interval, start, end)

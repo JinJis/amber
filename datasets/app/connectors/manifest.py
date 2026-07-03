@@ -65,6 +65,29 @@ class Freshness(str, Enum):
     static = "static"
 
 
+class Cadence(str, Enum):
+    """How a datasource RECURS — orthogonal to ``Freshness`` (which is about staleness).
+
+    This is the periodicity axis the product hangs the pin→alert flow on: a widget can carry a
+    notification bot **iff** its datasource is periodic (``cadence != one_shot``). The specific
+    cadence also picks the natural alert trigger (price threshold / new disclosure / release /
+    feed). ``one_shot`` data is a point-in-time value you pin and glance at — no future event to
+    push, so no bell. Set centrally via the ``_RESOURCE_META`` map in ``catalog.py`` (load fails if
+    any resource is unclassified — same enforcement as ``category``).
+    """
+
+    intraday = "intraday"  # realtime quotes / rankings (KIS) — periodic
+    daily = "daily"  # end-of-day series (prices, technicals, daily flows) — periodic
+    event = "event"  # on disclosure/announcement (filings, earnings, 13F, corp actions) — periodic
+    scheduled = "scheduled"  # on a release calendar (rates, macro indicators) — periodic
+    streaming = "streaming"  # rolling feed (news) — periodic
+    one_shot = "one_shot"  # a value/snapshot with no future update event — NOT periodic
+
+    @property
+    def periodic(self) -> bool:
+        return self is not Cadence.one_shot
+
+
 class License(BaseModel):
     """Redistribution policy for a connector's data — drives platform governance."""
 
@@ -102,9 +125,12 @@ class Resource(BaseModel):
     output_model: str | None = Field(None, description="Generated response-model class name, when applicable.")
     markets: list[str] = ["US", "KR"]
     cost_tier: CostTier = CostTier.low
-    # User-facing category (set centrally in catalog.py via _CATEGORY map; enforced at load —
-    # a resource with no mapping fails catalog construction, so every tool stays categorized).
+    # User-facing category (set centrally in catalog.py via the _RESOURCE_META map; enforced at load
+    # — a resource with no mapping fails catalog construction, so every tool stays categorized).
     category: Category | None = None
+    # Periodicity class (set centrally in catalog.py via the _RESOURCE_META map; enforced at load).
+    # Drives the pin→alert gate: only ``cadence.periodic`` datasources can carry a notification bot.
+    cadence: Cadence | None = None
     provenance: Provenance
 
 

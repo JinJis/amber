@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Button, Modal } from "./ui";
+import { useAsyncOp } from "@/lib/hooks";
 
 export type Prompt = {
   id: string;
@@ -30,7 +31,7 @@ export default function PromptLibrary({
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useAsyncOp();  // FE-04: busy/finally lifecycle for the mutations
 
   async function loadMine() {
     const r = await fetch("/api/prompts");
@@ -46,8 +47,7 @@ export default function PromptLibrary({
 
   async function create() {
     if (!title.trim() || !body.trim()) return;
-    setBusy(true);
-    try {
+    await run(async () => {
       const r = await fetch("/api/prompts", { method: "POST", body: JSON.stringify({ title, body }) });
       if (r.ok) {
         setTitle("");
@@ -55,30 +55,22 @@ export default function PromptLibrary({
         setCreating(false);
         await loadMine();
       }
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   async function remove(id: string) {
-    setBusy(true);
-    try {
+    await run(async () => {
       await fetch(`/api/prompts/${id}`, { method: "DELETE" });
       await loadMine();
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   async function importPrompt(id: string) {
-    setBusy(true);
-    try {
+    await run(async () => {
       await fetch(`/api/prompts/${id}/import`, { method: "POST" });
       await loadMine();
       setTab("mine");
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   const list = tab === "mine" ? mine : community;

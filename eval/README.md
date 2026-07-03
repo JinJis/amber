@@ -22,8 +22,8 @@ python3 eval/run_eval.py             # stdlib only — no extra deps
 ```
 
 Env: `STUDIO_URL` (`:8004`), `RAG_URL` (`:8002`), `SERVICE_TOKEN`, `EVAL_USER`,
-`GOOGLE_API_KEY` (enables the judge), `EVAL_JUDGE_MODEL` (the **deep** judge model —
-default `gemini-pro-latest`; set `gemini-3.5-pro-preview` for the strongest grading),
+`GOOGLE_API_KEY` (enables the judge), `EVAL_JUDGE_MODEL` (the judge model — default
+fast `gemini-flash-latest`; set `gemini-pro-latest` for the strongest/slower grading),
 `EVAL_JUDGE_BAR` (pass threshold, default 3.8), `EVAL_TODAY`.
 
 ## What it checks
@@ -39,6 +39,8 @@ Per scenario (`scenarios.py`), each present check is one graded item:
 | `answer_regex` / `answer_contains` | the answer is **grounded** — contains the real figure / fact |
 | `expect_refused` | guardrail refuses forecast/advice (EN + KR) |
 | `expect_artifact` | an inline artifact (U3) was emitted — a `kind` (e.g. `"timeseries"`) or `True` for any |
+| `expect_computation` | a self-computed figure (valuation/backtest/screener) carries its **계산 근거** trace (PH-DATA-6) |
+| `expect_cite_url` | a citation carries an **external source-page URL** (the in-app viewer renders it) — a host substring or `True` |
 | `judge` | **deep-model rubric judge** — scores 5 dimensions 1–5 (see [`RUBRIC.md`](./RUBRIC.md)) |
 
 Each judged scenario also carries a one-line **`criteria`** ("what a correct answer to THIS question
@@ -64,6 +66,12 @@ filings → SEC EDGAR · insider trades → SEC EDGAR (Form 4) · RAG retrieval 
 disclosure · valuation metrics → financial-metrics · multi-company comparison ·
 **honesty: no-data → say so, don't fabricate** · data-source restriction honoured ·
 guardrail refusal (KR + EN) · **multi-turn** follow-up inherits the company (KR + US).
+
+**계산 근거 (PH-DATA-6) — self-computed figures expose their derivation:** valuation DCF/DDM/RIM ·
+"how was it computed" transparency · KR valuation · assumption-sensitivity · multi-turn re-compute ·
+backtest (보유·기간·지표) · quant screener (필터·팩터 공식). **Source-page viewer — sourced figures
+carry a viewable external URL:** core CPI / unemployment / treasury / PCE / euro HICP series pages
+(BLS · DBnomics) · ECOS rate · news article · SEC filing (재무·13F·Form 4) · DART filing.
 
 **Add a scenario (with `criteria`) for every new tool / endpoint / feature**, and run the eval before
 pushing — that's how the bar ratchets up (Definition of Done, `../CLAUDE.md` §5).

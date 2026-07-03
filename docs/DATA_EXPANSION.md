@@ -84,7 +84,10 @@ Legend: ✅ have today · 🟡 partial on existing APIs (needs a slice) · 🔵 
 |---|---|---|---|
 | 종목 개요 | profile + snapshot | company_facts + price_snapshot ✅ | ✅ |
 | 재무제표 | 3 statements (+as-reported) | sec_edgar/opendart ✅ | ✅ |
-| IR자료실 | investor presentations / IR decks | SEC 8-K exhibits / DART / company IR | 🔴❓ (no clean API; derive from filings or scrape IR) |
+| 어닝콜 (US) | earnings-call transcript text | Alpha Vantage → RAG (`transcript_text` pipeline) | ✅ (US; free key, 25 calls/day) |
+| 발표자료 (US) | 8-K EX-99 investor/earnings decks | SEC EDGAR PDF → Document AI Layout Parser → RAG + in-app pdf.js viewer (`presentation_text`) | ✅ (US; needs DocAI) |
+| 실적공시 (KR) | 잠정실적 공정공시 = 경영진 잠정실적+코멘터리 | OpenDART `list.json`→`document.xml` → RAG + in-app DART viewer (`kr_earnings` pipeline) | ✅ (KR analog of 어닝콜 — no free KR transcript/audio API) |
+| IR자료실 (KR decks/audio) | investor presentation decks / call audio | company IR / KIND / Quartr·FnGuide(유료) | 🔴❓ (no clean free API; KR transcript·deck gated → paid or scrape) |
 | 실적 및 전망 | actuals ✅ + **consensus estimates** | estimates provider | 🔴❓ (estimates = FMP/Finnhub; **guardrail-adjacent** — show as sourced consensus, not our forecast) |
 | 내부자 거래 | Form 4 / 임원·주요주주 | sec_edgar/opendart insider_trades ✅ | ✅ |
 | 실적 발표 일정 | upcoming earnings dates | earnings-calendar API | 🔴❓ (FMP/Finnhub; or our Disclosure-Calendar `next_expected_update`) |

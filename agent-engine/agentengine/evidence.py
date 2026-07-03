@@ -1,9 +1,9 @@
-"""PH-PROV2: the datasets `/evidence?…` URL for a filing-backed figure.
+"""The datasets `/evidence?…` params URL for a filing-backed figure.
 
 Our normalized statement fields → ordered candidate us-gaap concepts (mirror of the
 datasets INCOME/BALANCE/CASHFLOW maps; the same field maps to different tags across
-filers, so the /evidence lookup tries each in order). We only compose the link
-deterministically — the frontend fetches the highlighted screenshot lazily, so the
+filers, so the viewer tries each in order). We only compose the link deterministically —
+the frontend opens the filing in-app and highlights the cited figure lazily, so the
 answer stream is never blocked.
 """
 
@@ -137,10 +137,10 @@ def evidence_url_for_answer(data, accn, cik, market, answer: str | None) -> str 
 
 
 def _evidence_url(data, accn, cik, market) -> str | None:
-    """PH-PROV2: the datasets `/evidence?…` URL for a filing-backed result's headline figure.
-    The frontend fetches the highlighted screenshot lazily — we only attach the link
-    (deterministic, no render), so the answer stream is never blocked. US handles both the
-    as-reported shape (explicit us-gaap concept) and the statement shape; KR (PH-PROV2d) uses
+    """The datasets `/evidence?…` params URL for a filing-backed result's headline figure.
+    The frontend opens the filing in-app and highlights it lazily — we only attach the link
+    (deterministic), so the answer stream is never blocked. US handles both the
+    as-reported shape (explicit us-gaap concept) and the statement shape; KR uses
     the statement shape, anchored on the field name. None when there's nothing to point at."""
     m = (market or "").upper()
     if m not in ("US", "KR") or not accn or not isinstance(data, dict):

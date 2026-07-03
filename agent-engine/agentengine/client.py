@@ -49,6 +49,7 @@ class PlatformClient:
                     "params": res.get("params", []),
                     "markets": res.get("markets") or con.get("markets"),
                     "category": res.get("category"),  # user-facing group (market/macro/…)
+                    "cadence": res.get("cadence"),  # periodicity class — gates the pin→alert flow
                     "description": res.get("description", ""),
                     "source": (res.get("provenance") or {}).get("source"),
                 }

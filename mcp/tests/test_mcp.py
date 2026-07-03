@@ -37,6 +37,15 @@ CATALOG = [
 _GW = r"http://gw\.test/prices"
 
 
+def test_build_tools_covers_every_catalog_resource():
+    # single source of truth (invariant #8): exactly one tool per catalog resource, named
+    # {connector}__{resource} — nothing hand-added to or dropped from the catalog derivation.
+    tools = build_tools(CATALOG)
+    expected = {f"{c['id']}__{r['name']}" for c in CATALOG for r in c["resources"]}
+    assert {t["name"] for t in tools} == expected
+    assert len(tools) == sum(len(c["resources"]) for c in CATALOG)
+
+
 def test_build_tools_schema_and_license():
     idx = tool_index(build_tools(CATALOG))
     assert "yahoo__prices" in idx and "sec_edgar__company_facts" in idx

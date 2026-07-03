@@ -5,7 +5,8 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 # Provenance fields a chunk/doc may carry (the trust envelope for unstructured data).
-_PROVENANCE = ("source", "doc_type", "ticker", "market", "as_of", "url", "section", "accession")
+# Single source of truth — the store imports this to rebuild Chunk provenance on read (RF-03).
+PROVENANCE_FIELDS = ("source", "doc_type", "ticker", "market", "as_of", "url", "section", "accession")
 
 
 class IngestDoc(BaseModel):
@@ -39,7 +40,7 @@ class Chunk(BaseModel):
 
     def provenance(self) -> dict:
         # tenant is intentionally excluded — it's an isolation key, not user-facing provenance.
-        return {k: getattr(self, k) for k in _PROVENANCE if getattr(self, k) is not None}
+        return {k: getattr(self, k) for k in PROVENANCE_FIELDS if getattr(self, k) is not None}
 
 
 class IngestRequest(BaseModel):

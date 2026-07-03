@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { Button, Modal } from "./ui";
+import { widgetKind, widgetKindLabel } from "@/lib/widgets";
 
 export type Board = { id: string; name: string };
 
-// On pin (any asset — chart, source, text), choose which board(s) to add it to (multi-select),
-// or create a new board inline. Pins to every selected board at once.
+// On pin (any asset — chart, source, text), choose which dashboard(s) to add it to (multi-select),
+// or create a new dashboard inline. Adds to every selected dashboard at once. (탐색 → ＋대시보드)
 export default function PinPicker({
   spec,
   onClose,
@@ -20,6 +21,7 @@ export default function PinPicker({
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [newName, setNewName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -27,8 +29,9 @@ export default function PinPicker({
       if (r.ok) {
         const bs = ((await r.json()).boards ?? []) as Board[];
         setBoards(bs);
-        if (bs[0]) setSel(new Set([bs[0].id])); // preselect the first board
+        if (bs[0]) setSel(new Set([bs[0].id])); // preselect the first dashboard
       }
+      setLoaded(true);
     })();
   }, []);
 
@@ -60,17 +63,17 @@ export default function PinPicker({
     } catch { setBusy(false); }
   }
 
-  const label = spec?.kind === "source" ? "출처" : spec?.kind === "text" ? "메모" : "카드";
+  const label = widgetKindLabel(widgetKind(spec));
 
   return (
-    <Modal title={`${label} 보드에 핀`} onClose={onClose}
+    <Modal title={`📌 ${label} → ＋ 대시보드에 추가`} onClose={onClose}
       footer={<>
         <span className="grow" />
         <Button variant="ghost" onClick={onClose} disabled={busy}>취소</Button>
-        <Button onClick={pin} disabled={busy || sel.size === 0}>{busy ? "핀 중…" : `핀 (${sel.size})`}</Button>
+        <Button onClick={pin} disabled={busy || sel.size === 0}>{busy ? "추가 중…" : `추가 (${sel.size})`}</Button>
       </>}>
       <div className="fld">
-        <span>어느 보드에 추가할까요? <span className="hint-inline">— 여러 개 선택 가능</span></span>
+        <span>어느 대시보드에 추가할까요? <span className="hint-inline">— 여러 개 선택 가능</span></span>
         <div className="pinpick-list">
           {boards.map((b) => (
             <label key={b.id} className={`pinpick-row ${sel.has(b.id) ? "on" : ""}`}>
@@ -78,13 +81,16 @@ export default function PinPicker({
               {b.name}
             </label>
           ))}
-          {boards.length === 0 && <div className="muted-note">보드를 불러오는 중…</div>}
+          {!loaded && <div className="muted-note">대시보드를 불러오는 중…</div>}
+          {loaded && boards.length === 0 && (
+            <div className="muted-note">대시보드가 아직 없어요. 아래에서 새로 만들어 시작하세요.</div>
+          )}
         </div>
       </div>
       <div className="fld">
-        <span>새 보드 만들기</span>
+        <span>새 대시보드 만들기 <span className="hint-inline">— 아직 없으면 바로 생성</span></span>
         <div className="pinpick-new">
-          <input className="input" value={newName} placeholder="보드 이름 (예: 반도체 리서치)"
+          <input className="input" value={newName} placeholder="대시보드 이름 (예: 반도체 리서치)"
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); createBoard(); } }} />
           <Button variant="ghost" onClick={createBoard} disabled={!newName.trim()}>＋ 추가</Button>

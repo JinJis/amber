@@ -46,7 +46,8 @@ export default function AgentBuilder({
   );
   const [name, setName] = useState(base ? (cloning ? `${base.name} (복사본)` : base.name) : "");
   const [description, setDescription] = useState(base?.description ?? "");
-  const [model, setModel] = useState(base?.model ?? "gemini");
+  // gemini-only (invariant #7) — no picker; the agent always runs on Gemini.
+  const [model] = useState(base?.model ?? "gemini");
   const [systemPrompt, setSystemPrompt] = useState(base?.system_prompt ?? "");
   // Empty stored data_sources means "every tool" — reflect that as all-selected so the user
   // can then narrow it. A non-empty list is shown exactly as saved.
@@ -136,14 +137,6 @@ export default function AgentBuilder({
         <label className="fld">
           <span>설명 (선택)</span>
           <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="이 에이전트가 무엇을 하나요?" />
-        </label>
-
-        <label className="fld">
-          <span>모델</span>
-          <select className="input" value={model} onChange={(e) => setModel(e.target.value)}>
-            <option value="gemini">Gemini (GOOGLE_API_KEY 필요)</option>
-            <option value="stub">기본 (stub · 키 불필요)</option>
-          </select>
         </label>
 
         <label className="fld">

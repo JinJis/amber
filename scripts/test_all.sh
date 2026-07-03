@@ -18,9 +18,11 @@ UVIMG="ghcr.io/astral-sh/uv:python3.11-bookworm-slim"
 # Run a service's unit tests inside the uv image: source bind-mounted, a per-service
 # .venv volume + a shared uv cache so repeat runs are fast. $2 = extra `uv run` args.
 unit() {
+  # AUTH_DISABLED=true: behind the gateway the data plane trusts the caller (the control plane is
+  # the auth), so the datasets route tests expect auth off — same as the real stack's .env.
   docker run --rm \
     -v "$PWD/$1:/app" -v "vg_uvcache:/root/.cache/uv" -v "vg_venv_${1//[^a-zA-Z0-9]/_}:/app/.venv" \
-    -w /app -e UV_COMPILE_BYTECODE=0 -e UV_LINK_MODE=copy "$UVIMG" \
+    -w /app -e UV_COMPILE_BYTECODE=0 -e UV_LINK_MODE=copy -e AUTH_DISABLED=true "$UVIMG" \
     sh -lc "rm -f studio.db; uv run --extra dev ${2:-} pytest -q"
 }
 
@@ -28,7 +30,7 @@ step "Unit tests (in docker — uv image, no host uv)"
 for d in datasets control-plane mcp agent-engine studio-api; do
   echo "-- $d"; unit "$d" "" || FAIL=1
 done
-echo "-- rag (+ real oss-cpu semantic)"; unit rag "--extra oss" || FAIL=1
+echo "-- rag (pipeline on a fake embedder; live semantic skips without GOOGLE_API_KEY)"; unit rag "" || FAIL=1
 
 step "Web build (docker build)"
 docker compose build web >/dev/null 2>&1 && echo "  web build ok" || { echo "  web build FAILED"; FAIL=1; }
@@ -36,8 +38,9 @@ docker compose build web >/dev/null 2>&1 && echo "  web build ok" || { echo "  w
 step "Tool coverage — every catalog tool through the gateway (no key)"
 bash scripts/coverage.sh || FAIL=1
 
-step "Docker e2e — stub full stack (deterministic, no key)"
-bash scripts/e2e.sh || FAIL=1
+step "Docker e2e — full product chain (Gemini; skips cleanly without GOOGLE_API_KEY)"
+bash scripts/e2e.sh; rc=$?
+if [ "$rc" = 2 ]; then echo "  (skipped — no GOOGLE_API_KEY)"; elif [ "$rc" != 0 ]; then FAIL=1; fi
 
 step "Docker e2e — functional (real data + MCP + semantic RAG, no key)"
 bash scripts/e2e_functional.sh || FAIL=1

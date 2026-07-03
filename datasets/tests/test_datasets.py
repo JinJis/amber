@@ -228,16 +228,77 @@ async def test_resolve_universe_legacy_and_dynamic(monkeypatch):
     assert u3["US"].count("AAPL") == 1 and "TSLA" in u3["US"]
 
 
-def test_scheduler_controls():
-    from app.scheduler import Scheduler
+async def test_queue_periodic_schedules_registered():
+    # The asyncio scheduler is replaced by Procrastinate @app.periodic cron sweeps — one per pipeline.
+    from app import queue as Q
 
-    s = Scheduler()
-    s.pause()
-    assert s.enabled is False
-    s.resume()
-    assert s.enabled is True
-    s.trigger()
-    assert s._force is True
+    sched = {s["pipeline_id"]: s["cron"] for s in await Q._periodic_schedules()}
+    assert sched["news"] == "0 * * * *"          # hourly
+    assert sched["prices"] == "0 4 * * *"         # daily
+    assert sched["financials"] == "0 3 * * 1"     # weekly
+    assert set(sched) == {"news", "prices", "financials", "corp_actions", "filing_text"}
+
+
+async def test_queue_overview_failsafe_without_db(monkeypatch):
+    # With the queue DB unreachable, the overview degrades to the (DB-free) schedule instead of 500-ing.
+    from app import queue as Q
+
+    async def boom():
+        raise RuntimeError("queue DB down")
+
+    monkeypatch.setattr(Q.app.job_manager, "list_queues_async", boom)
+    ov = await Q.queue_overview()
+    assert ov["queues"] == [] and "error" in ov
+    assert {s["pipeline_id"] for s in ov["periodic"]} >= {"news", "prices", "financials"}
+    assert "run_pipeline" in ov["tasks"]
+
+
+def test_router_common_validators_keep_messages():
+    # RF-04: shared validators raise the SAME 400 message the inline checks used to.
+    import pytest as _pytest
+
+    from app.errors import APIError
+    from app.routers._common import INTERVALS, PERIODS, validate_interval, validate_period
+
+    validate_interval("day")          # valid → no raise
+    validate_period("ttm")
+    with _pytest.raises(APIError) as ei:
+        validate_interval("decade")
+    assert ei.value.status_code == 400 and ei.value.message == f"interval must be one of {INTERVALS}."
+    with _pytest.raises(APIError) as ep:
+        validate_period("forever")
+    assert ep.value.message == f"period must be one of {PERIODS}."
+
+
+async def test_router_common_gather_best_effort_skips_failures():
+    # RF-04: best-effort fan-out drops items that raise OR return None, keeps the rest, concurrently.
+    from app.routers._common import gather_best_effort
+
+    async def fn(x):
+        if x == "boom":
+            raise RuntimeError("upstream down")
+        if x == "none":
+            return None
+        return x.upper()
+
+    out = await gather_best_effort(["a", "boom", "none", "b"], fn)
+    assert out == ["A", "B"]
+    assert await gather_best_effort([], fn) == []
+
+
+def test_shared_number_parsers():
+    # RF-02: one comma-aware parser shared by SEC/FMP/KIS (replaces the per-provider _num/_i/_f).
+    from app.providers._parse_utils import parse_float, parse_int
+
+    assert parse_float("1,234,567.5") == 1234567.5
+    assert parse_float(42) == 42.0          # already-numeric (FMP JSON numbers) still works
+    assert parse_float(None) is None and parse_float("") is None and parse_float("n/a") is None
+    assert parse_int("1,234") == 1234
+    assert parse_int(None) is None and parse_int("") is None and parse_int("3.5") is None
+    # the provider aliases point at the shared impl
+    from app.providers.us.sec_edgar import _num as sec_num
+    from app.providers.kr.kis import _i as kis_i, _f as kis_f
+    assert sec_num is parse_float and kis_f is parse_float and kis_i is parse_int
 
 
 def test_selftest_classifier():
@@ -332,6 +393,93 @@ async def test_run_backfill_records_job(monkeypatch):
     assert out["status"] == "success" and out["rows"] == 120 and out["failed"] == ["MSFT"]
     row = next(j for j in J.list_jobs(50) if j["id"] == out["job_id"])
     assert row["status"] == "success" and row["rows"] == 120
+
+
+def test_reap_stale_running_jobs_and_latest_job():
+    # a job left 'running' past the threshold (worker died) is reaped to 'error' so the admin shows
+    # a real terminal state instead of a phantom run; latest_job exposes it (with the note) per kind.
+    from datetime import timedelta
+
+    from app.store.db import SessionLocal, init_db
+    from app.store import jobs as J
+    from app.store.models import IngestionJob
+
+    init_db()
+    kind = "reaptest"                                              # unique kind → isolated from other tests
+    jid = J.start_job(kind, "US", "MSFT", total=1)                 # stuck 'running'
+    with SessionLocal() as db:                                      # backdate it past the cutoff
+        db.get(IngestionJob, jid).started_at = J._now() - timedelta(hours=2)
+        db.commit()
+    fresh = J.start_job(kind, "US", "AAPL", total=1)               # recent → must NOT be reaped
+
+    assert J.reap_stale_jobs(kind, "US") == 1
+    reaped = J.latest_job(kind, "US")  # latest is the fresh one; check the stale one directly
+    with SessionLocal() as db:
+        assert db.get(IngestionJob, jid).status == "error"
+        assert "미완료" in (db.get(IngestionJob, jid).error or "")
+        assert db.get(IngestionJob, fresh).status == "running"     # untouched
+    assert reaped is not None and reaped["kind"] == kind
+
+
+def test_start_job_truncates_long_spec_and_records_pipeline_error():
+    # filing_text over 200-500 tickers used to join them all into `spec` (varchar(256)) → the INSERT
+    # threw 'value too long' BEFORE the job row existed, failing the run in ~40ms with no record.
+    from app.store.db import init_db
+    from app.store import jobs as J
+
+    init_db()
+    kind = "spectest"                                  # unique kind → isolated from other tests
+    huge = ",".join(f"T{i:05d}" for i in range(503))   # ~3.5k chars, like 503 US tickers
+    assert len(huge) > 256
+    jid = J.start_job(kind, "US", huge, total=503)
+    row = next(j for j in J.list_jobs(120) if j["id"] == jid)
+    assert len(row["spec"]) <= 256                      # truncated → never overflows the column
+
+    # record_pipeline_error reuses the still-'running' row, finalizing it as error with the traceback
+    eid = J.record_pipeline_error(kind, "US", "ValueError: boom traceback")
+    assert eid == jid
+    after = next(j for j in J.list_jobs(120) if j["id"] == jid)
+    assert after["status"] == "error" and "boom" in (after["error"] or "")
+
+    # with no running row for a kind/market, it creates a fresh error row (failure before start_job)
+    eid2 = J.record_pipeline_error(kind, "KR", "boom-kr")
+    assert eid2 != jid
+    kr = J.latest_job(kind, "KR")
+    assert kr["status"] == "error" and "boom-kr" in (kr["error"] or "")
+
+
+def test_pipeline_activity_feed_logs_and_lists():
+    # the live feed the admin renders: runners append milestone lines, list_activity returns them
+    # newest-first, scoped by kind/job. (Best-effort — never raises.)
+    from app.store.db import init_db
+    from app.store import jobs as J
+
+    init_db()
+    J.log_activity("acttest", "KR", "▶ 시작 · 2종목", job_id=777)
+    J.log_activity("acttest", "KR", "[005930] OpenDART → RAG 320 chunks ✓", job_id=777)
+    J.log_activity("acttest", "KR", "[000660] 실패 — ReadTimeout", job_id=777, level="error")
+    feed = J.list_activity(10, job_id=777)
+    assert len(feed) == 3
+    assert feed[0]["message"].startswith("[000660]") and feed[0]["level"] == "error"   # newest first
+    assert all(r["kind"] == "acttest" for r in feed)
+    # scoping by kind works; an unknown kind returns nothing
+    assert len(J.list_activity(10, kind="acttest")) >= 3
+    assert J.list_activity(10, kind="nope-kind") == []
+
+
+@respx.mock
+async def test_ingest_to_rag_batches_large_filing():
+    # a filing yields hundreds of section docs; _ingest_to_rag must split them into bounded POSTs
+    # (so RAG's synchronous embed never trips the client timeout) and sum the chunk counts.
+    from app.store import news_ingest as N
+
+    route = respx.post("http://rag.test/rag/ingest").mock(
+        return_value=httpx.Response(200, json={"chunks": 40}))
+    docs = [{"text": f"doc {i}", "source": "SEC", "doc_id": str(i)} for i in range(95)]
+    total = await N._ingest_to_rag("http://rag.test", docs)
+    # 95 docs / batch 40 → 3 POSTs (40 + 40 + 15), each reporting 40 chunks → summed
+    assert route.call_count == 3
+    assert total == 120
 
 
 async def test_run_backfill_records_error(monkeypatch):
@@ -550,26 +698,6 @@ async def test_run_backfill_by_preset_sets_progress(monkeypatch):
     assert (await J.run_backfill(preset="bogus"))["status"] == "error"
 
 
-async def test_backfill_guard_blocks_concurrent(monkeypatch):
-    from app.store.db import SessionLocal, init_db
-    from app.store import jobs as J
-    from app.store.models import IngestionJob
-
-    init_db()
-    # simulate an in-flight backfill
-    with SessionLocal() as db:
-        db.add(IngestionJob(kind="backfill", market="US", status="running", total=5, done=1))
-        db.commit()
-    assert J.backfill_running() is True
-    out = await J.run_backfill(market="US", tickers=["AAPL"])
-    assert out["status"] == "busy"
-    # clean up
-    with SessionLocal() as db:
-        from sqlalchemy import delete
-        db.execute(delete(IngestionJob).where(IngestionJob.status == "running"))
-        db.commit()
-
-
 # --- PH-2b: news → RAG ingestion pipeline -------------------------------------
 class _FakeNewsProvider:
     async def news(self, market, ticker, limit):
@@ -624,66 +752,20 @@ async def test_run_news_ingest_records_error(monkeypatch):
     assert row["status"] == "error"
 
 
-async def test_news_ingest_guard_blocks_concurrent():
-    from app.store.db import SessionLocal, init_db
-    from app.store import news_ingest as N
-    from app.store.models import IngestionJob
-
-    init_db()
-    with SessionLocal() as db:
-        db.add(IngestionJob(kind="news", market="US", status="running", total=1, done=0))
-        db.commit()
-    assert N.news_ingest_running() is True
-    out = await N.run_news_ingest("US", ["AAPL"])
-    assert out["status"] == "busy"
-    with SessionLocal() as db:
-        from sqlalchemy import delete
-        db.execute(delete(IngestionJob).where(IngestionJob.status == "running"))
-        db.commit()
-
-
 def test_admin_news_ingest_endpoint(monkeypatch):
-    # the endpoint fires the pipeline in the background and returns started=True
+    # the endpoint enqueues the `news` pipeline on the queue and returns started=True
     import app.routers.admin as A
 
-    async def fake_run(market, tickers, limit=None):
-        return {"status": "success"}
+    seen = {}
 
-    monkeypatch.setattr(A, "run_news_ingest", fake_run)
-    monkeypatch.setattr(A, "news_ingest_running", lambda: False)
+    async def fake_defer(market, tickers, pipeline_id):
+        seen["call"] = (market, tuple(tickers), pipeline_id)
+        return 1
+
+    monkeypatch.setattr(A.Q, "defer_pipeline", fake_defer)
     r = client.post("/admin/news/ingest", json={"market": "US", "tickers": ["AAPL"]})
-    assert r.status_code == 200 and r.json()["started"] is True
-
-
-async def test_ingest_ticker_builds_evidence_docs_when_flagged(monkeypatch):
-    # PH-PROV3: with PRECOMPUTE_LOCATIONS on, a backfill (manual OR scheduled/deep — both go
-    # through ingest_ticker) also caches each filing as a PDF so /evidence works — US AND KR.
-    import app.store.evidence_docs as ED
-    import app.store.ingest as I
-    from app.symbols import Market
-
-    class _Prov:
-        async def income_statements(self, *a, **k): return []
-        async def balance_sheets(self, *a, **k): return []
-        async def cash_flow_statements(self, *a, **k): return []
-        async def company_facts(self, *a, **k): raise RuntimeError("skip")
-
-    monkeypatch.setattr(I, "build_ref", lambda market, ticker: type("R", (), {"ticker": ticker, "cik": "0"})())
-    monkeypatch.setattr(I, "get_financials_provider", lambda m: _Prov())
-    monkeypatch.setattr(I, "get_company_provider", lambda m: _Prov())
-
-    calls = []
-
-    async def fake_build(market, ticker, *a, **k):
-        calls.append((market, ticker))
-        return {}
-
-    monkeypatch.setattr(ED, "build_evidence_docs_for_ticker", fake_build)
-    monkeypatch.setattr(I.settings, "precompute_locations", True)
-
-    await I.ingest_ticker(Market.US, "AAPL")
-    await I.ingest_ticker(Market.KR, "005930")
-    assert calls == [("US", "AAPL"), ("KR", "005930")]   # both markets cache evidence PDFs
+    assert r.status_code == 200 and r.json()["started"] is True and r.json()["deferred"] == 1
+    assert seen["call"] == ("US", ("AAPL",), "news")
 
 
 # --- PH-5: cheap universe-enumeration endpoints ---------------------------
@@ -956,6 +1038,27 @@ async def test_ttl_cache_caches():
     assert len(calls) == 1  # second call served from cache
 
 
+async def test_ttl_cache_single_flight():
+    # RF-06: concurrent cold-cache callers for one key invoke the factory exactly once; different
+    # keys still load independently. (This is the guarantee the KIS token now relies on.)
+    import asyncio as _aio
+
+    from app.cache import TTLCache
+
+    c = TTLCache(60)
+    calls: list[str] = []
+
+    async def factory(tag: str):
+        calls.append(tag)
+        await _aio.sleep(0.02)  # hold so concurrent callers pile up on the per-key lock
+        return tag
+
+    results = await _aio.gather(*[c.get_or_set("k", lambda: factory("k")) for _ in range(5)])
+    assert results == ["k"] * 5 and calls.count("k") == 1     # factory ran once for the 5 callers
+    await c.get_or_set("other", lambda: factory("other"))
+    assert calls.count("other") == 1                          # a different key loads independently
+
+
 # --- symbols --------------------------------------------------------------
 def test_kr_market_suffix():
     from app.symbols import kr_market_suffix
@@ -1130,14 +1233,23 @@ def test_ce9_macro_catalog_grouping_and_panel(monkeypatch):
     assert all(c["region"] == "US" for c in MI.list_indicators(region="US"))
     assert "US" in MI.list_regions()
 
-    async def fake_fetch(slug, limit=2):
-        return {"name": f"N-{slug}", "unit": "%", "source_url": "u",
-                "observations": [{"date": "2025-08", "value": 3.0}, {"date": "2025-09", "value": 3.2}]}
-    monkeypatch.setattr(MI, "fetch_indicator", fake_fetch)
+    # region_panel batches BLS (fresh, from BLS API) + DBnomics (rest) — patch both sources.
+    async def fake_dbn(slug, limit=2):
+        return [{"date": "2026-03", "value": 3.0}, {"date": "2026-04", "value": 3.2}]
+
+    async def fake_bls(ids, years=3):
+        return {i: [{"date": "2026-04", "value": 4.1}, {"date": "2026-05", "value": 4.3}] for i in ids}
+    monkeypatch.setattr(MI, "_dbnomics_obs", fake_dbn)
+    monkeypatch.setattr(MI.bls_api, "fetch_bls", fake_bls)
     panel = asyncio.run(MI.region_panel("US"))
     assert panel["region"] == "US" and panel["indicators"]
-    one = panel["indicators"][0]
-    assert one["latest"] == 3.2 and abs(one["change"] - 0.2) < 1e-9 and one["as_of"] == "2025-09"
+    by = {r["slug"]: r for r in panel["indicators"]}
+    # BLS-backed series now read fresh from the BLS API (not the frozen DBnomics mirror)
+    assert by["unemployment"]["source"] == "BLS" and by["unemployment"]["latest"] == 4.3
+    assert by["unemployment"]["as_of"] == "2026-05" and by["unemployment"]["stale"] is False
+    assert abs(by["unemployment"]["change"] - 0.2) < 1e-9
+    # non-BLS series (BEA GDP) still come from DBnomics
+    assert by["gdp_growth"]["source"] == "DBnomics" and by["gdp_growth"]["latest"] == 3.2
 
 
 def test_ce7_backtest_over_store():
@@ -1618,31 +1730,26 @@ async def test_resolve_universe_edges():
     assert u[0][0] is Market.US and u[0][1] == ["aapl"]
 
 
-async def test_scheduler_run_once_runs_pipelines(monkeypatch):
-    # PH-PIPE: a sweep dispatches the configured pipelines over the universe via run_pipelines.
-    from app import scheduler as sched_mod
-    from app.scheduler import Scheduler
+async def test_queue_sweep_defers_per_market(monkeypatch):
+    # A periodic sweep resolves the configured universe and defers one run_pipeline job per market
+    # (deduped by the queueing_lock). This replaces the old asyncio Scheduler._run_once dispatch.
+    from app import queue as Q
+    from app.store import universes as U
+
+    async def fake_resolve(spec):
+        return [(Market.US, ["AAPL"]), (Market.KR, ["005930"])]
 
     calls = []
 
-    async def fake_run_pipelines(market, tickers, pipeline_ids):
-        calls.append((market, tuple(tickers), tuple(pipeline_ids)))
-        return {pid: "ok" for pid in pipeline_ids}
+    async def fake_defer(market, tickers, pipeline_id):
+        calls.append((market, tuple(tickers), pipeline_id))
+        return len(calls)
 
-    async def fake_resolve(spec):  # PH-PIPE: the sweep resolves the universe dynamically
-        return [(Market.US, ["AAPL"])]
-
-    monkeypatch.setattr(sched_mod, "run_pipelines", fake_run_pipelines)
-    monkeypatch.setattr(sched_mod, "resolve_universe", fake_resolve)
-    s = Scheduler()
-    s.universe_spec = "us_sp500"
-    s.pipeline_ids = ["financials", "prices"]
-    s.enabled = True
-    await s._run_once()
-    assert s.last_status == "ok" and s.run_count == 1
-    assert calls == [("US", ("AAPL",), ("financials", "prices"))]
-    assert s.last_summary == {"US": {"financials": "ok", "prices": "ok"}}
-    assert s.last_universe == [{"market": "US", "count": 1}]
+    monkeypatch.setattr(U, "resolve_universe", fake_resolve)
+    monkeypatch.setattr(Q, "defer_pipeline", fake_defer)
+    await Q._sweep("news")
+    assert ("US", ("AAPL",), "news") in calls
+    assert ("KR", ("005930",), "news") in calls
 
 
 async def test_prices_pipeline_uses_configured_backfill_years(monkeypatch):
@@ -1661,6 +1768,80 @@ async def test_prices_pipeline_uses_configured_backfill_years(monkeypatch):
     monkeypatch.setattr(PI, "run_prices_ingest", fake_run)
     await P._run_prices("US", ["AAPL"])
     assert seen["years"] == 7
+
+
+async def test_queue_defer_sweep_rejects_unknown_pipeline():
+    # The admin "run now" defers a known pipeline's sweep; an unknown id is rejected, never queued.
+    from app import queue as Q
+
+    out = await Q.defer_sweep("does_not_exist")
+    assert out["deferred"] is False and "unknown" in out["detail"]
+
+
+def test_incremental_start_logic():
+    from datetime import date
+
+    from app.store._ingest_helpers import _incremental_start
+
+    full = date(2020, 1, 1)
+    # no prior data → full backfill
+    assert _incremental_start(None, full, 5) == full
+    # prior data → last − overlap (never before full_start)
+    assert _incremental_start(date(2026, 6, 1), full, 5) == date(2026, 5, 27)
+    assert _incremental_start(date(2020, 1, 2), full, 30) == full  # clamped to full_start
+
+
+async def test_run_ticker_job_best_effort(monkeypatch):
+    # RF-05: the shared per-ticker job orchestrator — skip failures (-1), sum rows, record a failed note.
+    import app.store.jobs as J
+
+    finished: dict = {}
+    monkeypatch.setattr(J, "start_job", lambda *a, **k: 7)
+    monkeypatch.setattr(J, "update_progress", lambda *a, **k: None)
+    monkeypatch.setattr(J, "finish_job", lambda job, status, rows=0, error=None:
+                        finished.update(job=job, status=status, rows=rows, error=error))
+
+    async def ingest_one(t):
+        if t == "BAD":
+            raise RuntimeError("upstream down")
+        return {"AAPL": 5, "MSFT": 3}[t]
+
+    out = await J.run_ticker_job("prices", "US", "spec", ["AAPL", "BAD", "MSFT"], ingest_one)
+    assert out["status"] == "success" and out["rows"] == 8
+    assert out["per_ticker"] == {"AAPL": 5, "BAD": -1, "MSFT": 3} and out["failed"] == ["BAD"]
+    assert finished == {"job": 7, "status": "success", "rows": 8, "error": "failed: ['BAD']"}
+
+
+async def test_run_prices_ingest_is_incremental(monkeypatch):
+    # prices fetches each ticker only since its last stored bar (− overlap); a fresh ticker with no
+    # data falls back to the full PRICES_BACKFILL_YEARS window. (No upstream network — ingest stubbed.)
+    from datetime import date, timedelta
+
+    import app.store.prices_ingest as PI
+
+    seen: dict[str, date] = {}
+
+    async def fake_ingest(mk, t, start, end, retries=1):
+        seen[t] = start
+        return 1
+
+    last = {"AAPL": date(2026, 6, 1), "NEW": None}
+    monkeypatch.setattr(PI, "ingest_prices_ticker", fake_ingest)
+    monkeypatch.setattr(PI, "_last_bar_date", lambda market, ticker: last.get(ticker))
+    monkeypatch.setattr(PI, "init_db", lambda: None)
+    # the IngestionJob lifecycle now lives in jobs.run_ticker_job (RF-05) → stub the jobs.* calls there
+    import app.store.jobs as J
+    monkeypatch.setattr(J, "start_job", lambda *a, **k: 1)
+    monkeypatch.setattr(J, "finish_job", lambda *a, **k: None)
+    monkeypatch.setattr(J, "update_progress", lambda *a, **k: None)
+
+    await PI.run_prices_ingest("US", ["AAPL", "NEW"], years=5, overlap_days=5)
+
+    today = date.today()
+    full_start = (date(today.year - 5, today.month, today.day) if today.year - 5 > 0
+                  else date(today.year - 5, 1, 1))
+    assert seen["AAPL"] == date(2026, 6, 1) - timedelta(days=5)  # incremental
+    assert seen["NEW"] == full_start                              # first-ever pull → full backfill
 
 
 async def test_run_pipelines_dispatches_and_isolates_failures(monkeypatch):
@@ -1694,9 +1875,12 @@ def test_selftest_classifier_cases():
 
 
 # --- app-level integration (no upstream network) --------------------------
-def test_admin_scheduler_endpoint():
-    body = client.get("/admin/scheduler").json()
-    assert "enabled" in body and "run_count" in body
+def test_admin_queue_endpoint():
+    # The queue overview always renders (fail-safe): even with the queue DB unreachable in unit
+    # tests, it returns the DB-free cron-sweep schedule + the registered task names.
+    body = client.get("/admin/queue").json()
+    assert "periodic" in body and "tasks" in body
+    assert {s["pipeline_id"] for s in body["periodic"]} >= {"news", "prices", "financials"}
 
 
 def test_admin_store_stats_endpoint():
@@ -1712,7 +1896,7 @@ def test_admin_pipelines_endpoint():
     assert {"financials", "prices", "corp_actions", "news"} <= ids
     prices = next(p for p in body["pipelines"] if p["id"] == "prices")
     assert prices["store"] == "price_bars" and "latest" in prices
-    assert body["scheduler"]["state"] in ("enabled", "paused", "running")
+    assert "queue" in body and "periodic" in body["queue"]
 
 
 def test_admin_pipelines_run_dispatches(monkeypatch):
@@ -1720,15 +1904,17 @@ def test_admin_pipelines_run_dispatches(monkeypatch):
 
     seen = {}
 
-    async def fake_run_pipelines(market, tickers, ids):
-        seen["call"] = (market, tuple(tickers), tuple(ids))
+    async def fake_defer(market, tickers, pipeline_id):
+        seen["call"] = (market, tuple(tickers), pipeline_id)
+        return 1
 
-    monkeypatch.setattr(A, "run_pipelines", fake_run_pipelines)
-    # explicit market+tickers → no dynamic fetch needed (deterministic test)
+    monkeypatch.setattr(A.Q, "defer_pipeline", fake_defer)
+    # explicit market+tickers → enqueues on the queue immediately (no dynamic fetch needed)
     r = client.post("/admin/pipelines/run", json={"market": "US", "tickers": ["AAPL", "MSFT"], "pipelines": ["prices"]})
     body = r.json()
     assert r.status_code == 200 and body["started"] is True and body["pipelines"] == ["prices"]
     assert body["universe"][0]["market"] == "US" and body["universe"][0]["count"] == 2
+    assert body["deferred"] == 1 and seen["call"] == ("US", ("AAPL", "MSFT"), "prices")
 
 
 async def test_prices_ingest_shapes_and_upserts(monkeypatch):
@@ -1887,7 +2073,7 @@ def test_catalog_manifests_valid():
 
 def test_every_resource_has_a_valid_category():
     # The builder groups tools by user-facing category (not by API) — so EVERY tool, present or
-    # future, must carry a known category. _apply_categories() raises on a gap; assert it held.
+    # future, must carry a known category. _apply_resource_meta() raises on a gap; assert it held.
     from app.connectors.catalog import get_catalog, get_categories
     from app.connectors.manifest import Category
 
@@ -1976,139 +2162,38 @@ def test_catalog_has_rag_connector_routed_to_rag_service():
     assert rag.license.redistribution is False
 
 
-# --- PH-PROV3: PDF-normalized evidence document store ---------------------
-async def test_ph_prov3_ensure_doc_caches_kr_official_pdf(tmp_path, monkeypatch):
-    """KR uses DART's official PDF directly (Chromium-free); it's written to the data
-    volume + indexed as an EvidenceDoc, and the second call is served from cache."""
-    import app.store.evidence_docs as ED
+# --- filing HTML viewer: sanitize + serve the original markup -------------
+def test_filing_html_sanitize_keeps_ixbrl_blocks_egress():
+    from app.store.filing_html import sanitize
+
+    raw = ('<html><head><title>F</title></head><body>'
+           '<script>alert(1)</script>'
+           '<ix:nonfraction name="us-gaap:Revenues" contextref="FY">383,285</ix:nonfraction>'
+           '<img src="http://tracker/x.png"><p onclick="x()">Net sales</p></body></html>')
+    out = sanitize(raw)
+    assert "<script" not in out.lower()                 # active scripts stripped
+    assert "Content-Security-Policy" in out and "default-src 'none'" in out  # CSP → no egress
+    assert 'name="us-gaap:Revenues"' in out             # inline-XBRL tag preserved (viewer targets it)
+    assert "383,285" in out                             # the cited figure preserved verbatim
+
+
+async def test_get_filing_html_caches(tmp_path, monkeypatch):
+    import app.store.filing_html as FH
     from app.config import settings
 
     monkeypatch.setattr(settings, "evidence_docs_dir", str(tmp_path))
     calls = {"n": 0}
 
-    async def _fake_pdf(rcept):
+    async def fake_source(market, accession, cik, fetch_url=None):
         calls["n"] += 1
-        return b"%PDF-1.4 official-dart"
+        return '<html><body><script>x()</script><p>Net sales 383,285</p></body></html>'
 
-    monkeypatch.setattr(ED, "fetch_dart_pdf", _fake_pdf)
-
-    r1 = await ED.ensure_doc("KR", "005930", "20260310002820",
-                             canonical_url="https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260310002820")
-    assert r1 == "stored"
-    assert (tmp_path / "KR" / "20260310002820.pdf").read_bytes().startswith(b"%PDF")
-    doc = ED.get_evidence_doc("KR", "20260310002820")
-    assert doc and doc["status"] == "stored" and "dart.fss.or.kr" in doc["source_url"]
-
-    r2 = await ED.ensure_doc("KR", "005930", "20260310002820", canonical_url="x")  # idempotent
-    assert r2 == "cached" and calls["n"] == 1  # no second fetch
-
-
-@respx.mock
-async def test_ph_prov3_ensure_doc_us_renders_via_chromium(tmp_path, monkeypatch):
-    """US has no official PDF → iXBRL HTML is rendered to PDF once by the renderer."""
-    import app.store.evidence_docs as ED
-    from app.config import settings
-
-    monkeypatch.setattr(settings, "evidence_docs_dir", str(tmp_path))
-
-    async def _fake_markup(accession, fetch_url):
-        return "<html><body><table><tr><td>Revenue</td><td>391,035</td></tr></table></body></html>"
-
-    monkeypatch.setattr(ED, "_us_markup", _fake_markup)
-    respx.post("http://renderer:8006/pdf/from-html").mock(
-        return_value=httpx.Response(200, content=b"%PDF-1.7 us", headers={"content-type": "application/pdf"}))
-
-    r = await ED.ensure_doc("US", "AAPL", "0000320193-24-000123",
-                            fetch_url="https://www.sec.gov/x.htm", canonical_url="https://www.sec.gov/i.htm")
-    assert r == "stored"
-    assert (tmp_path / "US" / "0000320193-24-000123.pdf").read_bytes().startswith(b"%PDF")
-
-
-def _make_pdf(path, line):
-    import fitz
-
-    doc = fitz.open()
-    doc.new_page().insert_text((72, 200), line)
-    doc.save(str(path))
-    doc.close()
-
-
-def test_ph_prov3b_pymupdf_highlight(tmp_path, monkeypatch):
-    """PyMuPDF locates the cited value (at the millions scale) next to its label, highlights
-    it, and rasterizes a PNG — cache-first; a value not present returns None (graceful)."""
-    from app.config import settings
-    from app.store.evidence_render import highlight_png, labels_for
-
-    monkeypatch.setattr(settings, "evidence_docs_dir", str(tmp_path))
-    pdf = tmp_path / "us.pdf"
-    _make_pdf(pdf, "Net sales      391,035")  # millions, as a 10-K renders it
-    labels = labels_for("US", "Revenues")
-    assert "Net sales" in labels
-
-    png = highlight_png(str(pdf), 391_035_000_000.0, labels)
-    assert png and png.startswith(b"\x89PNG")
-    assert highlight_png(str(pdf), 391_035_000_000.0, labels) == png      # cache hit
-    assert highlight_png(str(pdf), 999.0, labels) is None                 # value absent → None
-
-
-def test_ph_prov3b_evidence_pdf_endpoint(tmp_path, monkeypatch):
-    """/evidence highlights the cited figure in the cached PDF; /evidence/doc serves the PDF."""
-    from app.config import settings
-    from app.store.evidence_docs import _upsert_doc
-
-    monkeypatch.setattr(settings, "evidence_docs_dir", str(tmp_path))
-    pdf = tmp_path / "us.pdf"
-    _make_pdf(pdf, "Net sales      391,035")  # ASCII fixture → US 'Net sales' label anchors deterministically
-    _upsert_doc({"market": "US", "ticker": "AAPL", "accession_number": "0000320193-24-000123",
-                 "source_url": "https://www.sec.gov/...-index.htm",
-                 "pdf_path": str(pdf), "page_count": 1, "status": "stored"})
-
-    r = client.get("/evidence?market=US&accession=0000320193-24-000123&concept=Revenues"
-                   "&report_period=2024-09-28&value=391035000000")
-    assert r.status_code == 200 and r.headers["content-type"] == "image/png"
-
-    d = client.get("/evidence/doc?market=US&accession=0000320193-24-000123")
-    assert d.status_code == 200 and d.headers["content-type"] == "application/pdf"
-    assert client.get("/evidence/doc?market=US&accession=NOPE").status_code == 204
-
-
-def test_ph_prov3a_admin_evidence_docs_endpoint(monkeypatch):
-    import app.routers.admin as A
-
-    fired: dict = {}
-
-    async def _fake_run(market, tickers):
-        fired["market"], fired["tickers"] = market, tickers
-
-    monkeypatch.setattr(A, "run_build_evidence_docs", _fake_run)
-    assert client.post("/admin/evidence-docs", json={"market": "KR", "tickers": ["005930"]}).json()["started"] is True
-    assert fired == {"market": "KR", "tickers": ["005930"]}
-    # unsupported market / no tickers → not started
-    assert client.post("/admin/evidence-docs", json={"market": "JP", "tickers": ["7203"]}).json()["started"] is False
-    assert client.post("/admin/evidence-docs", json={"market": "US"}).json()["started"] is False
-
-
-# --- PH-PROV3e: filing PDF text → RAG corpus ------------------------------
-def test_ph_prov3e_pdf_to_docs(tmp_path):
-    """Each non-empty PDF page → one RAG IngestDoc carrying accession + section (p.N) so a
-    search hit points back to the exact page for evidence highlighting."""
-    import fitz
-
-    from app.store.filing_ingest import _pdf_to_docs
-
-    pdf = tmp_path / "f.pdf"
-    d = fitz.open()
-    d.new_page().insert_text((72, 200), "Net sales were 391,035; risks include supply concentration.")
-    d.new_page()  # 2nd page near-empty → skipped
-    d.save(str(pdf))
-    d.close()
-
-    docs = _pdf_to_docs(str(pdf), "US", "AAPL", "0000320193-24-000123", "SEC EDGAR", "https://sec.gov/x")
-    assert len(docs) == 1  # empty page dropped
-    doc = docs[0]
-    assert doc["section"] == "p.1" and doc["accession"] == "0000320193-24-000123"
-    assert doc["doc_type"] == "filing" and doc["ticker"] == "AAPL" and doc["market"] == "US"
-    assert "Net sales" in doc["text"]
+    monkeypatch.setattr(FH, "_source_html", fake_source)
+    h1 = await FH.get_filing_html("US", "0000-1", "320193")
+    assert h1 and "<script" not in h1.lower() and "Content-Security-Policy" in h1
+    assert (tmp_path / "html" / "US" / "0000-1.html").exists()        # cached to disk
+    h2 = await FH.get_filing_html("US", "0000-1", "320193")           # second call
+    assert h2 == h1 and calls["n"] == 1                               # fetched once, then served from cache
 
 
 def test_ph_prov3e_admin_filings_ingest_endpoint(monkeypatch):
@@ -2116,33 +2201,16 @@ def test_ph_prov3e_admin_filings_ingest_endpoint(monkeypatch):
 
     fired: dict = {}
 
-    async def _fake_run(market, tickers):
-        fired["market"], fired["tickers"] = market, tickers
+    async def fake_defer(market, tickers, pipeline_id):
+        fired["call"] = (market, tuple(tickers), pipeline_id)
+        return 1
 
-    monkeypatch.setattr(A, "run_filing_text_ingest", _fake_run)
+    monkeypatch.setattr(A.Q, "defer_pipeline", fake_defer)
+    # US → enqueues the filing_text pipeline on the queue
     assert client.post("/admin/filings/ingest", json={"market": "US", "tickers": ["AAPL"]}).json()["started"] is True
-    assert fired == {"market": "US", "tickers": ["AAPL"]}
+    assert fired["call"] == ("US", ("AAPL",), "filing_text")
+    # an unsupported market is rejected, never queued
     assert client.post("/admin/filings/ingest", json={"market": "JP", "tickers": ["7203"]}).json()["started"] is False
-
-
-def test_ph_prov3e_text_evidence_endpoint(tmp_path, monkeypatch):
-    """/evidence text mode highlights a cited PASSAGE in the cached filing PDF."""
-    from app.config import settings
-    from app.store.evidence_docs import _upsert_doc
-
-    monkeypatch.setattr(settings, "evidence_docs_dir", str(tmp_path))
-    pdf = tmp_path / "f.pdf"
-    _make_pdf(pdf, "Net sales were 391,035 and supply chain risks remain significant.")
-    _upsert_doc({"market": "US", "ticker": "AAPL", "accession_number": "0000320193-24-000123",
-                 "source_url": "https://sec.gov/i.htm", "pdf_path": str(pdf), "page_count": 1, "status": "stored"})
-
-    r = client.get("/evidence", params={"market": "US", "accession": "0000320193-24-000123",
-                                        "text": "Net sales were 391,035 and supply chain risks remain"})
-    assert r.status_code == 200 and r.headers["content-type"] == "image/png"
-    # a passage that isn't in the doc → 204 (graceful)
-    r2 = client.get("/evidence", params={"market": "US", "accession": "0000320193-24-000123",
-                                         "text": "totally unrelated sentence not present anywhere here"})
-    assert r2.status_code == 204
 
 
 # --- PH-8: index-fund / ETF holdings (SEC N-PORT) -------------------------
@@ -2352,19 +2420,65 @@ def test_phdata3_corporate_actions_endpoint(monkeypatch):
     assert b["dividends"][0]["amount"] == 0.25 and b["splits"][0]["ratio"] == "4:1"
 
 
-# --- PH-DATA-4: economic indicators DB (DBnomics) -------------------------
+# --- PH-DATA-4 / PH-FRESH-1: economic indicators (BLS direct + DBnomics) --
 @respx.mock
 async def test_phdata4_indicators_fetch():
     from app.providers.macro_indicators import fetch_indicator, list_indicators
 
-    payload = {"series": {"docs": [{"period": ["2025-11", "2025-12"], "value": ["NA", 319.1]}]}}
-    respx.get("https://api.db.nomics.world/v22/series/BLS/cu/CUSR0000SA0").mock(
-        return_value=httpx.Response(200, json=payload))
+    # BLS path: `cpi` is a BLS series → read FRESH from the BLS public API (the DBnomics BLS
+    # mirror froze at 2025-01). M13 (annual avg) is skipped; observations come back ascending.
+    bls_payload = {"status": "REQUEST_SUCCEEDED", "Results": {"series": [
+        {"seriesID": "CUSR0000SA0", "data": [
+            {"year": "2026", "period": "M05", "value": "322.0"},
+            {"year": "2026", "period": "M04", "value": "321.0"},
+            {"year": "2026", "period": "M13", "value": "999"}]}]}}  # annual avg → dropped
+    respx.post("https://api.bls.gov/publicAPI/v2/timeseries/data/").mock(
+        return_value=httpx.Response(200, json=bls_payload))
     res = await fetch_indicator("cpi", 24)
-    assert res["source"] == "DBnomics" and res["source_url"].endswith("BLS/cu/CUSR0000SA0")
-    assert res["observations"] == [{"date": "2025-12", "value": 319.1}]  # "NA" dropped, never faked
+    assert res["source"] == "BLS" and res["source_url"].endswith("CUSR0000SA0")
+    assert res["observations"][-1] == {"date": "2026-05", "value": 322.0}  # newest last, M13 gone
+    assert res["as_of"] == "2026-05" and res["stale"] is False             # fresh → not flagged
+
+    # DBnomics path: a non-BLS series (BEA GDP) still reads keyless DBnomics.
+    dbn = {"series": {"docs": [{"period": ["2026-Q1", "2026-Q2"], "value": ["NA", 2.5]}]}}
+    respx.get("https://api.db.nomics.world/v22/series/BEA/NIPA-T10101/A191RL-Q").mock(
+        return_value=httpx.Response(200, json=dbn))
+    g = await fetch_indicator("gdp_growth", 24)
+    assert g["source"] == "DBnomics" and g["observations"] == [{"date": "2026-Q2", "value": 2.5}]
     assert any(i["slug"] == "cpi" for i in list_indicators())
     assert await fetch_indicator("nope") is None
+
+
+@respx.mock
+async def test_bls_provider_parses_and_batches():
+    from app.providers.us.bls import fetch_bls, series_page
+
+    payload = {"status": "REQUEST_SUCCEEDED", "Results": {"series": [
+        {"seriesID": "LNS14000000", "data": [
+            {"year": "2026", "period": "M05", "value": "4.3"},
+            {"year": "2026", "period": "M04", "value": "4.1"}]},
+        {"seriesID": "CES0000000001", "data": [
+            {"year": "2026", "period": "M05", "value": "159001"},
+            {"year": "2025", "period": "M13", "value": "1"}]}]}}  # M13 annual avg → dropped
+    route = respx.post("https://api.bls.gov/publicAPI/v2/timeseries/data/").mock(
+        return_value=httpx.Response(200, json=payload))
+    out = await fetch_bls(["LNS14000000", "CES0000000001"])      # both series in ONE request
+    assert out["LNS14000000"][-1] == {"date": "2026-05", "value": 4.3}   # ascending, latest last
+    assert out["CES0000000001"] == [{"date": "2026-05", "value": 159001.0}]  # M13 dropped, never faked
+    assert series_page("LNS14000000").endswith("LNS14000000")
+    assert route.called
+
+
+async def test_macro_stale_value_flagged(monkeypatch):
+    # Honesty (PH-FRESH-1): a present-but-old value is FLAGGED stale, never shown as if current —
+    # so if an upstream freezes again (like the DBnomics BLS mirror did at 2025-01) the UI shows it.
+    import app.providers.macro_indicators as MI
+
+    async def frozen(ids, years=3):
+        return {i: [{"date": "2025-01", "value": 4.0}] for i in ids}  # ~17mo old
+    monkeypatch.setattr(MI.bls_api, "fetch_bls", frozen)
+    res = await MI.fetch_indicator("unemployment", 24)
+    assert res["as_of"] == "2025-01" and res["stale"] is True and res["source"] == "BLS"
 
 
 def test_phdata4_indicators_endpoint():
@@ -2417,3 +2531,69 @@ async def test_phdata6_endpoint(monkeypatch):
 
 def test_phdata6_bad_interval_400():
     assert client.get("/technical-indicators?ticker=AAPL&interval=minute").status_code == 400
+
+
+# --- periodicity (cadence) classification ---------------------------------
+# Every datasource is classified periodic vs one-shot in the catalog. The product gates the
+# pin→alert flow on it: only a periodic source can carry a notification bot. The map is enforced
+# at import (a missing/stale entry raises), so importing the catalog already proves completeness —
+# these assertions pin down the contract + a few representative classifications.
+
+def test_every_resource_has_a_cadence():
+    from app.connectors.catalog import CONNECTORS
+
+    for c in CONNECTORS:
+        for r in c.resources:
+            assert r.cadence is not None, f"{c.id}.{r.name} has no cadence"
+
+
+def test_cadence_exposed_in_catalog_endpoint():
+    body = client.get("/catalog").json()
+    cadences = {
+        (con["id"], res["name"]): res.get("cadence")
+        for con in body["connectors"] for res in con["resources"]
+    }
+    assert cadences[("yahoo", "prices")] == "daily"
+    assert cadences[("sec_edgar", "filings")] == "event"
+    assert cadences[("fred", "interest_rates")] == "scheduled"
+    assert cadences[("google_news", "news")] == "streaming"
+    assert cadences[("sec_edgar", "company_facts")] == "one_shot"
+
+
+def test_periodic_vs_one_shot_partition():
+    from app.connectors.catalog import CONNECTORS
+    from app.connectors.manifest import Cadence
+
+    periodic, one_shot = set(), set()
+    for c in CONNECTORS:
+        for r in c.resources:
+            (periodic if r.cadence.periodic else one_shot).add((c.id, r.name))
+
+    # representative periodic (alertable) sources
+    assert ("yahoo", "prices") in periodic            # daily price series → price threshold
+    assert ("opendart", "filings") in periodic        # KR disclosures → new-filing alert
+    assert ("kis", "volume_rank") in periodic         # realtime ranking
+    # representative one-shot (a value you pin and glance at — no bell)
+    assert ("datasets_store", "valuation") in one_shot
+    assert ("datasets_store", "backtest") in one_shot
+    assert ("sec_edgar", "comparables") in one_shot
+    assert Cadence.one_shot.periodic is False and Cadence.daily.periodic is True
+
+
+# --- filing text → RAG corpus (extracted from the original HTML) ----------
+def test_html_to_docs_sections_filing_text():
+    """Filing HTML → section-sized RAG IngestDocs carrying accession + section (s.N) so a hit
+    points back to a region for the in-app viewer to highlight. Script text is not indexed."""
+    from app.store.filing_ingest import _html_to_docs
+
+    html = ("<html><body><script>track()</script>"
+            "<h1>Item 7. MD&A</h1>"
+            "<p>Net sales were 391,035 and supply concentration remains a key risk.</p>"
+            "<table><tr><td>Revenue</td><td>391,035</td></tr></table></body></html>")
+    docs = _html_to_docs(html, "US", "AAPL", "0000320193-24-000123", "SEC EDGAR", "https://sec.gov/x")
+    assert docs and docs[0]["accession"] == "0000320193-24-000123"
+    assert docs[0]["section"].startswith("s.") and docs[0]["doc_type"] == "filing"
+    assert docs[0]["ticker"] == "AAPL" and docs[0]["market"] == "US"
+    joined = " ".join(d["text"] for d in docs)
+    assert "Net sales" in joined and "391,035" in joined
+    assert "track()" not in joined  # <script> text excluded from the corpus

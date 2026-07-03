@@ -1,7 +1,7 @@
 # Answer-quality rubric
 
-> The criteria a **deep model** (default `gemini-pro-latest`, override `EVAL_JUDGE_MODEL`,
-> e.g. `gemini-3.5-pro-preview`) uses to grade every chat answer in `run_eval.py`.
+> The criteria the judge model (default fast `gemini-flash-latest`, override `EVAL_JUDGE_MODEL`,
+> e.g. `gemini-pro-latest` for the strongest/slower grading) uses to grade every chat answer in `run_eval.py`.
 > Keep this file and the `RUBRIC` list in `run_eval.py` in sync.
 
 The judge scores **each dimension 1–5** (5 = excellent, 3 = acceptable, 1 = poor), then gives a

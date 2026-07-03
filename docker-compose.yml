@@ -8,14 +8,15 @@ services:
     image: valuegraph-datasets:latest
     env_file: [.env]
     environment:
-      DATABASE_URL: "sqlite:////data/datasets.db"
-      RENDERER_URL: "http://renderer:8006"
+      DATABASE_URL: "postgresql+psycopg://rag:rag@postgres:5432/datasets"
+      GOOGLE_APPLICATION_CREDENTIALS: "/secrets/gcp-sa.json"   # Document AI (deck parsing)
     volumes:
-      - datasets_data:/data
+      - datasets_data:/data   # evidence-HTML cache (/data/evidence_docs); the store is Postgres
+      - ./secrets:/secrets:ro   # gcp service-account JSON (gitignored) — shared with the worker/rag
     ports:
       - "8000:8000"
     depends_on:
-      renderer:
+      postgres:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -25,24 +26,29 @@ services:
       retries: 3
       start_period: 10s
 
-  # PH-PROV2: highlighted-evidence renderer (heavy Chromium dep isolated here; internal-only,
-  # reached from datasets via RENDERER_URL). Image cache persists on its own volume.
-  renderer:
-    build: ./renderer
-    image: valuegraph-renderer:latest
+  # Procrastinate worker — runs the per-pipeline cron sweeps (app/queue.py @app.periodic) and
+  # processes the deferred ingestion jobs with retries. The broker IS Postgres (no Redis). The
+  # datasets web process applies the queue schema at startup; this just runs the worker. Stop it
+  # (`docker compose stop worker`) to pause all automatic ingestion.
+  worker:
+    build: ./datasets
+    image: valuegraph-datasets:latest
     env_file: [.env]
     environment:
-      RENDER_CACHE_DIR: "/cache"
+      DATABASE_URL: "postgresql+psycopg://rag:rag@postgres:5432/datasets"
+      RAG_URL: "http://rag:8002"
+      GOOGLE_APPLICATION_CREDENTIALS: "/secrets/gcp-sa.json"   # Document AI (deck parsing)
     volumes:
-      - renderer_data:/cache
-    shm_size: "1gb"
+      - ./secrets:/secrets:ro   # gcp service-account JSON (gitignored)
+    command: ["python", "-m", "procrastinate", "--app=app.queue.app", "worker", "--concurrency=4", "--queues=ingest,sweep"]
+    depends_on:
+      datasets:
+        condition: service_healthy
+      rag:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8006/health').status==200 else 1)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
 
   control-plane:
     build: ./control-plane
@@ -52,9 +58,7 @@ services:
       # In the compose network backend services are reachable by name.
       DATASETS_URL: "http://datasets:8000"
       RAG_URL: "http://rag:8002"
-      DATABASE_URL: "sqlite:////data/controlplane.db"
-    volumes:
-      - controlplane_data:/data
+      DATABASE_URL: "postgresql+psycopg://rag:rag@postgres:5432/controlplane"
     ports:
       # host 8010 -> container 8001 (host 8001 is often taken)
       - "8010:8001"
@@ -62,6 +66,8 @@ services:
       datasets:
         condition: service_healthy
       rag:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -81,15 +87,38 @@ services:
     environment:
       MCP_GATEWAY_URL: "http://control-plane:8001"
 
+  postgres:
+    image: pgvector/pgvector:pg16   # Postgres + pgvector preinstalled
+    environment:
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: rag
+      POSTGRES_DB: rag
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d rag"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   rag:
     build: ./rag
     image: valuegraph-rag:latest
     env_file: [.env]
     environment:
-      # Embedding backend + model — overridable from the shell (falls back to .env,
-      # then to the deterministic hash dev backend). e2e_functional flips to oss-cpu.
-      RAG_EMBEDDING_BACKEND: "${RAG_EMBEDDING_BACKEND:-hash}"
-      RAG_EMBEDDING_MODEL: "${RAG_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}"
+      # Embeddings + dim come from .env (RAG_EMBEDDING_MODEL=gemini-embedding-2). The vector store
+      # is pgvector (RAG_VECTOR_STORE=pgvector in .env) backed by the postgres service below.
+      RAG_DATABASE_URL: "postgresql://rag:rag@postgres:5432/rag"
+      # gcp Vertex Ranking reranker (optional): drop a service-account JSON at ./secrets/gcp-sa.json,
+      # then in .env set RAG_RERANKER_BACKEND=gcp + RAG_GCP_PROJECT. Unused while reranker=none.
+      GOOGLE_APPLICATION_CREDENTIALS: "/secrets/gcp-sa.json"
+    volumes:
+      - ./secrets:/secrets:ro   # holds the gcp service-account JSON (gitignored)
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8002:8002"
     restart: unless-stopped
@@ -133,15 +162,15 @@ services:
     environment:
       CONTROL_PLANE_URL: "http://control-plane:8001"
       AGENT_ENGINE_URL: "http://agent-engine:8003"
-      DATABASE_URL: "sqlite:////data/studio.db"
-    volumes:
-      - studio_data:/data
+      DATABASE_URL: "postgresql+psycopg://rag:rag@postgres:5432/studio"
     ports:
       - "8004:8004"
     depends_on:
       control-plane:
         condition: service_healthy
       agent-engine:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -166,8 +195,8 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Admin panel — Django-admin-style CRUD over every service DB (mounts their data
-  # volumes) + an ops console. Login via ADMINUI_USERNAME/ADMINUI_PASSWORD.
+  # Admin panel — Django-admin-style CRUD over every service DB (reflected over Postgres) +
+  # an ops console. Login via ADMINUI_USERNAME/ADMINUI_PASSWORD.
   admin:
     build: ./admin
     image: valuegraph-admin:latest
@@ -175,12 +204,12 @@ services:
     environment:
       ADMINUI_USERNAME: "${ADMINUI_USERNAME:-admin}"
       ADMINUI_PASSWORD: "${ADMINUI_PASSWORD:-admin}"
+      # browse the service DBs over Postgres (no more mounted SQLite files)
+      CONTROLPLANE_DB: "postgresql+psycopg://rag:rag@postgres:5432/controlplane"
+      STUDIO_DB: "postgresql+psycopg://rag:rag@postgres:5432/studio"
+      DATASETS_DB: "postgresql+psycopg://rag:rag@postgres:5432/datasets"
     ports:
       - "8005:8005"
-    volumes:
-      - controlplane_data:/dbs/controlplane
-      - studio_data:/dbs/studio
-      - datasets_data:/dbs/datasets
     depends_on:
       control-plane:
         condition: service_healthy
@@ -188,10 +217,10 @@ services:
         condition: service_healthy
       datasets:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   datasets_data: {}
-  renderer_data: {}
-  controlplane_data: {}
-  studio_data: {}
+  pg_data: {}

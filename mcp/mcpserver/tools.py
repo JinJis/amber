@@ -45,10 +45,11 @@ def build_tools(connectors: list[dict]) -> list[dict]:
         for resource in connector.get("resources", []):
             prov = resource.get("provenance", {})
             redistribute = "" if lic.get("redistribution", True) else " · NO-REDISTRIBUTE"
+            cadence = resource.get("cadence")
             desc = (
                 f"{resource.get('description', '')} "
                 f"[source: {prov.get('source')}; markets: {','.join(resource.get('markets', []))}; "
-                f"license: {lic.get('id')}{redistribute}]"
+                f"cadence: {cadence}; license: {lic.get('id')}{redistribute}]"
             )
             tools.append(
                 {

@@ -11,9 +11,8 @@ import {
   type SeriesMarker,
   type Time,
 } from "lightweight-charts";
-import type { Artifact, ArtifactMarker, ChartAnnotations } from "./ArtifactCard";
-import { fmtBig } from "./ArtifactCard";
-import type { Citation } from "./SourceCard";
+import type { Artifact, ArtifactMarker, ChartAnnotations, Citation } from "../lib/types";
+import { fmtBig } from "../lib/format";
 
 const MARKER_SHAPE: Record<string, "circle" | "arrowUp" | "arrowDown" | "square"> = {
   dividend: "circle", split: "square", earnings: "arrowUp", filing: "arrowDown",
@@ -50,11 +49,14 @@ function overlayPoints(pts: { time: string; value: number }[]) {
 }
 
 export function TradeChart(
-  { a, onEvidence, userAnn, onDraw, bars, series, currency = "USD" }:
+  { a, onEvidence, userAnn, onDraw, bars, series, currency = "USD", compact = false, fillHeight = false }:
   { a: Artifact; onEvidence?: (c: Citation) => void;
     userAnn?: ChartAnnotations | null; onDraw?: (next: ChartAnnotations | null) => void;
     bars?: NonNullable<Artifact["candles"]> | null;
-    series?: NonNullable<Artifact["series"]> | null; currency?: "KRW" | "USD" },
+    series?: NonNullable<Artifact["series"]> | null; currency?: "KRW" | "USD";
+    // compact: hide the toolbar (dashboard widget). fillHeight: the chart fills its container
+    // height (responsive widget) instead of a fixed 260px.
+    compact?: boolean; fillHeight?: boolean },
 ) {
   const box = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);   // PH-VIZ-6: for the PNG snapshot export
@@ -64,7 +66,8 @@ export function TradeChart(
   const isCandle = candleData.length > 0;
   const lineCount = lineData.length;
   const overlays = a.overlays ?? [];
-  const [range, setRange] = useState("1Y");
+  const [range, setRange] = useState("MAX");  // default to all available data (fitContent) — a short
+  //                                              window looks empty/ugly when the series is sparse
   const [logScale, setLogScale] = useState(false);
   const [rebase, setRebase] = useState(false);   // line mode only: index each series to 100
   // PH-VIZ-5: drawing mode (only when onDraw is provided). The pending point of a 2-click
@@ -77,7 +80,7 @@ export function TradeChart(
     if (!el) return;
     const chart: IChartApi = createChart(el, {
       width: el.clientWidth,
-      height: 260,
+      height: fillHeight ? (el.clientHeight || 220) : 260,
       layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: "#86868C", fontSize: 11 },
       // readable axis/crosshair: abbreviate big figures (revenue → 조/억 or $B/M); prices stay plain.
       localization: {
@@ -351,10 +354,12 @@ export function TradeChart(
     }
 
     chartRef.current = chart;
-    const ro = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
+    const ro = new ResizeObserver(() => chart.applyOptions({
+      width: el.clientWidth, ...(fillHeight ? { height: el.clientHeight || 220 } : {}),
+    }));
     ro.observe(el);
     return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
-  }, [a, bars, series, currency, range, logScale, rebase, isCandle, userAnn, drawMode, onDraw]);
+  }, [a, bars, series, currency, range, logScale, rebase, isCandle, userAnn, drawMode, onDraw, fillHeight]);
 
   const hasDrawings = (userAnn?.lines?.length || 0) + (userAnn?.hlines?.length || 0) > 0;
 
@@ -389,7 +394,8 @@ export function TradeChart(
   }
 
   return (
-    <div className="tradechart">
+    <div className={`tradechart${fillHeight ? " tc-fill" : ""}`}>
+      {!compact && (
       <div className="tc-toolbar">
         <div className="tc-ranges">
           {RANGES.map(([k]) => (
@@ -422,7 +428,8 @@ export function TradeChart(
           <button type="button" onClick={exportPng} title="차트를 출처 포함 PNG로 내보내기">📸 PNG</button>
         </div>
       </div>
-      <div ref={box} className={`tc-canvas${drawMode ? " drawing" : ""}`} />
+      )}
+      <div ref={box} className={`tc-canvas${fillHeight ? " tc-canvas-fill" : ""}${drawMode ? " drawing" : ""}`} />
       {drawMode && (
         <div className="tc-note">
           {drawMode === "trend" ? "추세선: 시작점과 끝점을 차례로 클릭하세요." : "수평선: 차트에서 원하는 가격대를 클릭하세요."}

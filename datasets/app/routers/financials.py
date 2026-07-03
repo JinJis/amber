@@ -15,18 +15,10 @@ from app.models.generated import (
     IncomeStatementResponse,
 )
 from app.providers.registry import get_financials_provider
+from app.routers._common import validate_period
 from app.symbols import Market, build_ref
 
 router = APIRouter(tags=["Financial Statements"])
-
-_PERIODS = ["annual", "quarterly", "ttm"]
-
-
-def _check_period(period: str) -> None:
-    if period not in _PERIODS:
-        from app.errors import bad_request
-
-        raise bad_request(f"period must be one of {_PERIODS}.")
 
 
 @router.get(
@@ -42,7 +34,7 @@ async def get_income_statements(
     filters: ReportPeriodFilters = Depends(),
     market: MarketParam = Market.US,
 ) -> IncomeStatementResponse:
-    _check_period(period)
+    validate_period(period)
     ref = build_ref(market, ticker, cik)
     rows = await get_financials_provider(market).income_statements(ref, period, filters.fetch_limit(limit))
     return IncomeStatementResponse(income_statements=filters.apply(rows, limit))
@@ -61,7 +53,7 @@ async def get_balance_sheets(
     filters: ReportPeriodFilters = Depends(),
     market: MarketParam = Market.US,
 ) -> BalanceSheetResponse:
-    _check_period(period)
+    validate_period(period)
     ref = build_ref(market, ticker, cik)
     rows = await get_financials_provider(market).balance_sheets(ref, period, filters.fetch_limit(limit))
     return BalanceSheetResponse(balance_sheets=filters.apply(rows, limit))
@@ -80,7 +72,7 @@ async def get_cash_flow_statements(
     filters: ReportPeriodFilters = Depends(),
     market: MarketParam = Market.US,
 ) -> CashFlowStatementResponse:
-    _check_period(period)
+    validate_period(period)
     ref = build_ref(market, ticker, cik)
     rows = await get_financials_provider(market).cash_flow_statements(ref, period, filters.fetch_limit(limit))
     return CashFlowStatementResponse(cash_flow_statements=filters.apply(rows, limit))
@@ -103,7 +95,7 @@ async def get_financials_as_reported(
     limit: int = Query(4, ge=1, le=20, description="Number of recent periods."),
     market: MarketParam = Market.US,
 ) -> AsReportedResponse:
-    _check_period(period)
+    validate_period(period)
     ref = build_ref(market, ticker)
     periods = await get_financials_provider(market).as_reported(ref, period, limit)
     return AsReportedResponse(ticker=ref.ticker, period=period, periods=periods)
@@ -118,7 +110,7 @@ async def get_all_financial_statements(
     filters: ReportPeriodFilters = Depends(),
     market: MarketParam = Market.US,
 ) -> FinancialsResponse:
-    _check_period(period)
+    validate_period(period)
     ref = build_ref(market, ticker, cik)
     provider = get_financials_provider(market)
     fetch = filters.fetch_limit(limit)

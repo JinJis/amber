@@ -13,6 +13,7 @@ from __future__ import annotations
 from app.config import settings
 from app.errors import bad_request, upstream_error
 from app.http import fetch_json
+from app.providers._parse_utils import parse_float as _num  # comma-aware shared parser (RF-02)
 
 _BASE = "https://financialmodelingprep.com/stable"
 
@@ -21,13 +22,6 @@ def _key() -> str:
     if not settings.fmp_api_key:
         raise bad_request("FMP_API_KEY is not configured.")
     return settings.fmp_api_key
-
-
-def _num(v):
-    try:
-        return float(v) if v is not None else None
-    except (TypeError, ValueError):
-        return None
 
 
 async def _get(path: str, params: dict) -> list:

@@ -43,7 +43,11 @@ def _envval(*keys: str) -> str:
         line = line.strip()
         if "=" in line and not line.startswith("#"):
             k, v = line.split("=", 1)
-            rows[k.strip()] = v.strip().strip("\"'")
+            v = v.strip()
+            # strip an unquoted inline comment (dotenv: `KEY=value  # note` → value)
+            if v[:1] not in ("'", '"'):
+                v = re.split(r"\s+#", v, 1)[0].rstrip()
+            rows[k.strip()] = v.strip("\"'")
     for k in keys:
         if rows.get(k):
             return rows[k]
@@ -53,10 +57,10 @@ def _envval(*keys: str) -> str:
 # Accept GOOGLE_API_KEY or GEMINI_API_KEY (the genai SDK reads either).
 GKEY = (os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         or _envval("GOOGLE_API_KEY", "GEMINI_API_KEY"))
-# The judge is a DEEP model (rubric grading needs strong reasoning) — decoupled from
-# the agent's fast model. Override with EVAL_JUDGE_MODEL (e.g. gemini-3.5-pro-preview).
+# The judge is decoupled from the agent's model. Default is a FAST model (flash) so the eval runs
+# quickly; override with EVAL_JUDGE_MODEL=gemini-pro-latest for the strongest (slower) grading.
 JUDGE_MODEL = (os.environ.get("EVAL_JUDGE_MODEL") or _envval("EVAL_JUDGE_MODEL")
-               or "gemini-pro-latest")
+               or "gemini-flash-latest")
 # Pass bar: rubric overall average must clear this (per-dimension shown in the summary).
 JUDGE_BAR = float(os.environ.get("EVAL_JUDGE_BAR") or _envval("EVAL_JUDGE_BAR") or "3.8")
 
@@ -96,7 +100,9 @@ def chat_messages(messages: list[dict], agent_id: str) -> dict:
     headers = {"X-Service-Token": SVC, "X-User-Email": USER, "Content-Type": "application/json"}
     code, raw = _request("POST", f"{STUDIO}/chat/stream",
                          {"messages": messages, "agent_id": agent_id}, headers)
-    tools, statuses, cites, ans, arts = [], [], [], [], []
+    tools, statuses, cites, ans, arts, cads = [], [], [], [], [], []
+    confs, suggestions, subagents, cite_urls = [], [], {}, []
+    clarify = None
     refused = None
     for line in raw.decode("utf-8", "replace").splitlines():
         line = line.strip()
@@ -114,15 +120,39 @@ def chat_messages(messages: list[dict], agent_id: str) -> dict:
         elif t == "citation":
             if ev.get("source"):
                 cites.append(ev["source"])
+            if ev.get("url"):                # the external source page the in-app viewer renders
+                cite_urls.append(ev["url"])
+            if ev.get("cadence"):
+                cads.append(ev["cadence"])
+            if ev.get("confidence"):
+                confs.append(ev["confidence"])
         elif t == "artifact":
             if ev.get("artifact"):
                 arts.append(ev["artifact"])
+                if ev["artifact"].get("cadence"):
+                    cads.append(ev["artifact"]["cadence"])
+        # LLM-driven orchestration events (each is produced only by a Gemini decision):
+        elif t == "clarify":                       # intake offered scoping options
+            clarify = ev
+        elif t == "subagent":                      # A2A: one facet researched in parallel
+            subagents[ev.get("id")] = ev
+        elif t == "suggestions":                   # smart follow-ups
+            suggestions = ev.get("items", []) or []
         elif t == "token":
             ans.append(ev.get("text", ""))
         elif t == "done":
             refused = ev.get("refused")
+            # the done list is authoritative — the verify pass enriches its citations with
+            # per-source confidence (not present on the earlier streamed `citation` events).
+            for c in ev.get("citations") or []:
+                if isinstance(c, dict) and c.get("confidence"):
+                    confs.append(c["confidence"])
+                if isinstance(c, dict) and c.get("url"):
+                    cite_urls.append(c["url"])
     return {"http": code, "tools": tools, "statuses": statuses, "citations": cites,
-            "artifacts": arts, "answer": "".join(ans).strip(), "refused": bool(refused)}
+            "artifacts": arts, "cadences": cads, "confidences": confs, "cite_urls": cite_urls,
+            "clarify": clarify, "subagents": list(subagents.values()), "suggestions": suggestions,
+            "answer": "".join(ans).strip(), "refused": bool(refused)}
 
 
 def chat(question: str, agent_id: str) -> dict:
@@ -217,6 +247,28 @@ def grade(checks: dict, r: dict) -> list[tuple[str, bool, str]]:
         kinds = [a.get("kind") for a in arts]
         ok = bool(arts) if kind is True else (kind in kinds)
         out.append((f"emits artifact {kind if kind is not True else ''}".strip(), ok, f"artifacts={kinds}"))
+    if "expect_computation" in checks:
+        # PH-DATA-6: a self-computed figure (valuation/backtest/screener) must carry the auditable
+        # derivation — method + at least one input/assumption/step row — so the math isn't a black box.
+        arts = r.get("artifacts") or []
+        comps = [a.get("computation") for a in arts if isinstance(a, dict) and a.get("computation")]
+        ok = any(isinstance(c, dict) and c.get("method")
+                 and (c.get("inputs") or c.get("assumptions") or c.get("steps")) for c in comps)
+        out.append(("emits computation trace", ok, f"computations={[(c or {}).get('method') for c in comps]}"))
+    if "expect_cite_url" in checks:
+        # the source-page viewer: a citation must carry an external source URL (so the in-app viewer
+        # can render + highlight it). A substring asserts it points at the expected host.
+        want = checks["expect_cite_url"]
+        urls = r.get("cite_urls") or []
+        ok = bool(urls) if want is True else any(want in (u or "") for u in urls)
+        out.append((f"carries source url {want if want is not True else ''}".strip(), ok, f"urls={urls[:4]}"))
+    if "expect_cadence" in checks:
+        # periodicity rides on provenance (citations/artifacts) → the pin→alert gate. `True` =
+        # any periodic (alertable) source present; a string = that exact cadence present.
+        want = checks["expect_cadence"]
+        cads = r.get("cadences") or []
+        ok = any(c and c != "one_shot" for c in cads) if want is True else (want in cads)
+        out.append((f"carries cadence {want if want is not True else 'periodic'}", ok, f"cadences={cads}"))
     if "answer_regex" in checks:
         rx = checks["answer_regex"]
         out.append((f"answer matches /{rx}/", bool(re.search(rx, r["answer"])), r["answer"][:80]))
@@ -226,6 +278,37 @@ def grade(checks: dict, r: dict) -> list[tuple[str, bool, str]]:
     if "expect_refused" in checks:
         want = checks["expect_refused"]
         out.append((f"refused={want}", r["refused"] == want, f"refused={r['refused']}"))
+    # --- LLM-orchestration checks (each gates a Gemini-driven behavior) -----------------
+    if "expect_connectors_all" in checks:
+        # PARALLEL multi-source gather: every named connector was reached in the turn.
+        joined = " ".join(t or "" for t in r["tools"])
+        for c in checks["expect_connectors_all"]:
+            out.append((f"reaches {c}", c in joined, f"tools={r['tools']}"))
+    if "expect_clarify" in checks:
+        # intake offered scoping options instead of guessing (clarify-with-options).
+        want = checks["expect_clarify"]
+        cl = r.get("clarify")
+        n = len((cl or {}).get("options") or [])
+        ok = (bool(cl) and n >= 2) if want is True else (bool(cl) == want)
+        out.append((f"clarify={want}", ok, f"clarify_options={n}"))
+    if "expect_subagents" in checks:
+        # A2A decomposition: at least N facets researched in parallel.
+        want = checks["expect_subagents"]
+        n = len(r.get("subagents") or [])
+        out.append((f"≥{want} sub-agents", n >= want, f"subagents={n}"))
+    if "expect_suggestions" in checks:
+        # smart follow-ups: at least N capability-aware next questions.
+        want = checks["expect_suggestions"]
+        n = len(r.get("suggestions") or [])
+        out.append((f"≥{want} follow-ups", n >= want, f"suggestions={n}"))
+    if "expect_confidence" in checks:
+        # verify pass scored per-source evidentiary confidence (high|medium|low).
+        confs = r.get("confidences") or []
+        out.append(("per-source confidence scored", bool(confs), f"confidences={confs}"))
+    if "forbid_artifact" in checks:
+        # e.g. a conceptual answer must NOT fabricate a chart/table.
+        arts = r.get("artifacts") or []
+        out.append(("no artifact (conceptual)", not arts, f"artifacts={[a.get('kind') for a in arts]}"))
     return out
 
 

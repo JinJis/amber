@@ -1,83 +1,79 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { FreshnessDot } from "./ui";
+import { useEffect, useRef, useState } from "react";
+import { CadenceTag, FreshnessDot } from "./ui";
 import { TradeChart } from "./TradeChart";
+import { ComputationPanel } from "./ComputationPanel";
+import { demoWidget } from "./DemoWidgets";
 import type { Citation } from "./SourceCard";
+import type { Artifact, ArtifactCandle, ArtifactSeries, ChartAnnotations } from "../lib/types";
+import { currencyOf, fmt, fmtBig, fmtPrice, fmtVol } from "../lib/format";
+
+// Types live in lib/types.ts (FE-01); re-exported here for back-compat (importers use
+// `import { Artifact } from "./ArtifactCard"`).
+export type {
+  Artifact, ArtifactMarker, ArtifactPriceLine, ChartAnnotations, ChartOverlay, OverlayLine,
+} from "../lib/types";
 
 // U3-02 / PH-VIZ-1: render a connector-backed Artifact as an interactive card. Time-series
 // and price (candlestick) artifacts delegate to <TradeChart> (TradingView Lightweight
 // Charts); a 차트/표 toggle keeps the extracted-figures table; KPI/table artifacts render
 // as a sourced matrix.
 
-type ArtifactPoint = { x: string; y: number | null };
-type ArtifactSeries = { label: string; unit?: string | null; points: ArtifactPoint[] };
-type ArtifactCandle = {
-  time: string; open?: number | null; high?: number | null; low?: number | null;
-  close?: number | null; volume?: number | null;
-};
-export type ArtifactMarker = {
-  time: string; label: string; kind?: string; position?: string;
-  color?: string | null; source?: string | null; url?: string | null; snippet?: string | null;
-};
-export type ArtifactPriceLine = { price: number; label: string; color?: string | null };
-export type ChartAnnotations = {
-  lines?: { x1: string; y1: number; x2: string; y2: number; label?: string | null; color?: string | null }[];
-  hlines?: { price: number; label?: string | null; color?: string | null }[];
-  vlines?: { time: string; label?: string | null; color?: string | null }[];
-  zones?: { t0: string; t1: string; label?: string | null; color?: string | null }[];
-  rebase?: boolean;
-  note?: string | null;
-};
-export type OverlayLine = {
-  label: string; color?: string | null; points: { time: string; value: number }[];
-};
-export type ChartOverlay = {
-  key: string; name: string; pane?: string; unit?: string | null;
-  lines: OverlayLine[]; source?: string | null;
-};
-export type Artifact = {
-  kind: string;
-  chart_style?: string | null;  // "bar" for money amounts (revenue/income); else line
-  title: string;
-  series: ArtifactSeries[];
-  candles?: ArtifactCandle[];  // kind=candlestick (prices): real OHLCV → candles + volume
-  markers?: ArtifactMarker[];  // PH-VIZ-2: sourced events on the time axis (click → evidence)
-  pricelines?: ArtifactPriceLine[];  // PH-VIZ-2: descriptive period high/low lines
-  annotations?: ChartAnnotations | null;  // PH-VIZ-3: agent-authored lines/levels/zones
-  user_annotations?: ChartAnnotations | null;  // PH-VIZ-5: the user's own drawings (persisted on pin)
-  overlays?: ChartOverlay[];   // PH-VIZ-4: technical indicators (price-pane + sub-panes)
-  table?: string[][] | null;   // kind in {table, kpi}: header-first matrix (each row sourced)
-  sections?: { heading: string; body: string }[];  // kind=narrative (CE-4): 종목 내러티브 sections
-  source?: string | null;
-  as_of?: string | null;
-  freshness?: string | null;
-  ticker?: string | null;
-  has_gap?: boolean;
-  tool?: string | null;
-  args?: ({ market?: string } & Record<string, unknown>) | null;  // tool args (for re-fetch / market)
-};
-
 const STROKES = ["#5A5A62", "#A6A6AC", "#1FA463", "#D9A300"]; // table-view legend swatches
+
+// Responsive matrix for bare (dashboard) widgets: shows as many rows as fit the widget height
+// (more rows as it grows, fewer when small — never broken), all columns (scroll-x if narrow).
+function ResponsiveTable({ head, rows }: { head: string[]; rows: string[][] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [vis, setVis] = useState(rows.length);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const rowH = 29, headH = 30;
+      setVis(Math.max(1, Math.floor((el.clientHeight - headH) / rowH)));
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    measure();
+    return () => ro.disconnect();
+  }, []);
+  const shown = rows.slice(0, vis);
+  const more = rows.length - shown.length;
+  return (
+    <div className="bc-tablewrap" ref={ref}>
+      <table className="artifact-table kpi-table">
+        <thead><tr>{head.map((h, i) => <th key={i} className={i === 0 ? "" : "mono"}>{h}</th>)}</tr></thead>
+        <tbody>
+          {shown.map((r, ri) => <tr key={ri}>{r.map((c, ci) => <td key={ci} className={ci === 0 ? "" : "mono"}>{c}</td>)}</tr>)}
+        </tbody>
+      </table>
+      {more > 0 && <div className="bc-more">외 {more}개 더 · 위젯을 키우면 더 보여요</div>}
+    </div>
+  );
+}
 
 // PH-DATA-5: a table/KPI artifact (no time series) — render the header-first matrix as a
 // card so a pinned KPI card shows on the Board too. Pin/remove reuse the chart-card chrome.
 function TableArtifact(
-  { a, onPin, onRemove }: { a: Artifact; onPin?: (spec: Artifact) => void; onRemove?: () => void },
+  { a, onPin, onRemove, hideTitle, bare }: { a: Artifact; onPin?: (spec: Artifact) => void; onRemove?: () => void; hideTitle?: boolean; bare?: boolean },
 ) {
   const [pinned, setPinned] = useState(false);
   const t = a.table ?? [];
   const [head, ...rows] = t;
   if (!head || rows.length === 0) return null;
+  if (bare) return <ResponsiveTable head={head} rows={rows} />;  // dashboard widget: content only
   return (
     <div className="artifact kpi-card">
       <div className="artifact-head">
-        <span className="artifact-title">{a.title}</span>
+        {!hideTitle && <span className="artifact-title">{a.title}</span>}
         <FreshnessDot f={a.freshness ?? undefined} />
+        {!hideTitle && <CadenceTag c={a.cadence} />}
         <span className="grow" />
         {onPin && (
           <button type="button" className="artifact-toggle" disabled={pinned}
-            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "📌 핀됨" : "📌 핀"}</button>
+            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 대시보드" : "＋ 대시보드"}</button>
         )}
         {onRemove && (
           <button type="button" className="artifact-toggle" onClick={onRemove} title="보드에서 제거">✕</button>
@@ -91,6 +87,7 @@ function TableArtifact(
           ))}
         </tbody>
       </table>
+      <ComputationPanel comp={a.computation} />
       <div className="artifact-foot">
         <span className="artifact-src">
           {a.source || "출처"}{a.as_of ? <span className="mono"> · as of {a.as_of}</span> : null}
@@ -103,20 +100,26 @@ function TableArtifact(
 
 // CE-4: a 종목 내러티브 (관전 포인트) card — structured, sourced sections. Pinnable like other cards.
 function NarrativeArtifact(
-  { a, onPin, onRemove }: { a: Artifact; onPin?: (spec: Artifact) => void; onRemove?: () => void },
+  { a, onPin, onRemove, hideTitle, bare }: { a: Artifact; onPin?: (spec: Artifact) => void; onRemove?: () => void; hideTitle?: boolean; bare?: boolean },
 ) {
   const [pinned, setPinned] = useState(false);
   const secs = a.sections ?? [];
   if (secs.length === 0) return null;
+  if (bare) return (
+    <div className="bc-narrwrap narrative-body">
+      {secs.map((s, i) => <div key={i} className="narrative-sec"><div className="narrative-h">{s.heading}</div><p className="narrative-p">{s.body}</p></div>)}
+    </div>
+  );
   return (
     <div className="artifact narrative-card">
       <div className="artifact-head">
-        <span className="artifact-title">{a.title}</span>
+        {!hideTitle && <span className="artifact-title">{a.title}</span>}
         <FreshnessDot f={a.freshness ?? undefined} />
+        {!hideTitle && <CadenceTag c={a.cadence} />}
         <span className="grow" />
         {onPin && (
           <button type="button" className="artifact-toggle" disabled={pinned}
-            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "📌 핀됨" : "📌 핀"}</button>
+            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 대시보드" : "＋ 대시보드"}</button>
         )}
         {onRemove && (
           <button type="button" className="artifact-toggle" onClick={onRemove} title="보드에서 제거">✕</button>
@@ -138,52 +141,18 @@ function NarrativeArtifact(
 }
 
 // currency for a ticker — KR 6-digit codes are KRW, else USD.
-function currencyOf(ticker?: string | null): "KRW" | "USD" {
-  return /^\d/.test(ticker || "") ? "KRW" : "USD";
-}
-
-// Big-number abbreviation so tables/axes stay readable — KRW in 조/억/만, USD in $T/B/M.
-export function fmtBig(y: number | null | undefined, currency: "KRW" | "USD" = "USD"): string {
-  if (y == null) return "—";
-  const a = Math.abs(y), sign = y < 0 ? "-" : "";
-  if (currency === "KRW") {
-    if (a >= 1e12) return `${sign}${(a / 1e12).toFixed(a >= 1e13 ? 1 : 2)}조`;
-    if (a >= 1e8) return `${sign}${Math.round(a / 1e8).toLocaleString()}억`;
-    if (a >= 1e4) return `${sign}${Math.round(a / 1e4).toLocaleString()}만`;
-    return `${sign}${Math.round(a).toLocaleString()}`;
-  }
-  if (a >= 1e12) return `${sign}$${(a / 1e12).toFixed(2)}T`;
-  if (a >= 1e9) return `${sign}$${(a / 1e9).toFixed(2)}B`;
-  if (a >= 1e6) return `${sign}$${(a / 1e6).toFixed(2)}M`;
-  return `${sign}$${a.toLocaleString()}`;
-}
-
-// price = full number (prices are small); volume = compact count.
-function fmtPrice(y: number | null | undefined) {
-  return y == null ? "—" : y.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
-function fmtVol(y: number | null | undefined) {
-  if (y == null) return "—";
-  const a = Math.abs(y);
-  if (a >= 1e9) return (a / 1e9).toFixed(1) + "B";
-  if (a >= 1e6) return (a / 1e6).toFixed(1) + "M";
-  if (a >= 1e3) return (a / 1e3).toFixed(0) + "K";
-  return String(Math.round(a));
-}
-
-// financials/series table cell: ratio → %, large currency → abbreviated.
-function fmt(y: number | null | undefined, unit?: string | null, currency: "KRW" | "USD" = "USD") {
-  if (y == null) return "—";
-  if (unit === "ratio") return (y * 100).toFixed(1) + "%";
-  return fmtBig(y, currency);
-}
-
 export function ArtifactCard(
-  { a, onPin, onRemove, onRefresh, onEvidence, onAnnotate }:
+  { a, onPin, onRemove, onRefresh, onEvidence, onAnnotate, hideTitle, bare }:
   { a: Artifact; onPin?: (spec: Artifact) => void; onRemove?: () => void; onRefresh?: () => Promise<void> | void;
     onEvidence?: (c: Citation) => void;
     // PH-VIZ-5: persist the user's drawings (provided for already-pinned Board cards).
-    onAnnotate?: (ann: ChartAnnotations | null) => void },
+    onAnnotate?: (ann: ChartAnnotations | null) => void;
+    // hideTitle: the board widget card header already shows the title — suppress the duplicate here.
+    hideTitle?: boolean;
+    // bare: dashboard-widget mode — render ONLY the content (no inner card head/foot/border),
+    // chart fills the widget height, table shows as many rows as fit. Trust line lives on the
+    // board card. Keeps widgets clean (Datadog-style).
+    bare?: boolean },
 ) {
   const [table, setTable] = useState(false);
   const [pinned, setPinned] = useState(false);
@@ -260,25 +229,82 @@ export function ArtifactCard(
     return () => { cancel = true; };
   }, [ticker, a.tool, a.args]);
 
+  // PH-DEMO: high-impact dashboard widgets (stat / heatmap / feed / calendar).
+  const demo = demoWidget(a);
+  if (demo) {
+    if (bare) return <div className="dw-wrap">{demo}</div>;
+    return (
+      <div className="artifact">
+        <div className="artifact-head">
+          {!hideTitle && <span className="artifact-title">{a.title}</span>}
+          <FreshnessDot f={a.freshness ?? undefined} />
+          {a.live && <span className="dw-livechip"><i />LIVE</span>}
+          <span className="grow" />
+          {onPin && (
+            <button type="button" className="artifact-toggle" disabled={pinned}
+              onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 대시보드" : "＋ 대시보드"}</button>
+          )}
+          {onRemove && <button type="button" className="artifact-toggle" onClick={onRemove} title="보드에서 제거">✕</button>}
+        </div>
+        <div className="dw-wrap">{demo}</div>
+        <div className="artifact-foot">
+          <span className="artifact-src">{a.source || "출처"}{a.as_of ? <span className="mono"> · as of {a.as_of}</span> : null}</span>
+        </div>
+      </div>
+    );
+  }
   // CE-4: a narrative artifact carries structured sections instead of a chart/table.
   if (a.kind === "narrative" && (a.sections?.length ?? 0) > 0) {
-    return <NarrativeArtifact a={a} onPin={onPin} onRemove={onRemove} />;
+    return <NarrativeArtifact a={a} onPin={onPin} onRemove={onRemove} hideTitle={hideTitle} bare={bare} />;
   }
   // a KPI / table artifact carries a matrix instead of time series — render that shape.
-  if ((a.kind === "kpi" || a.kind === "table" || a.series.length === 0) && a.table?.length) {
-    return <TableArtifact a={a} onPin={onPin} onRemove={onRemove} />;
+  if ((a.kind === "kpi" || a.kind === "table" || (a.series?.length ?? 0) === 0) && a.table?.length) {
+    return <TableArtifact a={a} onPin={onPin} onRemove={onRemove} hideTitle={hideTitle} bare={bare} />;
   }
-  const series = finSeries ?? a.series;  // prefer the fuller fetched financials history
-  const xs = Array.from(new Set(series.flatMap((s) => s.points.map((p) => p.x)))).sort();
+  const series = finSeries ?? a.series ?? [];  // prefer the fuller fetched financials history (default [])
+  const xs = Array.from(new Set(series.flatMap((s) => (s.points ?? []).map((p) => p.x)))).sort();
   const hasCandles = (a.candles?.length ?? 0) > 0;
   const hasOverlays = (a.overlays?.length ?? 0) > 0;  // PH-VIZ-4: technical-only chart
-  if (xs.length === 0 && !hasCandles && !hasOverlays) return null;
+  // No data yet (a freshly added / templated widget before refresh, or feed/calendar): draw an
+  // honest gap with the trust line — never crash, never fabricate. The board card header owns ↻.
+  if (xs.length === 0 && !hasCandles && !hasOverlays) {
+    if (bare) return <div className="artifact-empty">아직 데이터를 불러오지 않았어요{a.tool ? " — ↻ 로 가져옵니다." : "."}</div>;
+    return (
+      <div className="artifact">
+        <div className="artifact-head">
+          {!hideTitle && <span className="artifact-title">{displayTitle}</span>}
+          <FreshnessDot f={a.freshness ?? "gap"} />
+          {onRefresh && (
+            <button type="button" className="artifact-toggle" disabled={busy}
+              onClick={async () => { setBusy(true); try { await onRefresh(); } finally { setBusy(false); } }}>
+              {busy ? "…" : "↻ 새로고침"}
+            </button>
+          )}
+        </div>
+        <div className="artifact-empty">아직 데이터를 불러오지 않았어요{a.tool ? " — ↻ 새로고침으로 출처에서 가져옵니다." : "."}</div>
+        <div className="artifact-foot">
+          <span className="artifact-src">{a.source || "출처"}{a.as_of ? <span className="mono"> · as of {a.as_of}</span> : null}</span>
+          <FreshnessDot f={a.freshness ?? "gap"} />
+        </div>
+      </div>
+    );
+  }
+
+  // bare (dashboard widget): just the chart, filling the widget height — clean, no chrome.
+  if (bare) {
+    return (
+      <div className="bc-chartfill">
+        <TradeChart a={a} bars={bars} series={finSeries} currency={currency} onEvidence={onEvidence} compact fillHeight />
+      </div>
+    );
+  }
 
   return (
     <div className="artifact">
       <div className="artifact-head">
-        <span className="artifact-title">{displayTitle}</span>
+        {!hideTitle && <span className="artifact-title">{displayTitle}</span>}
         <FreshnessDot f={a.freshness ?? undefined} />
+        {!hideTitle && <CadenceTag c={a.cadence} />}
         {series.length > 0 && (
           <button type="button" className="artifact-toggle" onClick={() => setTable((t) => !t)}>
             {table ? "📈 차트" : "⇄ 표로"}
@@ -293,7 +319,7 @@ export function ArtifactCard(
         {onPin && (
           <button type="button" className="artifact-toggle" disabled={pinned}
             onClick={() => { onPin({ ...a, user_annotations: userAnn ?? undefined }); setPinned(true); }}>
-            {pinned ? "📌 핀됨" : "📌 핀"}
+            {pinned ? "✓ 대시보드" : "＋ 대시보드"}
           </button>
         )}
         {onRemove && (
@@ -340,7 +366,7 @@ export function ArtifactCard(
                 <tr key={x}>
                   <td className="mono">{x}</td>
                   {series.map((s) => {
-                    const pt = s.points.find((p) => p.x === x);
+                    const pt = (s.points ?? []).find((p) => p.x === x);
                     return <td key={s.label} className="mono">{fmt(pt?.y, s.unit, currency)}</td>;
                   })}
                 </tr>
@@ -352,6 +378,7 @@ export function ArtifactCard(
         <TradeChart a={a} bars={bars} series={finSeries} currency={currency} onEvidence={onEvidence} userAnn={userAnn} onDraw={draw} />
       )}
 
+      <ComputationPanel comp={a.computation} />
       <div className="artifact-foot">
         {!hasCandles && series.length > 0 && (
           <div className="artifact-legend">

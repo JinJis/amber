@@ -1,23 +1,27 @@
-"""Pluggable embedding backends, selected by RAG_EMBEDDING_BACKEND.
+"""Gemini embeddings (Google) — the ONLY embedding backend.
 
-All implement ``async embed(texts) -> list[list[float]]`` returning L2-normalized
-vectors. Heavy SDKs are imported lazily so the base install stays light.
+Uses the Gemini API with ``GOOGLE_API_KEY`` (the same key the agent uses — no service account /
+project / Vertex needed). Documents and queries are embedded asymmetrically (a real retrieval-
+quality win) and L2-normalized for cosine search.
+
+Model-aware (per https://ai.google.dev/gemini-api/docs/embeddings):
+  * ``gemini-embedding-2`` (default, latest) — task goes in the PROMPT, and a plain list of strings
+    aggregates to ONE vector, so each text is wrapped in a ``Content`` for separate embeddings.
+  * ``gemini-embedding-001`` (stable, text-only) — uses the ``task_type`` config field; a plain list
+    already yields one vector per text.
+The legacy hash / fastembed / sentence-transformers / TEI backends were removed.
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import math
-import re
 from functools import cache
 from typing import Protocol
 
-import httpx
-
 from rag.config import settings
 
-_TOKEN = re.compile(r"[A-Za-z0-9]+|[가-힣]+")
+_BATCH = 64  # texts per embed_content request
 
 
 def _normalize(vec: list[float]) -> list[float]:
@@ -27,113 +31,60 @@ def _normalize(vec: list[float]) -> list[float]:
 
 class Embedder(Protocol):
     dim: int
-    async def embed(self, texts: list[str]) -> list[list[float]]: ...
+    async def embed(self, texts: list[str]) -> list[list[float]]: ...   # documents (the corpus)
+    async def embed_query(self, text: str) -> list[float]: ...          # a single search query
 
 
-class HashEmbedder:
-    """Deterministic bag-of-hashed-tokens — no deps. Lexical, fine for dev/CI."""
+class GeminiEmbedder:
+    """Google Gemini embeddings via the Gemini API (``GOOGLE_API_KEY``). ``output_dimensionality``
+    is MRL-truncated to ``embedding_dim`` and re-normalized."""
 
-    def __init__(self, dim: int = 384) -> None:
-        self.dim = dim
+    def __init__(self) -> None:
+        from google import genai
 
-    def _vec(self, text: str) -> list[float]:
-        v = [0.0] * self.dim
-        for tok in _TOKEN.findall(text.lower()):
-            h = int(hashlib.md5(tok.encode()).hexdigest(), 16)
-            v[h % self.dim] += 1.0
-        return _normalize(v)
+        self._client = genai.Client()  # Gemini API — reads GOOGLE_API_KEY from the environment
+        self.model = settings.embedding_model or "gemini-embedding-2"
+        self.dim = settings.embedding_dim
+        # gemini-embedding-2 puts the task in the prompt + needs Content-wrapping for batches;
+        # the older -001 takes a `task_type` field and batches a plain string list directly.
+        self._prompt_task = self.model.startswith("gemini-embedding-2")
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        return [self._vec(t) for t in texts]
+    async def _embed(self, texts: list[str], *, query: bool) -> list[list[float]]:
+        from google.genai import types
 
+        out: list[list[float]] = []
+        for i in range(0, len(texts), _BATCH):
+            batch = texts[i : i + _BATCH]
 
-class FastEmbedEmbedder:
-    """oss-cpu / oss-gpu via fastembed (ONNX, light)."""
+            def _run(b: list[str] = batch) -> list[list[float]]:
+                if self._prompt_task:
+                    # task in the prompt; wrap each text so they embed SEPARATELY (not aggregated)
+                    instr = "task: search result | query: " if query else "task: search result | document: "
+                    contents = [types.Content(parts=[types.Part(text=instr + t)]) for t in b]
+                    cfg = types.EmbedContentConfig(output_dimensionality=self.dim or None)
+                else:
+                    contents = b
+                    cfg = types.EmbedContentConfig(
+                        task_type="RETRIEVAL_QUERY" if query else "RETRIEVAL_DOCUMENT",
+                        output_dimensionality=self.dim or None)
+                resp = self._client.models.embed_content(model=self.model, contents=contents, config=cfg)
+                return [list(e.values) for e in resp.embeddings]
 
-    def __init__(self, model: str, cuda: bool = False) -> None:
-        from fastembed import TextEmbedding
-
-        providers = ["CUDAExecutionProvider"] if cuda else None
-        self._model = TextEmbedding(model_name=model, providers=providers)
-        self.dim = 0
-
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        def _run() -> list[list[float]]:
-            return [_normalize(list(map(float, e))) for e in self._model.embed(texts)]
-
-        out = await asyncio.to_thread(_run)
+            vecs = await asyncio.to_thread(_run)
+            out.extend(_normalize(v) for v in vecs)
         if out:
             self.dim = len(out[0])
         return out
 
-
-class SentenceTransformerEmbedder:
-    """oss-gpu (or cpu) via sentence-transformers (torch)."""
-
-    def __init__(self, model: str, device: str = "cuda") -> None:
-        from sentence_transformers import SentenceTransformer
-
-        self._model = SentenceTransformer(model, device=device)
-        self.dim = self._model.get_sentence_embedding_dimension()
-
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        def _run():
-            return self._model.encode(texts, normalize_embeddings=True).tolist()
+        """Embed corpus chunks for storage (document side)."""
+        return await self._embed(texts, query=False) if texts else []
 
-        return await asyncio.to_thread(_run)
-
-
-class TEIEmbedder:
-    """A remote Text-Embeddings-Inference / Infinity endpoint (typically GPU served)."""
-
-    def __init__(self, endpoint: str) -> None:
-        self.endpoint = endpoint.rstrip("/")
-        self.dim = 0
-
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        async with httpx.AsyncClient(timeout=settings.http_timeout_seconds) as client:
-            resp = await client.post(f"{self.endpoint}/embed", json={"inputs": texts})
-            resp.raise_for_status()
-            vecs = resp.json()
-        out = [_normalize([float(x) for x in v]) for v in vecs]
-        if out:
-            self.dim = len(out[0])
-        return out
-
-
-class VertexEmbedder:
-    """gcp — Vertex AI embeddings (e.g. gemini-embedding-001)."""
-
-    def __init__(self, model: str, project: str, location: str) -> None:
-        import vertexai
-        from vertexai.language_models import TextEmbeddingModel
-
-        vertexai.init(project=project, location=location)
-        self._model = TextEmbeddingModel.from_pretrained(model)
-        self.dim = 0
-
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        def _run() -> list[list[float]]:
-            return [_normalize(list(e.values)) for e in self._model.get_embeddings(texts)]
-
-        out = await asyncio.to_thread(_run)
-        if out:
-            self.dim = len(out[0])
-        return out
+    async def embed_query(self, text: str) -> list[float]:
+        """Embed one search query (asymmetric to the documents for better recall)."""
+        return (await self._embed([text], query=True))[0]
 
 
 @cache
 def get_embedder() -> Embedder:
-    backend = settings.embedding_backend
-    if backend == "hash":
-        return HashEmbedder(settings.hash_dim)
-    if backend == "oss-cpu":
-        return FastEmbedEmbedder(settings.embedding_model, cuda=False)
-    if backend == "oss-gpu":
-        return SentenceTransformerEmbedder(settings.embedding_model, device="cuda")
-    if backend == "tei":
-        return TEIEmbedder(settings.embedding_endpoint)
-    if backend == "gcp":
-        model = settings.embedding_model if "embedding" in settings.embedding_model else "gemini-embedding-001"
-        return VertexEmbedder(model, settings.gcp_project, settings.gcp_location)
-    raise ValueError(f"Unknown RAG_EMBEDDING_BACKEND '{backend}'.")
+    return GeminiEmbedder()

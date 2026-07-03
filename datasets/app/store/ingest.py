@@ -99,16 +99,6 @@ async def ingest_ticker(market: Market, ticker: str, period: str = "annual", lim
             db.commit()
 
     await asyncio.to_thread(_write)
-
-    # PH-PROV3: best-effort cache of the filing as a PDF (US iXBRL→render · KR official PDF),
-    # so a backfill — manual or scheduled/deep — also makes /evidence work for this ticker.
-    # Behind PRECOMPUTE_LOCATIONS (default off); never fails ingest.
-    if settings.precompute_locations and market in (Market.US, Market.KR):
-        try:
-            from app.store.evidence_docs import build_evidence_docs_for_ticker
-            await build_evidence_docs_for_ticker(market.value, ref.ticker)
-        except Exception:  # noqa: BLE001
-            pass
     return len(rows)
 
 

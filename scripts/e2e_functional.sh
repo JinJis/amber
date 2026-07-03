@@ -18,10 +18,12 @@ FAILS=0
 jget() { python3 -c "import json,sys;print(json.load(sys.stdin)$1)" 2>/dev/null || true; }
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 
-section "bring up backend stack with REAL semantic RAG (oss-cpu)"
+section "bring up backend stack with REAL semantic RAG (Gemini embeddings)"
+# RAG embeddings are Gemini-only now; the semantic checks need GOOGLE_API_KEY (read from .env).
+envval() { [ -f .env ] && grep -E "^$1=" .env | tail -1 | cut -d= -f2- | tr -d '"'"'"' ' || true; }
+GKEY="${GOOGLE_API_KEY:-${GEMINI_API_KEY:-}}"; [ -z "$GKEY" ] && GKEY="$(envval GOOGLE_API_KEY)"
 docker compose down -v >/dev/null 2>&1 || true
-RAG_EMBEDDING_BACKEND=oss-cpu RAG_EMBEDDING_MODEL="BAAI/bge-small-en-v1.5" \
-  docker compose up --build -d datasets rag control-plane agent-engine studio-api \
+docker compose up --build -d datasets rag control-plane agent-engine studio-api \
   || { echo "compose up failed"; exit 1; }
 for _ in $(seq 1 60); do
   st=$(docker inspect --format '{{.State.Health.Status}}' valuegraph-platform-control-plane-1 2>/dev/null || echo none)
@@ -102,22 +104,26 @@ ENT=$(code -H "X-API-KEY: $K3" "$CP/prices?ticker=AAPL&market=US&interval=day&st
 [ "$ENT" = 403 ] && ok "MCP/gateway blocks an unentitled key (403)" || fail "entitlement not enforced" "got $ENT"
 
 # ---------------------------------------------------------------------------
-section "C. RAG — REAL semantic retrieval (oss-cpu) + provenance + entitlement"
+section "C. RAG — REAL semantic retrieval (Gemini) + provenance + entitlement"
 INFO=$(curl -s $RAG/rag/info)
-has "RAG runs the real oss-cpu embedder" "$INFO" 'oss-cpu'
-# ingest 3 docs on distinct topics; the target shares NO content word with the query
-curl -s "${J[@]}" -X POST $RAG/rag/ingest -d '{"documents":[
-  {"text":"The central bank lifted its benchmark borrowing cost to cool rising consumer prices.","source":"ECOS","doc_type":"macro","url":"https://x/policy"},
-  {"text":"The firm unveiled a thinner laptop with a brighter display and longer battery life.","source":"News","ticker":"X","url":"https://x/gadget"},
-  {"text":"Apple relies on TSMC to fabricate its custom silicon processors.","source":"SEC EDGAR","ticker":"AAPL","url":"https://x/aapl"}]}' >/dev/null
-# semantic query #1: monetary policy, zero keyword overlap with the target doc
-S1=$(curl -s "${J[@]}" -X POST $RAG/rag/search -d '{"query":"Federal Reserve interest rate hike","top_k":1}')
-has "RAG semantically matches the monetary-policy doc" "$S1" 'https://x/policy'
-has "RAG keeps provenance (source)"                    "$S1" 'ECOS'
-# semantic query #2: supplier question -> the Apple/TSMC doc
-S2=$(curl -s "${J[@]}" -X POST $RAG/rag/search -d '{"query":"Who manufactures Apple chips?","top_k":1}')
-has "RAG matches the supplier doc by meaning"          "$S2" 'https://x/aapl'
-has "RAG provenance carries the ticker"                "$S2" 'AAPL'
+has "RAG runs the Gemini embedder" "$INFO" 'gemini-embedding'
+if [ -n "$GKEY" ]; then
+  # ingest 3 docs on distinct topics; the target shares NO content word with the query
+  curl -s "${J[@]}" -X POST $RAG/rag/ingest -d '{"documents":[
+    {"text":"The central bank lifted its benchmark borrowing cost to cool rising consumer prices.","source":"ECOS","doc_type":"macro","url":"https://x/policy"},
+    {"text":"The firm unveiled a thinner laptop with a brighter display and longer battery life.","source":"News","ticker":"X","url":"https://x/gadget"},
+    {"text":"Apple relies on TSMC to fabricate its custom silicon processors.","source":"SEC EDGAR","ticker":"AAPL","url":"https://x/aapl"}]}' >/dev/null
+  # semantic query #1: monetary policy, zero keyword overlap with the target doc
+  S1=$(curl -s "${J[@]}" -X POST $RAG/rag/search -d '{"query":"Federal Reserve interest rate hike","top_k":1}')
+  has "RAG semantically matches the monetary-policy doc" "$S1" 'https://x/policy'
+  has "RAG keeps provenance (source)"                    "$S1" 'ECOS'
+  # semantic query #2: supplier question -> the Apple/TSMC doc
+  S2=$(curl -s "${J[@]}" -X POST $RAG/rag/search -d '{"query":"Who manufactures Apple chips?","top_k":1}')
+  has "RAG matches the supplier doc by meaning"          "$S2" 'https://x/aapl'
+  has "RAG provenance carries the ticker"                "$S2" 'AAPL'
+else
+  echo "  ⏭️  RAG semantic checks skipped — no GOOGLE_API_KEY (Gemini embeddings)"
+fi
 # RAG through the gateway: entitlement enforced
 curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/projects/$PID/activations -d '{"connector_id":"rag"}' >/dev/null
 RG=$(code -H "X-API-KEY: $K3" "${J[@]}" -X POST "$CP/rag/search" -d '{"query":"anything"}')

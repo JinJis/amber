@@ -32,6 +32,7 @@ from app.models.generated import (
     InsiderTrade,
     InstitutionalHolding,
 )
+from app.providers._parse_utils import parse_float as _num
 from app.providers.search_util import rank_company_matches
 from app.symbols import SecurityRef
 from app.providers.us.sec_edgar_concepts import BALANCE_MAP, CASHFLOW_MAP, INCOME_MAP
@@ -317,16 +318,7 @@ def _latest(gaap: dict, concepts: list[str]) -> float | None:
     return best
 
 
-# --- XML / number helpers (insider + 13F) --------------------------------
-def _num(text: str | None) -> float | None:
-    if text in (None, ""):
-        return None
-    try:
-        return float(str(text).replace(",", ""))
-    except ValueError:
-        return None
-
-
+# --- XML / number helpers (insider + 13F) — `_num` = shared parse_float (RF-02) ----------
 def _local(tag: str) -> str:
     return tag.split("}")[-1]
 

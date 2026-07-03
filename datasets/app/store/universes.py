@@ -57,21 +57,31 @@ async def _fetch_us_all() -> list[str]:
 
 def _kr_by_cap_sync(market: str, n: int | None) -> list[str]:
     """pykrx top-N by market cap. Whole body guarded — pykrx scrapes KRX/Naver and often fails
-    on cloud IPs (like FRED), so it must NEVER raise (→ empty, then we fall back to OpenDART)."""
+    on cloud IPs (like FRED), so it must NEVER raise (→ empty, then we fall back to OpenDART).
+
+    pykrx prints its own failures straight to stdout/stderr ("KRX 로그인 실패", "Error occurred
+    in …") on every miss. We redirect its stdout/stderr into a throwaway buffer for the duration
+    of the call so that noise stays out of our logs — our logging handler holds the real stdout
+    captured at setup, so it's unaffected. (Its broken root-logger call is dropped separately by
+    the _DropNoise filter in logging_config.)"""
+    import contextlib
+    import io
+
     try:
         from pykrx import stock
-        d = stock.get_nearest_business_day_in_a_week()
-        try:
-            cap = stock.get_market_cap_by_ticker(d, market=market)
-            if cap is not None and not cap.empty:
-                col = "시가총액" if "시가총액" in cap.columns else cap.columns[0]
-                ranked = cap.sort_values(col, ascending=False)
-                idx = ranked.index.tolist() if n is None else ranked.head(n).index.tolist()
-                return [str(t) for t in idx]
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("pykrx market-cap list failed (%s); trying ticker list", exc)
-        lst = stock.get_market_ticker_list(d, market=market) or []
-        return [str(t) for t in lst][: (n or len(lst))]
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            d = stock.get_nearest_business_day_in_a_week()
+            try:
+                cap = stock.get_market_cap_by_ticker(d, market=market)
+                if cap is not None and not cap.empty:
+                    col = "시가총액" if "시가총액" in cap.columns else cap.columns[0]
+                    ranked = cap.sort_values(col, ascending=False)
+                    idx = ranked.index.tolist() if n is None else ranked.head(n).index.tolist()
+                    return [str(t) for t in idx]
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("pykrx market-cap list failed (%s); trying ticker list", exc)
+            lst = stock.get_market_ticker_list(d, market=market) or []
+            return [str(t) for t in lst][: (n or len(lst))]
     except Exception as exc:  # noqa: BLE001 — import/network/etc. → empty → OpenDART fallback
         logger.warning("pykrx KR universe unavailable for %s: %s", market, exc)
         return []

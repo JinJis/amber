@@ -114,7 +114,7 @@ def _rag_citations(tool: dict, data) -> list[Citation] | None:
         as_of = prov.get("as_of")
         text = (h or {}).get("text") or ""
         # news/web passages get a text-fragment deep link so opening the source highlights the
-        # cited passage in the live page; filing passages keep a clean url (+ PDF screenshot below).
+        # cited passage in the live page; filing passages keep a clean url (the in-app viewer highlights them).
         is_news = (prov.get("doc_type") or "").lower() == "news" and not prov.get("accession")
         link = text_fragment_url(url, text) if is_news else url
         cites.append(Citation(
@@ -130,6 +130,19 @@ def _rag_citations(tool: dict, data) -> list[Citation] | None:
 
 
 def _citations(tool: dict, result: dict) -> list[Citation]:
+    """Build the tool's citations and stamp each with the source's periodicity + category (from
+    the catalog tool dict) so the pin→alert flow can gate on it downstream."""
+    cites = _build_citations(tool, result)
+    cad, cat = tool.get("cadence"), tool.get("category")
+    for c in cites:
+        if c.cadence is None:
+            c.cadence = cad
+        if c.category is None:
+            c.category = cat
+    return cites
+
+
+def _build_citations(tool: dict, result: dict) -> list[Citation]:
     data = result.get("data")
     if "search" in tool["name"] or tool.get("connector") == "rag":
         rag = _rag_citations(tool, data)

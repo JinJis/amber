@@ -24,9 +24,25 @@ class Settings(BaseSettings):
     # SEC requires a descriptive User-Agent ("Sample Company name@example.com").
     sec_edgar_user_agent: str = "ValueGraph Datasets contact@example.com"
     fred_api_key: str = ""
+    # BLS public API (labor/price series). Keyless works (25 queries/day); a free key raises
+    # the limit to 500/day. The DBnomics BLS *mirror* froze at 2025-01, so we read BLS direct.
+    bls_api_key: str = ""
     polygon_api_key: str = ""
     tiingo_api_key: str = ""
     fmp_api_key: str = ""
+    # Alpha Vantage — earnings-call transcripts (free key works; rate-limited). US coverage.
+    alphavantage_api_key: str = ""
+    transcript_ingest_limit: int = 4   # recent quarters of transcripts to index per ticker
+
+    # Phase 2: 8-K EX-99 earnings/investor presentation decks (PDF) → GCP Document AI Layout Parser
+    # → RAG (faithful, layout-aware chunks WITH page+bbox for precise in-app PDF highlight). Auth via
+    # Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS → the same SA the reranker uses).
+    # Unset processor → the deck feature stays dark (parsed text never fabricated).
+    docai_project: str = ""
+    docai_location: str = "us"          # Document AI processor region (us | eu)
+    docai_processor_id: str = ""        # Layout Parser processor id (create in the GCP console)
+    deck_ingest_limit: int = 4          # recent 8-K presentation decks to index per ticker
+    kr_earnings_ingest_limit: int = 4   # recent KR 잠정실적 공정공시 disclosures to index per ticker
 
     # --- KR upstream credentials -------------------------------------------
     opendart_api_key: str = ""
@@ -36,8 +52,6 @@ class Settings(BaseSettings):
     kis_app_secret: str = ""
     kis_domain: str = "https://openapi.koreainvestment.com:9443"  # 실전; 모의 = openapivts:29443
     krx_api_key: str = ""
-    kis_app_key: str = ""
-    kis_app_secret: str = ""
 
     # --- per-domain provider selection (override the free defaults) --------
     prices_provider_us: str = "yahoo"  # yahoo | stooq | polygon | tiingo | fmp
@@ -57,16 +71,12 @@ class Settings(BaseSettings):
     http_timeout_seconds: float = 30.0
     log_level: str = "INFO"  # app log verbosity (DEBUG|INFO|WARNING|…) → docker logs
 
-    # --- periodic ingestion scheduler (PH-PIPE) ---------------------------
-    scheduler_enabled: bool = False
-    scheduler_interval_seconds: int = 21600  # 6h between full sweeps by default
-    # Universe to refresh — DYNAMIC source ids (see app/store/universes.py), fetched fresh each
-    # sweep: "us_sp500,kr_kospi200,kr_kosdaq150" (also us_all / kr_kospi_all / kr_kosdaq_all), and/or
-    # the legacy explicit form "US:AAPL,MSFT;KR:005930". Empty → scheduler idles.
+    # --- periodic ingestion: the Procrastinate queue (app/queue.py) -------
+    # The cron sweeps live in app/queue.py (@app.periodic); the `worker` compose service runs them.
+    # This is the universe each sweep refreshes — DYNAMIC source ids (see app/store/universes.py),
+    # fetched fresh every sweep: "us_sp500,kr_kospi200,kr_kosdaq150" (also us_all / kr_kospi_all /
+    # kr_kosdaq_all), and/or the legacy explicit form "US:AAPL,MSFT;KR:005930". Empty → sweeps no-op.
     scheduler_universe: str = "us_sp500,kr_kospi200,kr_kosdaq150"
-    # Which data pipelines each sweep runs (ids from app/pipelines.py). Empty → the
-    # registry's default set (financials, prices, corp_actions, news).
-    scheduler_pipelines: str = "financials,prices,corp_actions,news"
     # CE-0: how many years of daily OHLCV the prices pipeline stores. Deep enough for the
     # store-backed screener / quant / backtest (the chart fetches its own history live).
     prices_backfill_years: int = 5
@@ -80,13 +90,9 @@ class Settings(BaseSettings):
     # Headlines fetched per ticker per news-ingest run.
     news_ingest_limit: int = 8
 
-    # --- PH-PROV2: deterministic visual evidence --------------------------
-    # The renderer service that turns a fact locator into a highlighted screenshot.
-    renderer_url: str = "http://renderer:8006"
-    # PH-PROV3: cache each filing as a PDF during ingest so /evidence works for it
-    # (US iXBRL→render · KR official PDF). Off by default (adds fetch/render time to ingest).
-    precompute_locations: bool = False
-    # Where cached PDF-normalized filings live (on the datasets data volume).
+    # --- evidence: the in-app filing viewer -------------------------------
+    # Where sanitized filing HTML is cached (shared by the viewer + filing-text RAG ingest),
+    # on the datasets data volume.
     evidence_docs_dir: str = "/data/evidence_docs"
 
     @property

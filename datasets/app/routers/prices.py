@@ -14,13 +14,12 @@ from app.models.generated import (
     PricesResponse,
     TickersResponse,
 )
-from app.providers.registry import get_company_provider, get_prices_provider
+from app.providers.registry import get_prices_provider
+from app.routers._common import gather_best_effort, tickers_response, validate_interval
 from app.store.screener import store_tickers
 from app.symbols import Market, build_ref
 
 router = APIRouter(tags=["Market Data"])
-
-_INTERVALS = ["day", "week", "month", "year"]
 
 
 @router.get("/prices", response_model=PricesResponse, dependencies=[ApiKeyDep])
@@ -31,10 +30,7 @@ async def get_prices(
     end_date: date = Query(..., description="End date (YYYY-MM-DD)."),
     market: MarketParam = Market.US,
 ) -> PricesResponse:
-    if interval not in _INTERVALS:
-        from app.errors import bad_request
-
-        raise bad_request(f"interval must be one of {_INTERVALS}.")
+    validate_interval(interval)
     ref = build_ref(market, ticker)
     prices = await get_prices_provider(market).prices(ref, interval, start_date, end_date)
     return PricesResponse(ticker=ref.ticker, prices=prices)
@@ -60,24 +56,15 @@ async def get_price_snapshot_market(
     skipped, not faked."""
     tickers = await asyncio.to_thread(store_tickers, market.value, limit)
     provider = get_prices_provider(market)
-
-    async def _one(tk: str):
-        try:
-            return await provider.snapshot(build_ref(market, tk))
-        except Exception:  # noqa: BLE001 — skip a ticker that can't be priced; don't fabricate
-            return None
-
-    snaps = await asyncio.gather(*[_one(t) for t in tickers])
-    return PriceSnapshotMarketResponse(snapshots=[s for s in snaps if s is not None])
+    snaps = await gather_best_effort(tickers, lambda tk: provider.snapshot(build_ref(market, tk)))
+    return PriceSnapshotMarketResponse(snapshots=snaps)
 
 
 @router.get("/prices/snapshot/tickers", response_model=TickersResponse)
 async def get_price_snapshot_tickers(market: MarketParam = Market.US) -> TickersResponse:
-    tickers = await get_company_provider(market).list_tickers()
-    return TickersResponse(resource="prices", tickers=tickers)
+    return await tickers_response(market, "prices")
 
 
 @router.get("/prices/tickers", response_model=TickersResponse)
 async def get_prices_tickers(market: MarketParam = Market.US) -> TickersResponse:
-    tickers = await get_company_provider(market).list_tickers()
-    return TickersResponse(resource="prices", tickers=tickers)
+    return await tickers_response(market, "prices")

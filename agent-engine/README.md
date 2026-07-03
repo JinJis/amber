@@ -9,9 +9,11 @@ and a **guardrail** refuses forecasts / price targets / buy-sell advice at the b
 caller ─▶ /agent/run (tenant key) ─▶ guardrail ─▶ plan → call tool (gateway) → observe → finalize ─▶ answer + citations
 ```
 
-## Planner backends (`AGENT_LLM_BACKEND`)
-- `stub` (default) — deterministic keyword routing; no LLM needed. Calls one tool, then summarizes.
-- `gemini` — real Gemini function-calling (extra `gemini`, needs `GOOGLE_API_KEY`; works with Vertex too).
+## Planner (`AGENT_LLM_BACKEND`)
+Gemini-only — `AGENT_LLM_BACKEND=gemini` is the sole supported value (default `gemini`; the env var is
+kept for compatibility). Real Gemini function-calling (extra `gemini`, needs `GOOGLE_API_KEY`; works with
+Vertex too). There is no keyless/keyword-routing planner — routing, clarification, and synthesis all come
+from Gemini.
 
 ## Endpoints
 - `POST /agent/run` — `{task, spec?}` + `X-API-KEY` → `{answer, refused, steps, citations, usage}`

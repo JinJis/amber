@@ -37,6 +37,7 @@ class User(Base):
     tenant_id: Mapped[str] = mapped_column(String(48))
     project_id: Mapped[str] = mapped_column(String(48))
     api_key: Mapped[str] = mapped_column(String(80))  # the tenant platform key (server-side only)
+    onboarded: Mapped[bool] = mapped_column(Boolean, default=False)  # completed the F1 onboarding
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -70,7 +71,7 @@ class Agent(Base):
     user_email: Mapped[str | None] = mapped_column(index=True, nullable=True)  # null = provided template
     name: Mapped[str] = mapped_column(String(120))
     description: Mapped[str | None] = mapped_column(String(280), nullable=True)
-    model: Mapped[str] = mapped_column(String(64), default="stub")  # stub | gemini
+    model: Mapped[str] = mapped_column(String(64), default="gemini")  # gemini-only (invariant #7)
     system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     data_sources: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list of connector ids
     is_template: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -123,33 +124,6 @@ class WatchlistItem(Base):
     added_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
-class Portfolio(Base):
-    """A user's named portfolio (CE-8). Holdings carry real share counts + optional cost basis;
-    analytics value them live (current price) and backtest the allocation over PriceBar."""
-
-    __tablename__ = "portfolios"
-    __table_args__ = (UniqueConstraint("user_email", "name", name="uq_portfolio_user_name"),)
-    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: _uid("pf"))
-    user_email: Mapped[str] = mapped_column(ForeignKey("users.email"), index=True)
-    name: Mapped[str] = mapped_column(String(80))
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-
-class Holding(Base):
-    """One position in a portfolio — shares of a ticker, with an optional average cost basis."""
-
-    __tablename__ = "holdings"
-    __table_args__ = (UniqueConstraint("portfolio_id", "market", "ticker", name="uq_holding_pf_market_ticker"),)
-    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: _uid("hld"))
-    portfolio_id: Mapped[str] = mapped_column(ForeignKey("portfolios.id"), index=True)
-    market: Mapped[str] = mapped_column(String(8))  # US | KR
-    ticker: Mapped[str] = mapped_column(String(32))
-    name: Mapped[str | None] = mapped_column(String(160), nullable=True)
-    shares: Mapped[float] = mapped_column(default=0.0)
-    cost_basis: Mapped[float | None] = mapped_column(nullable=True)  # avg cost / share
-    added_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-
 class Board(Base):
     """A named canvas the user pins assets onto (charts, sources, text). Users can keep
     several; pinning offers a board picker. Notion-like free layout per item."""
@@ -189,4 +163,82 @@ class Integration(Base):
     kind: Mapped[str] = mapped_column(String(24))  # telegram | slack
     config: Mapped[str] = mapped_column(Text)  # JSON (tokens/channels)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+# --- F3: notification alerts (board / widget scoped push) ------------------
+class NotificationAlert(Base):
+    """A standing watcher the user enables from the DASHBOARD — either for a whole board
+    (``scope='board'`` → the board's key widgets) or a single widget (``scope='widget'`` →
+    bound to one ``pin_id``). It evaluates ``trigger_type`` over ``params`` on a ``schedule``,
+    and when due renders a SOURCED message (source · as_of · deep link — never advice/forecast)
+    pushed to ``channels``. ``source_spec`` remembers the widget's tool+args so threshold
+    triggers re-fetch live data and the message links back to the dashboard/explore evidence."""
+
+    __tablename__ = "notification_alerts"
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: _uid("alt"))
+    user_email: Mapped[str] = mapped_column(ForeignKey("users.email"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    scope: Mapped[str] = mapped_column(String(8), default="board")  # board | widget
+    board_id: Mapped[str | None] = mapped_column(String(48), index=True, nullable=True)
+    pin_id: Mapped[str | None] = mapped_column(String(48), index=True, nullable=True)  # widget scope
+    # earnings | rate | macro_indicator | filing_news | price_threshold | digest
+    trigger_type: Mapped[str] = mapped_column(String(24))
+    params: Mapped[str | None] = mapped_column(Text, nullable=True)      # JSON {target, threshold, ...}
+    schedule: Mapped[str | None] = mapped_column(Text, nullable=True)    # JSON {freq, time?, every_minutes?}
+    channels: Mapped[str] = mapped_column(Text, default="[]")            # JSON list of channel kinds
+    quiet_hours: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON {start,end}
+    status: Mapped[str] = mapped_column(String(8), default="active")     # active | paused
+    source_spec: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON {tool, args, source, deeplink}
+    last_fired_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    next_fire_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class NotificationDelivery(Base):
+    """One message an alert pushed to one channel. Carries the full trust envelope
+    (title/body/as_of/source/deeplink). ``status`` = sent | simulated | failed — ``simulated``
+    means the channel had no credentials, so we recorded the message we *would* have sent (keeps
+    the alert→delivery flow verifiable end-to-end without external accounts)."""
+
+    __tablename__ = "notification_deliveries"
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: _uid("dlv"))
+    alert_id: Mapped[str] = mapped_column(ForeignKey("notification_alerts.id"), index=True)
+    user_email: Mapped[str] = mapped_column(index=True)  # denormalized for ownership scoping
+    channel: Mapped[str] = mapped_column(String(24))     # telegram | slack | kakao | email
+    title: Mapped[str] = mapped_column(String(240))
+    body: Mapped[str] = mapped_column(Text)
+    as_of: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    deeplink: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    status: Mapped[str] = mapped_column(String(12), default="sent")  # sent | simulated | failed
+    sent_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ChannelConnection(Base):
+    """A user's connection to one messenger (BYO bot-token / webhook). Credentials live in
+    ``config`` server-side only — never sent to the browser; the API exposes only whether
+    credentials exist + ``verified``. One row per (user, channel)."""
+
+    __tablename__ = "channel_connections"
+    __table_args__ = (UniqueConstraint("user_email", "channel", name="uq_channel_user_kind"),)
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: _uid("chn"))
+    user_email: Mapped[str] = mapped_column(index=True)
+    channel: Mapped[str] = mapped_column(String(24))  # telegram | slack | kakao | email
+    config: Mapped[str] = mapped_column(Text, default="{}")  # JSON creds (server-side only)
+    verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class DashboardTemplate(Base):
+    """A provided dashboard template (seeded, global). ``widgets`` is a JSON list of
+    {spec(tool+args+viz+source), x, y, w, h} that ``POST /board/from-template`` materializes
+    as pins on the user's chosen board."""
+
+    __tablename__ = "dashboard_templates"
+    id: Mapped[str] = mapped_column(String(48), primary_key=True)  # stable seed id (e.g. "dt_semi")
+    name: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str | None] = mapped_column(String(280), nullable=True)
+    market: Mapped[str | None] = mapped_column(String(8), nullable=True)  # US | KR | None(both)
+    widgets: Mapped[str] = mapped_column(Text, default="[]")  # JSON list of {spec,x,y,w,h}
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

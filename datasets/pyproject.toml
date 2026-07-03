@@ -12,8 +12,13 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "pykrx>=1.0.45",
-    "pymupdf>=1.24",
+    "procrastinate>=2.0",
+    "psycopg[binary]>=3.1",
     "sqlalchemy>=2.0",
+    # GCP Document AI Layout Parser — parse 8-K presentation PDFs into faithful, layout-aware RAG
+    # chunks (Phase 2). Lazy-imported + opt-in (needs a processor); absent → the deck feature is dark.
+    "google-cloud-documentai>=2.20",
+    "pypdf>=4.0",
 ]
 
 [project.optional-dependencies]

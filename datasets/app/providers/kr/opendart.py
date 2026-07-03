@@ -250,6 +250,35 @@ class OpenDartProvider:
             raise not_found(f"No OpenDART filings for '{ref.ticker}'.")
         return out
 
+    async def earnings_disclosures(self, ref: SecurityRef, limit: int) -> list[dict]:
+        """Recent 잠정실적 공정공시 — '영업(잠정)실적(공정공시)' / '연결재무제표기준영업(잠정)실적(공정공시)'.
+        The KR earnings ANNOUNCEMENT (management's preliminary results + commentary), filed on DART:
+        the free analog of a US earnings press release/call (KR has no free transcript/audio API).
+        DART lists newest-first → returns the most recent matches as {rcept_no, report_nm, date, url}."""
+        corp = await _corp_code(ref)
+        this_year = date.today().year
+        data = await _dart_json(
+            "list.json",
+            {"corp_code": corp, "bgn_de": f"{this_year - 2}0101",
+             "end_de": f"{this_year}1231", "page_count": "100"},
+        )
+        out: list[dict] = []
+        for row in data.get("list") or []:
+            nm = row.get("report_nm") or ""
+            # 잠정실적 공정공시 only — excludes the other 공정공시 (공급계약 등) the date sort floods in.
+            if not ("공정공시" in nm and "실적" in nm):
+                continue
+            rcp = row.get("rcept_no")
+            dt = row.get("rcept_dt")  # YYYYMMDD
+            out.append({
+                "rcept_no": rcp, "report_nm": nm,
+                "date": f"{dt[:4]}-{dt[4:6]}-{dt[6:8]}" if dt and len(dt) >= 8 else None,
+                "url": f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcp}",
+            })
+            if len(out) >= limit:
+                break
+        return out
+
 
 class OpenDartMetricsProvider:
     """KR metrics derived from OpenDART fundamentals + the live (Yahoo) price.

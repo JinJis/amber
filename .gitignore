@@ -3,3 +3,7 @@
 # Python bytecode
 __pycache__/
 *.py[cod]
+
+# GCP service-account key for the RAG Vertex reranker (never commit)
+secrets/*
+!secrets/.gitkeep

@@ -18,6 +18,7 @@ from app.models.generated import (
     FinancialMetricSnapshotResponse,
 )
 from app.providers.registry import get_metrics_provider
+from app.routers._common import gather_best_effort
 from app.store.metrics_history import metrics_history_models
 from app.symbols import Market, build_ref, normalize_ticker
 
@@ -79,14 +80,9 @@ async def get_comparables(
     if not syms:
         raise bad_request("Provide at least one ticker in `tickers`.")
     prov = get_metrics_provider(market)
-
-    async def _one(sym: str):
-        try:
-            return await prov.metrics_snapshot(build_ref(market, normalize_ticker(market, sym)))
-        except Exception:  # noqa: BLE001 — one bad ticker never sinks the comparison
-            return None
-
-    snaps = [s for s in await asyncio.gather(*[_one(s) for s in syms]) if s is not None]
+    snaps = await gather_best_effort(
+        syms, lambda sym: prov.metrics_snapshot(build_ref(market, normalize_ticker(market, sym)))
+    )
     if not snaps:
         raise not_found("No comparables data for the given tickers.")
     return {"market": market.value, "tickers": [s.ticker for s in snaps], "comparables": snaps}

@@ -1,8 +1,9 @@
-"""Planners: decide which tool to call (or finalize) given the task + tools.
+"""Planner: decide which tool to call (or finalize) given the task + tools.
 
-* StubPlanner — deterministic keyword routing (dev/CI, no LLM). Calls one tool
-  then summarizes. Lets the loop + provenance + guardrails be tested with no key.
-* GeminiPlanner — real LLM (Gemini function calling), lazily imported.
+* GeminiPlanner — real LLM (Gemini function calling), lazily imported. This is the ONLY
+  planner: the platform is Gemini-only (invariant #7); the legacy deterministic `stub`
+  planner has been removed (answer quality/routing must come from the LLM, never hand-rolled
+  keyword rules — invariant #9). Routing here needs a GOOGLE_API_KEY.
 """
 
 from __future__ import annotations
@@ -13,19 +14,10 @@ from functools import cache
 
 from agentengine.config import settings
 
-# Routing brain + Gemini serialization live in siblings; re-exported here so
-# existing imports (agent.py, chat.py, tests) keep resolving them via this module.
+# `resolve_ticker` (+ `_user_text`) normalize the ticker the MODEL produces (e.g. "Apple" →
+# "AAPL") on the gemini path, so they stay; the rest of routing.py is legacy keyword-routing
+# kept only for these utilities. Re-exported so agent.py/chat.py/orchestrator.py resolve them here.
 from agentengine.routing import (  # noqa: F401
-    _args_for,
-    _callable,
-    _infer_bank,
-    _keyword_candidates,
-    _market_of,
-    _market_ok,
-    _needs_ticker,
-    _no_tool_message,
-    _summarize,
-    _ticker_fallback,
     _user_text,
     resolve_ticker,
 )
@@ -72,45 +64,16 @@ class Decision:
     raw_content: object | None = None
 
 
-class StubPlanner:
-    async def plan(self, task: str, tools: dict, history: list, system: str | None = None,
-                   conversation: list | None = None, sources: str | None = None,
-                   force_final: bool = False) -> Decision:
-        if history:  # already observed a tool result -> finalize
-            return Decision(final=_summarize(task, history, tools))
-        if not tools:
-            return Decision(final=_no_tool_message(task, has_tools=False))
-        # resolve the company from THIS turn, else from earlier turns (follow-ups like
-        # "그럼 그 회사 주가는?" inherit the ticker named earlier in the conversation).
-        ticker = resolve_ticker(task) or resolve_ticker(_user_text(conversation))
-        market = _market_of(ticker)
-        # keyword intent first; only fall back to ticker tools when a ticker is known
-        # (a vague question with no intent/ticker gets guidance, never a doomed call).
-        candidates = _keyword_candidates(task, tools)
-        if not candidates and ticker:
-            candidates = _ticker_fallback(tools)
-        for name in candidates:
-            tool = tools[name]
-            if not _market_ok(tool, market):
-                continue
-            args = _args_for(task, tool, ticker, market)
-            if _callable(tool, args, ticker):
-                return Decision(tool=name, args=args)
-        return Decision(final=_no_tool_message(task, has_tools=True))
-
-    async def plan_batch(self, *args, **kwargs) -> list[Decision]:
-        # the deterministic stub is single-tool-per-step; wrap its one decision in a batch.
-        return [await self.plan(*args, **kwargs)]
-
-
 class GeminiPlanner:
     """Real Gemini planner (function calling). Untested without GOOGLE_API_KEY."""
 
     def __init__(self, model: str) -> None:
         from google import genai
 
+        from agentengine.gemini_io import genai_client
+
         self._genai = genai
-        self._client = genai.Client()
+        self._client = genai_client()  # bounded request timeout (no infinite SSE hang)
         self.model = model
 
     async def plan(self, task: str, tools: dict, history: list, system: str | None = None,
@@ -173,7 +136,7 @@ class GeminiPlanner:
         system_instruction = self._build_system_instruction(system, sources)
         contents = _to_gemini_contents(conversation, history, task)
         contents.append(types.Content(role="user", parts=[types.Part.from_text(text=_SYNTHESIS_PROMPT)]))
-        config = types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.45)
+        config = types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.3)
         model = settings.synthesis_model or self.model
         it = await asyncio.to_thread(self._client.models.generate_content_stream,
                                      model=model, contents=contents, config=config)
@@ -208,7 +171,7 @@ class GeminiPlanner:
             contents.append(types.Content(role="user", parts=[types.Part.from_text(text=_SYNTHESIS_PROMPT)]))
             config = types.GenerateContentConfig(
                 system_instruction=system_instruction,
-                temperature=0.45,   # warmer than routing → richer, more natural prose
+                temperature=0.3,   # finance: grounded + accurate over flowery (still natural prose)
             )
             # use the dedicated (light) response model, falling back to the planner model.
             model = settings.synthesis_model or self.model
@@ -245,14 +208,13 @@ class GeminiPlanner:
 
 
 @cache
-def _build_planner(backend: str, model: str):
-    if backend == "stub":
-        return StubPlanner()
-    if backend == "gemini":
-        return GeminiPlanner(model)
-    raise ValueError(f"Unknown agent backend '{backend}'.")
+def _build_planner(model: str):
+    # Gemini-only (invariant #7). Any legacy per-agent backend value (e.g. an old "stub" Agent
+    # row) maps here to the single Gemini planner — there is no other backend.
+    return GeminiPlanner(model)
 
 
 def get_planner(backend: str | None = None):
-    """Return the planner for ``backend`` (per-agent override), else the server default."""
-    return _build_planner(backend or settings.llm_backend, settings.model)
+    """Return the Gemini planner. ``backend`` is accepted for call-site compatibility but
+    ignored — the platform is Gemini-only (the legacy stub planner has been removed)."""
+    return _build_planner(settings.model)

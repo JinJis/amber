@@ -17,6 +17,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from controlplane import admin, gateway
 from controlplane.catalog_index import load_catalog_from_datasets
 from controlplane.db import init_db
+from controlplane.logging_config import install_request_logging, setup_logging
+
+setup_logging()
 
 
 @asynccontextmanager
@@ -32,6 +35,7 @@ app = FastAPI(
     description="Multi-tenant entitlements, metering, and gateway in front of the datasets data plane.",
     lifespan=lifespan,
 )
+install_request_logging(app)
 
 
 @app.exception_handler(StarletteHTTPException)

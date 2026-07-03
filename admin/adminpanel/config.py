@@ -8,6 +8,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=("../.env", ".env"), env_file_encoding="utf-8", extra="ignore")
 
+    # App log verbosity (DEBUG|INFO|WARNING|…); a bare shared `LOG_LEVEL` env overrides it.
+    log_level: str = "INFO"
+
     # login (single credential; change in production)
     adminui_username: str = "admin"               # ADMINUI_USERNAME
     adminui_password: str = "admin"               # ADMINUI_PASSWORD

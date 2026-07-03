@@ -21,8 +21,8 @@ npm run dev                     # http://localhost:3000  (studio-api must be up 
 ```
 
 For Google login set `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` / `AUTH_SECRET` (and remove `AUTH_DEV_LOGIN`).
-For real streamed answers, run the agent engine with `AGENT_LLM_BACKEND=gemini` + `GOOGLE_API_KEY`
-(the `stub` planner returns a sourced, canned answer with no key).
+For streamed answers, run the agent engine with `AGENT_LLM_BACKEND=gemini` + `GOOGLE_API_KEY`
+(the platform is Gemini-only — there is no keyless planner; without a key the agent can't run).
 
 Bring up the backend first: `docker compose up --build` (datasets, control-plane, rag,
 agent-engine, studio-api).

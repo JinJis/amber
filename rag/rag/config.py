@@ -1,11 +1,7 @@
-"""RAG settings — every backend is selectable via env (RAG_* in the shared .env).
+"""RAG settings (RAG_* in the shared .env).
 
-Three performance tiers, all behind the same interface:
-  * oss-cpu  — open-source ONNX embeddings on CPU (fastembed)        [extra: oss]
-  * oss-gpu  — open-source on a GPU instance (sentence-transformers) [extra: st]
-  * gcp      — Vertex AI gemini-embedding-001 + Ranking API          [extra: gcp]
-  * tei      — a remote Text-Embeddings-Inference endpoint (GPU served)
-  * hash     — deterministic, dependency-free (dev/CI default)
+Embeddings are Gemini-only: ``gemini-embedding-2`` (latest) via the Gemini API with GOOGLE_API_KEY
+(the same key the agent uses). Vector store is in-memory (dev) or pgvector (prod).
 """
 
 from __future__ import annotations
@@ -18,24 +14,27 @@ class Settings(BaseSettings):
         env_prefix="RAG_", env_file=("../.env", ".env"), env_file_encoding="utf-8", extra="ignore"
     )
 
-    # --- embeddings --------------------------------------------------------
-    embedding_backend: str = "hash"          # hash | oss-cpu | oss-gpu | tei | gcp
-    embedding_model: str = "BAAI/bge-m3"
-    embedding_endpoint: str = ""             # for tei
-    hash_dim: int = 384
+    # App log verbosity (DEBUG|INFO|WARNING|…); a bare shared `LOG_LEVEL` env overrides it.
+    log_level: str = "INFO"
+
+    # --- embeddings (Gemini only) -----------------------------------------
+    # Google Gemini embeddings via the Gemini API (GOOGLE_API_KEY). output dim is MRL-truncated to
+    # embedding_dim then re-normalized.
+    embedding_model: str = "gemini-embedding-2"   # latest (multimodal); or gemini-embedding-001
+    embedding_dim: int = 1536                # 768 | 1536 | 3072 (1536 = strong + pgvector-indexable)
 
     # --- reranker ----------------------------------------------------------
-    reranker_backend: str = "none"           # none | oss-cpu | oss-gpu | tei | gcp
-    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    reranker_backend: str = "none"           # none | gcp (Vertex Ranking API)
+    reranker_model: str = "semantic-ranker-default-004"
     reranker_endpoint: str = ""
 
     # --- vector store ------------------------------------------------------
     vector_store: str = "memory"             # memory | pgvector
     database_url: str = ""                    # pgvector (postgresql://...)
 
-    # --- google cloud ------------------------------------------------------
+    # --- google cloud (only for the optional gcp Vertex Ranking reranker) -----
     gcp_project: str = ""
-    gcp_location: str = "us-central1"
+    gcp_location: str = "global"  # the Vertex Ranking API (semantic ranker) is global-only
     gcp_ranking_config: str = "default_ranking_config"
 
     # --- retrieval ---------------------------------------------------------

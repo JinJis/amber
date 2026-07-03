@@ -8,6 +8,7 @@ from app.config import settings
 from app.deps import ApiKeyDep, MarketParam
 from app.models.generated import CiksResponse, FilingsResponse, TickersResponse
 from app.providers.registry import get_company_provider, get_filings_provider
+from app.routers._common import tickers_response
 from app.symbols import Market, build_ref
 
 router = APIRouter(tags=["SEC Filings"])
@@ -80,8 +81,7 @@ async def get_filing_types(market: MarketParam = Market.US) -> dict:
 @router.get("/filings/tickers", response_model=TickersResponse)
 async def get_filings_tickers(market: MarketParam = Market.US) -> TickersResponse:
     """Tickers in the filing universe (US: SEC company_tickers; KR: DART corp list)."""
-    tickers = await get_company_provider(market).list_tickers()
-    return TickersResponse(resource="filings", tickers=tickers)
+    return await tickers_response(market, "filings")
 
 
 @router.get("/filings/ciks", response_model=CiksResponse)

@@ -10,6 +10,20 @@ The genai import stays lazy so the stub backend needs no SDK.
 from __future__ import annotations
 
 
+def genai_client():
+    """A ``google.genai`` Client with a bounded per-request timeout (``gemini_timeout_seconds``).
+    The single place clients are built — without the timeout a stalled Gemini call hangs the SSE
+    stream forever; with it the call raises and the caller degrades gracefully."""
+    from google import genai
+    from google.genai import types
+
+    from agentengine.config import settings
+
+    return genai.Client(
+        http_options=types.HttpOptions(timeout=int(settings.gemini_timeout_seconds * 1000)),
+    )
+
+
 def _get_text_from_response(resp) -> str | None:
     if not resp.candidates or not resp.candidates[0].content or not resp.candidates[0].content.parts:
         return None

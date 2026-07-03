@@ -1,7 +1,7 @@
 [project]
 name = "valuegraph-rag"
 version = "0.1.0"
-description = "Provenance-first RAG service with pluggable embedding/reranker/store backends (CPU-OSS / GCP / GPU)."
+description = "Provenance-first RAG service — Gemini embeddings + provenance-tracked retrieval."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -11,15 +11,12 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "numpy>=1.26",
+    "google-genai>=1.0",            # Gemini embeddings (gemini-embedding-2) — the only embedder
 ]
 
 [project.optional-dependencies]
-# CPU/GPU open-source embeddings + rerankers via ONNX (light, no torch)
-oss = ["fastembed>=0.3"]
-# heavier OSS (torch) — typically the GPU instance path
-st = ["sentence-transformers>=3.0"]
-# Google Cloud: Vertex AI embeddings (gemini-embedding-001) + Ranking API
-gcp = ["google-cloud-aiplatform>=1.60", "google-cloud-discoveryengine>=0.13"]
+# Vertex AI Ranking API (optional reranker; embeddings work via the Gemini API with GOOGLE_API_KEY)
+gcp = ["google-cloud-discoveryengine>=0.13"]
 # pgvector store
 pg = ["psycopg[binary]>=3.1", "pgvector>=0.3"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "respx>=0.21"]

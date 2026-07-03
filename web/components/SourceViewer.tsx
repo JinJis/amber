@@ -1,14 +1,15 @@
 "use client";
 
-// Click-to-expand full source viewer — wireframe "화면 상세" Screen 08. A preview in the
-// Live Context panel expands into this modal: the source rendered in its native full form
-// with the cited passage highlighted + a margin pin, and a right "이 원문을 인용한 곳"
-// context panel (freshness / as_of / source) with jump-back + copy-citation actions.
-// Honest by construction: we render the extracted passage we actually hold, never a
-// fabricated full document.
+// Click-to-expand full source viewer. A preview in the Live Context panel expands into this
+// full-screen modal. For a filing-backed citation (공시 본문 or 재무제표 figure) it renders the
+// ORIGINAL disclosure in-app (FilingViewer: real iXBRL/DART HTML, the cited element highlighted,
+// free scroll/zoom). News/data without a filing keep the native-form preview. Honest by
+// construction: we render the real document or the extracted passage we hold, never a fabrication.
 
 import { useState } from "react";
-import { Citation, sourceShape, hostOf, SrcTable, evidenceSrc, evidenceDocSrc } from "./SourceCard";
+import { Citation, sourceShape, hostOf, SrcTable } from "./SourceCard";
+import { FilingViewer, viewerSrc } from "./FilingViewer";
+import { DeckViewer, deckSrc } from "./DeckViewer";
 import { FreshnessDot, FRESH_LABEL } from "./ui";
 
 const TABS: { key: "filing" | "web" | "data"; label: string }[] = [
@@ -20,14 +21,14 @@ const TABS: { key: "filing" | "web" | "data"; label: string }[] = [
 export function SourceViewer({ c, onClose }: { c: Citation; onClose: () => void }) {
   const shape = sourceShape(c);
   const [copied, setCopied] = useState(false);
-  const [imgFailed, setImgFailed] = useState(false);
-  const [imgOk, setImgOk] = useState(false);
   const fresh = c.freshness ? FRESH_LABEL[c.freshness] || c.freshness : null;
-  // PH-PROV2: the deterministic highlighted screenshot of the filing line (fetched lazily;
-  // falls back to the text rendering below on 204 / error — never fabricated).
-  const evSrc = evidenceSrc(c.evidence_image_url);
-  // PH-PROV3: if the highlight loaded, the real PDF exists → "원문 열기" opens it.
-  const docSrc = evidenceDocSrc(c.evidence_image_url);
+  // Render the REAL source in-app whenever we can: a filing-backed citation (공시 본문 or 재무제표
+  // 수치) OR any citation carrying an external source page (macro series page, news article). The
+  // viewer fetches + sanitizes it and highlights the cited value; on 204 it degrades to the link.
+  // an 8-K presentation deck (PDF) opens in the pdf.js DeckViewer; everything else (filings,
+  // transcripts, macro pages, news) uses the HTML FilingViewer.
+  const isDeck = !!deckSrc(c);
+  const frameSrc = isDeck ? null : viewerSrc(c);
 
   async function copyCite() {
     const text = `“${c.snippet ?? ""}” — ${c.source ?? ""}${c.as_of ? ` (${c.as_of})` : ""}${c.url ? ` ${c.url}` : ""}`.trim();
@@ -48,27 +49,14 @@ export function SourceViewer({ c, onClose }: { c: Citation; onClose: () => void 
 
         <div className="sv-body">
           <div className="sv-stage">
-            {evSrc && !imgFailed && (
-              <figure className="sv-evidence">
-                <img className="sv-evidence-img" src={evSrc} loading="lazy"
-                     alt="원문에서 인용 부분 하이라이트"
-                     onLoad={() => setImgOk(true)} onError={() => setImgFailed(true)} />
-                <figcaption className="sv-evidence-cap mono">📷 실제 공시 원문 · 노란 박스가 인용한 수치</figcaption>
-              </figure>
-            )}
-            {shape === "filing" && (
-              <article className="sv-page">
-                <div className="sv-page-hd mono">{c.source || "공시 문서"}{c.page ? ` · ${c.page}` : ""}</div>
-                {c.doc_type && c.doc_type !== "news" ? <h4 className="sv-page-h">{c.doc_type}</h4> : null}
-                <p className="sv-skel-l" /><p className="sv-skel-l" style={{ width: "88%" }} />
-                <div className="sv-quote">
-                  <span className="sv-pin mono">{c.index ?? "1"}</span>
-                  {c.snippet || "인용된 원문 구절을 불러올 수 없습니다."}
-                </div>
-                <p className="sv-skel-l" style={{ width: "94%" }} /><p className="sv-skel-l" style={{ width: "70%" }} />
-              </article>
-            )}
-            {shape === "web" && (
+            {isDeck ? (
+              // an 8-K presentation deck — render the real slides (pdf.js) + highlight the cited chunk
+              <DeckViewer c={c} />
+            ) : frameSrc ? (
+              // The REAL source page in-app (filing OR external page), cited value highlighted. The
+              // extracted figures we used stay visible in the right-side context aside.
+              <FilingViewer c={c} />
+            ) : shape === "web" ? (
               <article className="sv-web">
                 <div className="sp-chrome">
                   <span className="sp-dots" aria-hidden><i /><i /><i /></span>
@@ -82,18 +70,25 @@ export function SourceViewer({ c, onClose }: { c: Citation; onClose: () => void 
                   <p className="sv-skel-l" style={{ width: "82%" }} />
                 </div>
               </article>
-            )}
-            {shape === "data" && (
+            ) : shape === "data" ? (
               <article className="sv-page">
                 <div className="sv-page-hd mono">{c.source || "추출 데이터"}{c.ticker ? ` · ${c.ticker}` : ""}</div>
                 {c.table ? <SrcTable table={c.table} /> : null}
                 {c.snippet ? (
-                  <div className="sv-data mono">
-                    <span className="sv-pin mono">{c.index ?? "1"}</span>
-                    {c.snippet}
-                  </div>
+                  <div className="sv-data mono"><span className="sv-pin mono">{c.index ?? "1"}</span>{c.snippet}</div>
                 ) : null}
                 <p className="sv-data-note mono">{c.as_of ? `as_of ${c.as_of} · ` : ""}출처에서 추출·계산된 값 (셀 = 인용 근거)</p>
+              </article>
+            ) : (
+              <article className="sv-page">
+                <div className="sv-page-hd mono">{c.source || "공시 문서"}{c.page ? ` · ${c.page}` : ""}</div>
+                {c.doc_type && c.doc_type !== "news" ? <h4 className="sv-page-h">{c.doc_type}</h4> : null}
+                <p className="sv-skel-l" /><p className="sv-skel-l" style={{ width: "88%" }} />
+                <div className="sv-quote">
+                  <span className="sv-pin mono">{c.index ?? "1"}</span>
+                  {c.snippet || "인용된 원문 구절을 불러올 수 없습니다."}
+                </div>
+                <p className="sv-skel-l" style={{ width: "94%" }} /><p className="sv-skel-l" style={{ width: "70%" }} />
               </article>
             )}
           </div>
@@ -111,11 +106,7 @@ export function SourceViewer({ c, onClose }: { c: Citation; onClose: () => void 
               {c.page ? <div>{c.page}</div> : null}
             </div>
             <div className="sv-ctx-actions">
-              {imgOk && docSrc ? (
-                <a className="sv-act primary" href={docSrc} target="_blank" rel="noreferrer">원문 PDF 열기 ↗</a>
-              ) : c.url ? (
-                <a className="sv-act primary" href={c.url} target="_blank" rel="noreferrer">원문 열기 ↗</a>
-              ) : null}
+              {c.url ? <a className="sv-act primary" href={c.url} target="_blank" rel="noreferrer">원문 보기 ↗</a> : null}
               <button className="sv-act" onClick={copyCite}>{copied ? "복사됨 ✓" : "인용 복사"}</button>
             </div>
           </aside>
