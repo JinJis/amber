@@ -175,6 +175,41 @@ def rag_ingest(docs: list[dict]) -> None:
     _request("POST", f"{RAG}/rag/ingest", {"documents": docs}, {"Content-Type": "application/json"})
 
 
+# --- desk-feed scenarios (M-DESK / DK-4) -----------------------------------
+def _studio_as(email: str, method: str, path: str, body=None) -> tuple[int, dict]:
+    """studio() but as an explicit user — desk-feed scenarios need their own users (one seeded
+    with a watchlist, one fresh for the nudge state) so they can't contaminate the shared
+    eval user or each other."""
+    headers = {"X-Service-Token": SVC, "X-User-Email": email, "Content-Type": "application/json"}
+    code, raw = _request(method, f"{STUDIO}{path}", body, headers)
+    try:
+        return code, json.loads(raw or b"{}")
+    except ValueError:
+        return code, {"_raw": raw.decode("utf-8", "replace")}
+
+
+def run_scenario_desk_feed(sc: dict) -> dict:
+    """Execute a `kind: desk_feed` scenario: optional watchlist seeding → GET /desk-feed →
+    fold the cards into the same result shape the graders/judge consume (the 'answer' is the
+    rendered card list, 'citations' the card sources)."""
+    email = f"eval-desk-{sc['name'].__hash__() & 0xffffff:x}@valuegraph.local"
+    _studio_as(email, "POST", "/users/ensure")
+    wl = sc.get("setup_watchlist")
+    if wl:
+        code, created = _studio_as(email, "POST", "/watchlists", {"name": wl["name"]})
+        if code == 200 and "id" in created:
+            for it in wl.get("items", []):
+                _studio_as(email, "POST", f"/watchlists/{created['id']}/items", it)
+    code, feed = _studio_as(email, "GET", "/desk-feed")
+    cards = feed.get("cards") or []
+    answer = "\n".join(
+        f"[{c.get('kind')}] {c.get('hook')} → “{c.get('question')}”" for c in cards) or "(no cards)"
+    cites = sorted({(ci.get("source") or "?") for c in cards for ci in (c.get("citations") or [])})
+    return {"tools": feed.get("used_tools") or [], "statuses": [code], "citations": cites,
+            "answer": answer, "cards": cards, "artifacts": [], "cadences": [], "cite_urls": [],
+            "confidences": [], "suggestions": [], "subagents": {}, "clarify": None, "refused": False}
+
+
 # --- LLM judge (deep Gemini, rubric-based; optional) ----------------------
 # The rubric: each dimension scored 1-5 by the deep judge. Keep this in sync with
 # eval/RUBRIC.md (the human-facing spec). `overall` is the headline score.
@@ -247,6 +282,18 @@ def grade(checks: dict, r: dict) -> list[tuple[str, bool, str]]:
         kinds = [a.get("kind") for a in arts]
         ok = bool(arts) if kind is True else (kind in kinds)
         out.append((f"emits artifact {kind if kind is not True else ''}".strip(), ok, f"artifacts={kinds}"))
+    if "expect_min_cards" in checks:
+        # M-DESK: the desk feed produced at least N suggestion cards
+        n, cards = checks["expect_min_cards"], r.get("cards") or []
+        out.append((f"≥{n} desk cards", len(cards) >= n, f"cards={len(cards)}"))
+    if "expect_card_kind" in checks:
+        k, kinds = checks["expect_card_kind"], [c.get("kind") for c in r.get("cards") or []]
+        out.append((f"card kind {k}", k in kinds, f"kinds={kinds}"))
+    if checks.get("cards_all_cited"):
+        # every DATA card carries ≥1 citation (state cards — nudge/continue — are exempt)
+        data = [c for c in r.get("cards") or [] if c.get("kind") not in ("watchlist_nudge", "continue_thread")]
+        bad = [c.get("question") for c in data if not c.get("citations")]
+        out.append(("all data cards cited", not bad, f"uncited={bad}"))
     if "expect_computation" in checks:
         # PH-DATA-6: a self-computed figure (valuation/backtest/screener) must carry the auditable
         # derivation — method + at least one input/assumption/step row — so the math isn't a black box.
@@ -382,17 +429,21 @@ def main() -> int:
         name = sc["name"]
         tag = cyan(f"[{i:>2}/{n}]")
         try:
-            if sc.get("rag_docs"):
-                rag_ingest(sc["rag_docs"])
-            ac, agent = studio("POST", "/agents", {
-                "name": sc["agent"]["name"], "model": sc["agent"].get("model", "gemini"),
-                "data_sources": sc["agent"]["data_sources"], "system_prompt": sc["agent"].get("system_prompt"),
-            })
-            if ac != 200 or "id" not in agent:
-                print(f"{tag} {red('✗')} {bold(name)}  {red(f'agent-create-failed ({ac})')}")
-                rows.append((name, 0, 1, "")); total += 1; print(); continue
-            r = _run_scenario_chat(sc, agent["id"])
-            question = sc["turns"][-1] if sc.get("turns") else sc["question"]
+            if sc.get("kind") == "desk_feed":  # M-DESK: non-chat scenario — GET /desk-feed
+                r = run_scenario_desk_feed(sc)
+                question = f"(오늘의 데스크 · {name})"
+            else:
+                if sc.get("rag_docs"):
+                    rag_ingest(sc["rag_docs"])
+                ac, agent = studio("POST", "/agents", {
+                    "name": sc["agent"]["name"], "model": sc["agent"].get("model", "gemini"),
+                    "data_sources": sc["agent"]["data_sources"], "system_prompt": sc["agent"].get("system_prompt"),
+                })
+                if ac != 200 or "id" not in agent:
+                    print(f"{tag} {red('✗')} {bold(name)}  {red(f'agent-create-failed ({ac})')}")
+                    rows.append((name, 0, 1, "")); total += 1; print(); continue
+                r = _run_scenario_chat(sc, agent["id"])
+                question = sc["turns"][-1] if sc.get("turns") else sc["question"]
         except Exception as e:  # never let one scenario abort the run
             print(f"{tag} {red('✗')} {bold(name)}  {red(f'ERROR {type(e).__name__}: {e}')}")
             rows.append((name, 0, 1, "")); total += 1; print(); continue

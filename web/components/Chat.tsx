@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 
 import AgentBuilder, { Agent, Category } from "./AgentBuilder";
 import BoardCanvas from "./BoardCanvas";
 import BotHome from "./BotHome";
+import DeskHome from "./DeskHome";
 import Onboarding from "./Onboarding";
 import PinPicker from "./PinPicker";
 import PromptLibrary from "./PromptLibrary";
@@ -628,7 +629,11 @@ export default function Chat({ name, features }: { name: string; features: Featu
               {messages.length === 0 && (
                 <div className="empty">
                   <h2>무엇이든 물어보세요</h2>
-                  <p>보유 종목, 뉴스, 시황, 경제 — 우리 데이터로 답하고 출처를 보여줍니다. 답변의 차트·표·출처는 <b>＋ 대시보드</b>로 홈에 올릴 수 있어요.</p>
+                  <p>보유 종목, 뉴스, 시황, 경제 — 우리 데이터로 답하고 출처를 보여줍니다.</p>
+                  <DeskHome
+                    onPick={(q) => { setInput(q); inputRef.current?.focus(); }}
+                    onChanged={loadHandles}
+                  />
                   {libPrompts.length > 0 ? (
                     // prompt-library examples rising in an infinite loop; hover pauses; click
                     // drops the FULL prompt into the composer to fill {TICKER} and send.

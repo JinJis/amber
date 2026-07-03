@@ -24,6 +24,7 @@ from studioapi.prompts import router as prompts_router
 from studioapi.prompts import seed_community_prompts
 from studioapi.search import router as search_router
 from studioapi.templates import router as templates_router, seed_dashboard_templates
+from studioapi.deskfeed import router as deskfeed_router
 from studioapi.watchlists import router as watchlists_router
 from studioapi.board import boards_router, router as board_router
 from studioapi.evidence import router as evidence_router
@@ -142,6 +143,7 @@ app.include_router(deliveries_router)
 app.include_router(templates_router)
 app.include_router(prompts_router)
 app.include_router(watchlists_router)
+app.include_router(deskfeed_router)
 app.include_router(board_router)
 app.include_router(boards_router)
 app.include_router(evidence_router)

@@ -16,6 +16,7 @@ from agentengine.agent import refresh_artifact, run_agent
 from agentengine.chat import stream_chat
 from agentengine.client import PlatformClient
 from agentengine.config import settings
+from agentengine.deskfeed import DeskFeedRequest, build_desk_feed
 from agentengine.logging_config import install_request_logging, setup_logging
 from agentengine.models import (
     AgentSpec,
@@ -67,6 +68,13 @@ async def chat(body: ChatRequest, x_api_key: Annotated[str | None, Header(alias=
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.post("/agent/desk-feed", tags=["Agent"], summary="M-DESK: turn-zero suggestion cards (sourced)")
+async def desk_feed(body: DeskFeedRequest, x_api_key: Annotated[str | None, Header(alias="X-API-KEY")] = None) -> dict:
+    """Compose the Proactive Desk briefing: parallel entitled tool gather → one Gemini pass →
+    4–8 cards {kind, question, hook, citations[]}. Data cards without citations are dropped."""
+    return await build_desk_feed(body, x_api_key)
 
 
 @app.post("/agent/compile", tags=["Agent"], summary="Natural-language → reusable AgentSpec")

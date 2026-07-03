@@ -560,6 +560,32 @@ select.input { appearance: none; }
   border-radius: 999px; cursor: pointer; font-size: 13px; font-family: inherit; }
 .chip:hover { border-color: var(--ink); }
 
+/* 오늘의 데스크 (M-DESK) — turn-zero suggestion cards in the empty chat */
+.deskfeed { margin-top: 20px; text-align: left; }
+.df-label { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600;
+  letter-spacing: .06em; color: var(--muted); text-transform: uppercase; margin-bottom: 10px; }
+.df-refresh { margin-left: auto; border: 1px solid var(--line-2); background: var(--panel); color: var(--muted);
+  border-radius: 7px; width: 24px; height: 24px; cursor: pointer; font-family: inherit; }
+.df-refresh:hover { color: var(--text); border-color: var(--ink); }
+.df-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.df-card { display: flex; flex-direction: column; gap: 7px; text-align: left; background: var(--panel);
+  border: 1px solid var(--line-2); border-radius: 11px; padding: 12px 13px; cursor: pointer;
+  font-family: inherit; box-shadow: var(--shadow-card); min-width: 0; }
+button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop); }
+.df-ic { margin-right: 6px; }
+.df-hook { font-size: 12.5px; color: var(--text-2); line-height: 1.45; }
+.df-q { font-size: 13px; color: var(--text); font-weight: 600; }
+.df-q .df-arrow { color: var(--accent); }
+.df-foot { display: flex; align-items: center; gap: 5px; font-size: 9.5px; color: var(--muted);
+  border-top: 1px solid var(--line-3); padding-top: 7px; margin-top: auto; }
+.df-nudge { cursor: default; }
+.df-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.df-skel { height: 92px; background: linear-gradient(90deg, var(--panel) 25%, var(--panel-2) 50%, var(--panel) 75%);
+  background-size: 200% 100%; animation: df-pulse 1.2s ease-in-out infinite; border-style: dashed; }
+@keyframes df-pulse { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .df-skel { animation: none; } }
+@media (max-width: 700px) { .df-grid { grid-template-columns: 1fr; } }
+
 /* Prompt waterfall: example questions rise in a seamless loop; hover pauses (key UX). */
 .pwf { position: relative; width: 100%; max-width: 560px; height: 300px; overflow: hidden;
   margin: 20px auto 0; text-align: left;

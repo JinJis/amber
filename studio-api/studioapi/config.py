@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     agent_engine_url: str = "http://127.0.0.1:8003"      # AGENT_ENGINE_URL
     database_url: str = "sqlite:///./studio.db"          # DATABASE_URL
     http_timeout_seconds: float = 120.0
+    # M-DESK: desk-feed cache TTL — within it GET /desk-feed serves the stored payload without an
+    # agent-engine call. Invalidated early on any watchlist change.
+    desk_feed_ttl_seconds: int = 2700                    # DESK_FEED_TTL_SECONDS (45min)
     # Chat-first feature flag (FLAG-1): the 알림봇 surface. Default OFF — the alert scheduler does not
     # start unless this is on (shares the FEATURE_ALERTS env with the web rail so both flip together).
     feature_alerts: bool = False                         # FEATURE_ALERTS

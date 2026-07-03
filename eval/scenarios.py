@@ -860,4 +860,29 @@ SCENARIOS = [
         "checks": {"expect_connector": "datasets_store__backtest", "expect_status": 200,
                    "expect_refused": False, "judge": True},
     },
+    {
+        # M-DESK (DK-4): the turn-zero desk feed for a user WITH a watchlist — grounded, cited,
+        # zero advice/forecast phrasing. Runs GET /desk-feed (kind: desk_feed, no chat turn).
+        "name": "M-DESK: 관심그룹 데스크 피드 → 근거·무조언",
+        "kind": "desk_feed",
+        "agent": {"name": "-", "data_sources": []},  # unused for desk_feed scenarios
+        "setup_watchlist": {"name": "반도체-eval", "items": [
+            {"market": "US", "ticker": "NVDA", "name": "NVIDIA"},
+            {"market": "KR", "ticker": "005930.KS", "name": "삼성전자"},
+        ]},
+        "criteria": ("각 카드의 hook은 인용된 소스의 사실만 담고(수치 창작 금지), question은 우리 도구로 "
+                     "답할 수 있는 구체적 질문이어야 함. '기회'·'매수/매도'·'전망' 등 조언·예측 표현은 0건. "
+                     "관심그룹(NVDA·삼성전자)과 관련된 카드가 존재해야 함."),
+        "checks": {"expect_min_cards": 2, "cards_all_cited": True, "expect_status": 200, "judge": True},
+    },
+    {
+        # M-DESK (DK-4): a user WITHOUT watchlists gets a nudge-led feed — helpful, not pushy.
+        "name": "M-DESK: 관심그룹 없는 유저 → 넛지 피드",
+        "kind": "desk_feed",
+        "agent": {"name": "-", "data_sources": []},
+        "criteria": ("피드가 관심그룹 등록 유도(watchlist_nudge)로 시작하고, 데이터 카드는 시장 전반(지수 등) "
+                     "내용이며 모두 출처를 인용. 압박하지 않는 도움 톤, 조언·예측 표현 0건."),
+        "checks": {"expect_card_kind": "watchlist_nudge", "cards_all_cited": True,
+                   "expect_status": 200, "judge": True},
+    },
 ]

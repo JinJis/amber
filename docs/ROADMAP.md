@@ -115,7 +115,7 @@ Gaps that block the killer feature (verified in code, 2026-07-03):
 | **M0** | Deep History Data Plane | max-history prices + VIX + regime/episode store + analytics engine + `/history/*` API through the gateway | — | ⬜ planned |
 | **M1** | History Lab in Chat | agent answers "지금 낙폭 닷컴버블이랑 비교해줘" with analogue + base-rate artifacts, guardrail framing, new chart panes | M0 | ⬜ planned |
 | **M2** | History Lab Surface | dedicated 히스토리 랩 view: century ribbon, THEN\|NOW split, day scrubber, era news + point-in-time macro | M1 | ⬜ planned |
-| **M-DESK** | Proactive Desk (턴 제로) | the empty chat becomes a live, sourced briefing: what to ask today — news/filings/calendar/price-move suggestion cards, watchlist nudge & pulse | basic: FLAG-1 · history hooks: M0 | ⬜ planned |
+| **M-DESK** | Proactive Desk (턴 제로) | the empty chat becomes a live, sourced briefing: what to ask today — news/filings/calendar/price-move suggestion cards, watchlist nudge & pulse | basic: FLAG-1 · history hooks: M0 | ✅ basic done (DK-1..4) · DK-3b after M0 |
 | **M-QUANT** | Analysis→Artifact engine | declarative, deterministic multi-series computation (`/compute/series`) + numeric-integrity verify + scatter/distribution artifacts — the general "여러 데이터 → 통계 분석 → 차트/표" pipeline | — (M0 shares the analytics module) | ⬜ planned |
 | **M3** | Earnings Command Center | earnings season in chat: calendar/surprise artifacts, transcript archive + QoQ tone diff | — (parallel to M2) | ⬜ planned |
 | **M4** | Filing Intelligence | 10-K risk-factor YoY redline, 8-K/주요사항 event timeline | — | ⬜ planned |
@@ -375,7 +375,7 @@ deep-links; tapping a card composes an editable chat turn. Suggestions are descr
   마진 분석 이어가기").
 - `history_tour` — when M1 lands: one analogue/base-rate teaser for the user's market.
 
-### DK-1 · Desk feed generation (agent-engine) — ⬜
+### DK-1 · Desk feed generation (agent-engine) — ✅ done
 - **What**: new non-chat endpoint `POST /agent/desk-feed` in agent-engine: input = user
   context (watchlist groups+tickers, market prefs, last-visit timestamp, recent conversation
   titles); flow = **parallel tool gather** through the gateway (price snapshots, filings
@@ -389,7 +389,7 @@ deep-links; tapping a card composes an editable chat turn. Suggestions are descr
   for the underlying tool calls; unit tests with mocked LLM/tools for both user states +
   citation-drop rule.
 
-### DK-2 · Desk home zero state (web) — ⬜
+### DK-2 · Desk home zero state (web) — ✅ done
 - **What**: the empty-conversation state of 탐색 becomes 데스크 홈: greeting (time-of-day,
   user market), card grid (kind-specific mini-layouts, ProvenanceFooter on each), tap →
   composer pre-filled (editable, sends as a normal turn), hooks' deep-links open the
@@ -400,17 +400,19 @@ deep-links; tapping a card composes an editable chat turn. Suggestions are descr
   state shows the nudge with working inline quick-add (creates a real watchlist); vitest
   component tests for the three states (nudge / feed / empty-graceful).
 
-### DK-3 · Feed caching + watchlist pulse (studio-api) — ⬜
-- **What**: studio-api caches the generated feed per user (TTL 30–60min, invalidated on
-  watchlist change; regenerate in the background, serve stale-while-revalidate), records
-  `last_seen_at` for "since last visit" logic, and exposes `GET /desk-feed` to the BFF.
-  **DK-3b (after M0)**: enrich `price_move`/`this_day_history` cards with `market_history`
-  percentile context.
+### DK-3 · Feed caching + watchlist pulse (studio-api) — ✅ done (DK-3b ⬜ after M0)
+- **What**: studio-api caches the generated feed per user (TTL 45min `DESK_FEED_TTL_SECONDS`,
+  invalidated on every watchlist mutation), records `last_seen_at` for "since last visit"
+  logic, and exposes `GET /desk-feed` to the BFF. *Delivered note*: stale/missing →
+  synchronous regenerate (not background SWR — at a 45-min TTL the extra machinery wasn't
+  worth it); if the engine is down a stale copy is served, else an explicit `degraded` empty
+  feed (never a 500). **DK-3b (after M0)**: enrich `price_move`/`this_day_history` cards with
+  `market_history` percentile context.
 - **Accept**: second load within TTL serves the cache (no agent call — assert via mock);
   watchlist edit invalidates; `last_seen_at` drives `filing_new` windows; BFF route
   session-guarded like every other.
 
-### DK-4 · Quality bar + eval — ⬜
+### DK-4 · Quality bar + eval — ✅ done
 - **What**: 2 eval scenarios: (1) desk feed for a seeded watchlist — judged on
   groundedness (hooks match cited data), question quality (specific, answerable by our
   tools), and zero advice/forecast phrasing; (2) nudge state — helpful, not pushy.
@@ -605,13 +607,13 @@ Every task adds tests; keep this table updated in the same PR (Definition of Don
 | Service | Baseline (2026-07-03) | Current | Planned additions (minimum) |
 |---|---|---|---|
 | datasets | 148 | 193 (measured) | ✅ OPS-1 (+2 grouping/runner); then ≥32 HL-1/2/3, ≥12 HL-4, ≥9 HL-5, ≥22 QT-1/4, ≥7 EC-1, ≥14 FI-1/2/3, ≥8 HL-8/EC-2 |
-| agent-engine | 111 | 111 | ≥10 HL-6/7 (guardrail allow/deny, artifact builders), ≥8 DK-1 (feed states, citation-drop), ≥8 QT-2 (number audit), ≥8 EC-3, ≥6 HL-9 |
-| studio-api | 40 | 52 (measured) | ✅ FLAG-1 scheduler gate (+1); then ≥6 DK-3 (cache/invalidate/last-seen), ≥7 HL-12/14 BFF |
+| agent-engine | 111 | 119 (measured, incl. skips) | ✅ DK-1 (+5: feed states, citation-drop, degrade); then ≥10 HL-6/7, ≥8 QT-2 (number audit), ≥8 EC-3, ≥6 HL-9 |
+| studio-api | 40 | 56 (measured) | ✅ FLAG-1 scheduler gate (+1), ✅ DK-3 (+4: cache/TTL/invalidate/since/degrade); then ≥7 HL-12/14 BFF |
 | control-plane | 13 | 13 | ≥1 QT-1 (activated-connectors header forwarding); rest manifest-derived (coverage.sh guards) |
 | mcp | 9 | 9 | ≥3 HL-4/QT-1 (new tools listed, unentitled 403) |
 | rag | 20 | 20 | ≥4 HL-5 (era_news/dossier doc types), ≥2 FI-1 (section filter) |
 | web | TS build only | TS build only | UX-4 adds a vitest runner; then component tests for DK-2 (3 states), HL-7/10/11/12/13, QT-3 (scatter/distribution/계산 근거), EC-4 |
-| eval scenarios | 32 | 32 | +4 HL-6, +2 DK-4, +2 QT-2, +1 EC-3, +2 M2 flows, +1 FI |
+| eval scenarios | 32 | 34 (measured) | ✅ DK-4 (+2 desk-feed, `kind: desk_feed` runner); then +4 HL-6, +2 QT-2, +1 EC-3, +2 M2 flows, +1 FI |
 
 Eval bar: maintain ≥ current score (`eval/RUBRIC.md`); run before every push.
 

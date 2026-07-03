@@ -74,9 +74,12 @@ def _add_missing_columns() -> None:
     # F1: onboarding flag on users (default 0 = not yet onboarded)
     if "users" in names:
         ucols = {c["name"] for c in inspector.get_columns("users")}
-        if "onboarded" not in ucols:
-            with engine.begin() as conn:
+        with engine.begin() as conn:
+            if "onboarded" not in ucols:
                 conn.execute(text("ALTER TABLE users ADD COLUMN onboarded BOOLEAN DEFAULT 0"))
+            # M-DESK: last visit timestamp for the desk feed's "since last visit" windows
+            if "last_seen_at" not in ucols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN last_seen_at DATETIME"))
 
 
 def init_db() -> None:
