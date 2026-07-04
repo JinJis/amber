@@ -210,3 +210,17 @@ def test_index_alias_and_namespace_fallback():
     # market=KR + an anchor that DOES exist in the US namespace → namespace fallback serves it
     r3 = client.get("/history/episodes", params={"ticker": "^GSPC", "market": "KR", "threshold": 20})
     assert r3.status_code == 200
+
+
+# --- evidence viewer fix: external pages get the PASSIVE csp + <base> --------
+def test_sanitize_passive_csp_and_base_for_external_pages():
+    from app.store.filing_html import CSP_PASSIVE, sanitize
+
+    page = "<html><head><title>t</title></head><body><img src='/a.png'>본문</body></html>"
+    out = sanitize(page, csp=CSP_PASSIVE, base="https://news.example/articles/")
+    assert "img-src https: data:" in out and "style-src 'unsafe-inline' https:" in out
+    assert '<base href="https://news.example/articles/">' in out
+    assert "script-src" not in out                     # scripts stay dead (no allowance at all)
+    # filings keep the strict default (self-contained; zero egress)
+    strict = sanitize(page)
+    assert "img-src data:" in strict and "<base" not in strict

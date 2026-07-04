@@ -193,6 +193,10 @@ export function FilingViewer({ c }: { c: Citation }) {
   const onLoad = () => {
     const doc = frameRef.current?.contentDocument;
     if (!doc) return;
+    // a script-rendered site arrives as an effectively EMPTY shell after sanitizing (scripts are
+    // stripped) — a gray iframe helps nobody; degrade to the quote + external link instead.
+    const visible = (doc.body?.innerText || "").replace(/\s+/g, " ").trim();
+    if (visible.length < 80) { setState("none"); return; }
     try { setHit(highlight(doc, targetOf(c))); } catch { setHit(false); }
   };
 

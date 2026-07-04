@@ -35,18 +35,27 @@ _HTML_RE = re.compile(r"(?i)<html[^>]*>")
 # no client egress; inline styles + data: images still render so the filing looks right.
 _CSP = ('<meta http-equiv="Content-Security-Policy" '
         "content=\"default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:\">")
+# PASSIVE policy for EXTERNAL source pages (news/macro/BLS …): still NO scripts, NO XHR/connect,
+# NO frames — nothing executes — but stylesheets/images/fonts may load over https so the real
+# page renders instead of a gray, unstyled shell. Filings keep the strict _CSP (self-contained).
+CSP_PASSIVE = ('<meta http-equiv="Content-Security-Policy" '
+               "content=\"default-src 'none'; style-src 'unsafe-inline' https:; "
+               "img-src https: data:; font-src https: data:; media-src https:\">")
 
 
-def sanitize(markup: str) -> str:
-    """Strip active/egress content but keep the document (and its inline-XBRL tags) intact."""
+def sanitize(markup: str, csp: str = _CSP, base: str | None = None) -> str:
+    """Strip active/egress content but keep the document (and its inline-XBRL tags) intact.
+    ``base``: inject a <base href> so an external page's relative asset URLs resolve against its
+    own origin inside srcdoc (original <base> tags are always stripped first)."""
     h = _SCRIPT_RE.sub("", markup)
     h = _BASE_RE.sub("", h)
+    inject = csp + (f'<base href="{base}">' if base else "")
     if _HEAD_RE.search(h):
-        h = _HEAD_RE.sub(lambda m: m.group(0) + _CSP, h, count=1)
+        h = _HEAD_RE.sub(lambda m: m.group(0) + inject, h, count=1)
     elif _HTML_RE.search(h):
-        h = _HTML_RE.sub(lambda m: m.group(0) + "<head>" + _CSP + "</head>", h, count=1)
+        h = _HTML_RE.sub(lambda m: m.group(0) + "<head>" + inject + "</head>", h, count=1)
     else:
-        h = "<head>" + _CSP + "</head>" + h
+        h = "<head>" + inject + "</head>" + h
     return h
 
 
