@@ -38,10 +38,31 @@ def _freshness(last_bar: date | None) -> str:
     return "fresh" if age <= 7 else ("aging" if age <= 30 else "stale")
 
 
+# Index-name → Yahoo-global symbol normalization (data routing, like symbols.normalize_ticker —
+# NOT answer logic). The planner naturally says "S&P500"/"코스피"; the bars live under the anchor
+# symbols in the US namespace (HL-1).
+_INDEX_ALIASES = {
+    "S&P500": "^GSPC", "S&P 500": "^GSPC", "SNP500": "^GSPC", "SPX": "^GSPC", "GSPC": "^GSPC",
+    "NASDAQ": "^IXIC", "나스닥": "^IXIC", "IXIC": "^IXIC",
+    "DOW": "^DJI", "다우": "^DJI", "DJI": "^DJI",
+    "KOSPI": "^KS11", "코스피": "^KS11", "KS11": "^KS11",
+    "KOSDAQ": "^KQ11", "코스닥": "^KQ11", "KQ11": "^KQ11",
+    "VIX": "^VIX", "NIKKEI": "^N225", "닛케이": "^N225", "항셍": "^HSI", "HSI": "^HSI",
+}
+
+
+def _resolve_ticker(ticker: str) -> str:
+    t = (ticker or "").strip()
+    return _INDEX_ALIASES.get(t.upper(), _INDEX_ALIASES.get(t, t))
+
+
 def _bars_or_404(market: str, ticker: str) -> list[tuple[date, float]]:
-    bars = H.load_closes(market, ticker)
+    t = _resolve_ticker(ticker)
+    bars = H.load_closes(market, t)
+    if not bars and market != "US":
+        bars = H.load_closes("US", t)  # anchors (^KS11 …) live in the US namespace (HL-1)
     if not bars:
-        raise HTTPException(404, f"No ingested price bars for {market}:{ticker} — "
+        raise HTTPException(404, f"No ingested price bars for {market}:{t} — "
                                  "run the prices pipeline first (gaps are drawn, never fabricated).")
     return bars
 
@@ -59,6 +80,7 @@ def _envelope(bars: list[tuple[date, float]], method: str, params: dict, data: d
 @router.get("/drawdowns", dependencies=[ApiKeyDep],
             summary="낙폭(underwater) 시리즈 — 고점 대비 하락률 추이 + 현재 낙폭 (과거 기록)")
 async def drawdowns(ticker: str, market: MarketParam = Market.US) -> dict:
+    ticker = _resolve_ticker(ticker)  # "S&P500"/"코스피" → anchor symbol (envelope shows the resolved one)
     bars = await asyncio.to_thread(_bars_or_404, market.value, ticker)
     try:
         uw = underwater(bars)
@@ -71,6 +93,7 @@ async def drawdowns(ticker: str, market: MarketParam = Market.US) -> dict:
 @router.get("/episodes", dependencies=[ApiKeyDep],
             summary="낙폭 에피소드 — 고점→저점→회복 구간 목록 (dd-v1, 과거 기록)")
 async def episodes(ticker: str, threshold: float = 20.0, market: MarketParam = Market.US) -> dict:
+    ticker = _resolve_ticker(ticker)  # "S&P500"/"코스피" → anchor symbol (envelope shows the resolved one)
     bars = await asyncio.to_thread(_bars_or_404, market.value, ticker)
     # stored rows when the sweep has run; else derive live from bars (same algorithm, same result)
     stored = await asyncio.to_thread(H.list_episodes, market.value, ticker, threshold)
@@ -89,6 +112,7 @@ async def episodes(ticker: str, threshold: float = 20.0, market: MarketParam = M
             summary="변동성 컨텍스트 — 실현변동성·자체 히스토리 퍼센타일 (과거 기록)")
 async def vol_context(ticker: str, market: MarketParam = Market.US, is_level: bool = False) -> dict:
     """``is_level=true`` for a volatility LEVEL index (^VIX): adds the level's own percentile."""
+    ticker = _resolve_ticker(ticker)  # "S&P500"/"코스피" → anchor symbol (envelope shows the resolved one)
     bars = await asyncio.to_thread(_bars_or_404, market.value, ticker)
     ctx = calc_vol_context(bars, is_level=is_level)
     return _envelope(bars, ctx["method"], {"ticker": ticker.upper(), "is_level": is_level},
@@ -114,6 +138,7 @@ async def base_rates(ticker: str, event: str, market: MarketParam = Market.US,
             assert hz and all(h > 0 for h in hz)
         except (ValueError, AssertionError) as exc:
             raise HTTPException(422, "horizons must be positive comma-separated integers") from exc
+    ticker = _resolve_ticker(ticker)  # "S&P500"/"코스피" → anchor symbol (envelope shows the resolved one)
     bars = await asyncio.to_thread(_bars_or_404, market.value, ticker)
     try:
         r = calc_base_rates(bars, ev, horizons=hz, min_gap_days=min_gap_days)
@@ -129,6 +154,7 @@ async def base_rates(ticker: str, event: str, market: MarketParam = Market.US,
             summary="유사 국면 검색 — 최근 구간과 가장 닮은 과거 구간 top-k (과거 기록)")
 async def analogue_search(ticker: str, market: MarketParam = Market.US,
                           window: int = 120, k: int = 5) -> dict:
+    ticker = _resolve_ticker(ticker)  # "S&P500"/"코스피" → anchor symbol (envelope shows the resolved one)
     bars = await asyncio.to_thread(_bars_or_404, market.value, ticker)
     r = calc_analogues(bars, {ticker.upper(): bars}, window=window, k=k)
     if r.get("error") == "insufficient_query_history":
@@ -157,6 +183,7 @@ async def regime_compare(ticker: str, slug: str, market: MarketParam = Market.US
     regime = await asyncio.to_thread(H.get_regime, slug)
     if regime is None:
         raise HTTPException(404, f"unknown regime '{slug}' — see /history/regimes")
+    ticker = _resolve_ticker(ticker)  # "S&P500"/"코스피" → anchor symbol (envelope shows the resolved one)
     bars = await asyncio.to_thread(_bars_or_404, market.value, ticker)
     # anchors live in the US namespace (HL-1: Yahoo-global symbols incl. ^KS11) — try the regime's
     # own market first for flexibility, then fall back to US.

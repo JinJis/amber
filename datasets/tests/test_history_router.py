@@ -197,3 +197,16 @@ async def test_prices_sweep_includes_universe_and_recomputes(monkeypatch):
     calls["tickers"] = None
     await _run_prices("KR", ["005930"])                         # KR sweep: no anchors appended
     assert calls["tickers"] == ["005930"]
+
+
+def test_index_alias_and_namespace_fallback():
+    """M1 fix: the planner says 'S&P500'/'코스피' (or market=KR for an anchor) — the router
+    normalizes to the anchor symbol and falls back to the US namespace where anchors live."""
+    r = client.get("/history/drawdowns", params={"ticker": "S&P500", "market": "US"})
+    assert r.status_code == 200 and r.json()["params"]["ticker"] == "^GSPC"
+    r2 = client.get("/history/drawdowns", params={"ticker": "코스피", "market": "KR"})
+    # ^KS11 isn't seeded in this suite — but the alias must resolve before the 404 message
+    assert r2.status_code == 404 and "^KS11" in r2.json()["detail"]
+    # market=KR + an anchor that DOES exist in the US namespace → namespace fallback serves it
+    r3 = client.get("/history/episodes", params={"ticker": "^GSPC", "market": "KR", "threshold": 20})
+    assert r3.status_code == 200
