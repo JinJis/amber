@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import DateTime, Float, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.store.db import Base
@@ -144,4 +144,57 @@ class Company(Base):
     sector: Mapped[str | None] = mapped_column(String(128), nullable=True)
     exchange: Mapped[str | None] = mapped_column(String(32), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class DrawdownEpisode(Base):
+    """A DERIVED peak→trough→recovery episode for an anchor series (History Lab, HL-2). Recomputed
+    idempotently by the history pipeline from PriceBar closes via the ``dd-v1`` algorithm; not
+    hand-entered. ``depth_pct`` is negative. ``is_open`` = not yet recovered by the last bar."""
+
+    __tablename__ = "drawdown_episodes"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    market: Mapped[str] = mapped_column(String(6), index=True)   # US | KR | GLOBAL
+    ticker: Mapped[str] = mapped_column(String(20), index=True)  # anchor symbol, e.g. ^GSPC
+    peak_date: Mapped[date] = mapped_column(index=True)
+    peak_close: Mapped[float] = mapped_column(Float)
+    trough_date: Mapped[date] = mapped_column()
+    trough_close: Mapped[float] = mapped_column(Float)
+    depth_pct: Mapped[float] = mapped_column(Float)              # (trough/peak − 1)*100, negative
+    decline_days: Mapped[int] = mapped_column(Integer)
+    recovery_date: Mapped[date | None] = mapped_column(nullable=True)
+    recovery_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_open: Mapped[bool] = mapped_column(Boolean, default=False)
+    threshold_pct: Mapped[float] = mapped_column(Float)          # detection threshold (10.0 | 20.0)
+    method_version: Mapped[str] = mapped_column(String(16), default="dd-v1")
+    source: Mapped[str] = mapped_column(String(64))             # "derived: yahoo prices (close), dd-v1"
+    computed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("market", "ticker", "threshold_pct", "peak_date", "method_version",
+                         name="uq_drawdown_episode"),
+        Index("ix_episode_lookup", "market", "ticker", "threshold_pct"),
+    )
+
+
+class MarketRegime(Base):
+    """CURATED reference data (HL-2): a named historical regime (닷컴버블 · GFC · IMF 외환위기 …).
+    Seeded from ``analytics/regimes_seed.py`` with its own ``sources``; the narrative window is
+    curated, the exact peak/trough come from the derived episodes (cross-checked at load)."""
+
+    __tablename__ = "market_regimes"
+
+    slug: Mapped[str] = mapped_column(String(48), primary_key=True)
+    name_kr: Mapped[str] = mapped_column(String(64))
+    name_en: Mapped[str] = mapped_column(String(64))
+    market: Mapped[str] = mapped_column(String(6), index=True)   # US | KR | GLOBAL
+    anchor_ticker: Mapped[str] = mapped_column(String(20))
+    kind: Mapped[str] = mapped_column(String(16))                # bubble|crisis|bear|rate_cycle|recovery
+    start_date: Mapped[date] = mapped_column()
+    end_date: Mapped[date] = mapped_column()
+    peak_date: Mapped[date | None] = mapped_column(nullable=True)
+    trough_date: Mapped[date | None] = mapped_column(nullable=True)
+    description: Mapped[str] = mapped_column(Text)
+    sources: Mapped[str] = mapped_column(Text)                   # JSON [{title, url, publisher}]
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
