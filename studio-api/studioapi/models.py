@@ -67,6 +67,8 @@ class ShareLink(Base):
     payload: Mapped[str] = mapped_column(Text)
     image_path: Mapped[str | None] = mapped_column(String(256), nullable=True)  # OG PNG (optional v1)
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    # IMP-13: shares expire (+90d default) — corrected/deleted research must not stay public forever
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

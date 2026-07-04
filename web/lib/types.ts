@@ -157,6 +157,7 @@ export type Msg = {
   citations?: Citation[];
   artifacts?: Artifact[];
   refused?: boolean;
+  audit?: { checked: number; supported: number; unsupported: string[] } | null;  // QT-2
   used?: number[];
   thinking?: Think[];
   clarify?: Clarify;

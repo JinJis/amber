@@ -84,6 +84,12 @@ def _add_missing_columns() -> None:
             # M-DESK: last visit timestamp for the desk feed's "since last visit" windows
             if "last_seen_at" not in ucols:
                 conn.execute(text(f"ALTER TABLE users ADD COLUMN last_seen_at {ts}"))
+    # IMP-13: share expiry on existing share_links tables
+    if "share_links" in names:
+        scols = {c["name"] for c in inspector.get_columns("share_links")}
+        if "expires_at" not in scols:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE share_links ADD COLUMN expires_at {ts}"))
 
 
 def init_db() -> None:

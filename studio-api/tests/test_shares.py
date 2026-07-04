@@ -86,3 +86,21 @@ def test_share_ownership_isolated(monkeypatch):
     assert client.delete(f"/shares/{tok}", headers=_hdr("sh4@u.com")).status_code == 404
     mine = client.get("/shares", headers=_hdr("sh3@u.com")).json()["shares"]
     assert any(s["token"] == tok for s in mine)
+
+
+@respx.mock
+def test_share_expiry_410(monkeypatch):
+    from datetime import datetime, timedelta
+
+    from studioapi.config import settings
+    from studioapi.db import SessionLocal
+    from studioapi.models import ShareLink
+    monkeypatch.setattr(settings, "control_plane_url", "http://cp.test")
+    _cp()
+    tok = client.post("/shares", headers=_hdr("sh5@u.com"), json={
+        "kind": "artifact", "title": "t", "payload": {}}).json()["token"]
+    with SessionLocal() as db:  # age it past the TTL
+        db.get(ShareLink, tok).expires_at = datetime.utcnow() - timedelta(days=1)
+        db.commit()
+    r = client.get(f"/shares/{tok}", headers={"X-Service-Token": SVC})
+    assert r.status_code == 410 and "만료" in r.json()["detail"]

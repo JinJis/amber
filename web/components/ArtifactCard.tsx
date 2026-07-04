@@ -143,8 +143,8 @@ function NarrativeArtifact(
 
 // currency for a ticker — KR 6-digit codes are KRW, else USD.
 export function ArtifactCard(
-  { a, onPin, onRemove, onRefresh, onEvidence, onAnnotate, hideTitle, bare }:
-  { a: Artifact; onPin?: (spec: Artifact) => void; onRemove?: () => void; onRefresh?: () => Promise<void> | void;
+  { a, onPin, onShare, onRemove, onRefresh, onEvidence, onAnnotate, hideTitle, bare }:
+  { a: Artifact; onPin?: (spec: Artifact) => void; onShare?: (spec: Artifact) => void; onRemove?: () => void; onRefresh?: () => Promise<void> | void;
     onEvidence?: (c: Citation) => void;
     // PH-VIZ-5: persist the user's drawings (provided for already-pinned Board cards).
     onAnnotate?: (ann: ChartAnnotations | null) => void;
@@ -260,10 +260,10 @@ export function ArtifactCard(
   }
   // M1 / HL-7: History Lab artifacts — descriptive statistics of the record, labeled, never a forecast.
   if (a.kind === "base_rates" && a.base_rates) {
-    return <BaseRatesArtifact a={a} onPin={onPin} onRemove={onRemove} hideTitle={hideTitle} bare={bare} />;
+    return <BaseRatesArtifact a={a} onPin={onPin} onShare={onShare} onRemove={onRemove} hideTitle={hideTitle} bare={bare} />;
   }
   if (a.kind === "analogue" && a.analogue) {
-    return <AnalogueArtifact a={a} onPin={onPin} onRemove={onRemove} hideTitle={hideTitle} bare={bare} />;
+    return <AnalogueArtifact a={a} onPin={onPin} onShare={onShare} onRemove={onRemove} hideTitle={hideTitle} bare={bare} />;
   }
   // a KPI / table artifact carries a matrix instead of time series — render that shape.
   if ((a.kind === "kpi" || a.kind === "table" || (a.series?.length ?? 0) === 0) && a.table?.length) {
@@ -323,6 +323,9 @@ export function ArtifactCard(
             onClick={async () => { setBusy(true); try { await onRefresh(); } finally { setBusy(false); } }}>
             {busy ? "…" : "↻ 새로고침"}
           </button>
+        )}
+        {onShare && (
+          <button type="button" className="artifact-toggle" onClick={() => onShare(a)}>↗ 공유</button>
         )}
         {onPin && (
           <button type="button" className="artifact-toggle" disabled={pinned}

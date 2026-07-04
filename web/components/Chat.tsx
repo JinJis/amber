@@ -5,6 +5,7 @@ import AgentBuilder, { Agent, Category } from "./AgentBuilder";
 import BoardCanvas from "./BoardCanvas";
 import BotHome from "./BotHome";
 import DeskHome from "./DeskHome";
+import { ShareSheet } from "./ShareSheet";
 import Onboarding from "./Onboarding";
 import PinPicker from "./PinPicker";
 import PromptLibrary from "./PromptLibrary";
@@ -128,12 +129,13 @@ function evidenceOf(m: Msg): Citation[] {
 // sourced evidence land here in real time (not stacked below the prose). Clicking any past
 // answer re-focuses the panel on that turn's context (`msg` = the focused message).
 function ContextPanel(
-  { msg, streaming, onEvidence, onPinArtifact, onPinCitation, onResizeStart }:
+  { msg, streaming, onEvidence, onPinArtifact, onPinCitation, onShareArtifact, onResizeStart }:
   {
     msg: Msg | null; streaming: boolean;
     onEvidence: (c: Citation) => void;
     // undefined when the 대시보드 feature is off → the cards hide the ＋대시보드 pin button.
     onPinArtifact?: (a: Artifact) => void;
+    onShareArtifact?: (a: Artifact) => void;
     onPinCitation?: (c: Citation) => void;
     onResizeStart: (e: ReactMouseEvent) => void;
   },
@@ -169,7 +171,7 @@ function ContextPanel(
             <div className="ctx-section">
               <div className="ctx-label">차트·표 {arts.length}</div>
               <div className="artifacts">
-                {arts.map((a, j) => <ArtifactCard key={`a${j}`} a={a} onPin={onPinArtifact} onEvidence={onEvidence} />)}
+                {arts.map((a, j) => <ArtifactCard key={`a${j}`} a={a} onPin={onPinArtifact} onShare={onShareArtifact} onEvidence={onEvidence} />)}
               </div>
             </div>
           )}
@@ -429,6 +431,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
       // done: guardrail flag + the evidence set (which [n] actually backed the answer)
       else if (ev.type === "done") {
         if (ev.refused) a.refused = true;
+        if (ev.audit) a.audit = ev.audit;   // QT-2 — gates share-card minting
         if (Array.isArray(ev.used)) a.used = ev.used;
         // PH-PROV3d: the done list is authoritative — its citations carry the evidence
         // image re-anchored on the figure the answer actually cited. Replace the streamed set.
@@ -555,12 +558,16 @@ export default function Chat({ name, features }: { name: string; features: Featu
   }
   const panelIdx = focusIdx != null && messages[focusIdx]?.role === "assistant" ? focusIdx : lastAssistantIdx;
   const panelMsg = panelIdx >= 0 ? messages[panelIdx] : null;
+  const [shareArt, setShareArt] = useState<Artifact | null>(null);  // SH-2 share sheet
   const panelStreaming = busy && panelIdx === messages.length - 1;
 
   return (
     <FeaturesProvider value={features}>
     {onboarded === false && (
       <Onboarding features={features} onDone={() => { setOnboarded(true); setView(features.dashboard ? "dashboard" : "explore"); loadHandles(); }} />
+    )}
+    {shareArt && (
+      <ShareSheet a={shareArt} audit={panelMsg?.audit ?? null} onClose={() => setShareArt(null)} />
     )}
     <div className={`shell ${view === "explore" ? "with-ctx" : "no-right"}`}
       style={view === "explore" ? { gridTemplateColumns: `210px minmax(0,1fr) ${ctxWidth}px` } : undefined}>
@@ -771,6 +778,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
           streaming={panelStreaming}
           onEvidence={setViewer}
           onPinArtifact={features.dashboard ? pinArtifact : undefined}
+          onShareArtifact={(a) => setShareArt(a)}
           onPinCitation={features.dashboard ? pinCitation : undefined}
           onResizeStart={startCtxResize}
         />

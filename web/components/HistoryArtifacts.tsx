@@ -11,9 +11,9 @@ import { useState } from "react";
 import type { AnalogueData, Artifact, BaseRatesData } from "@/lib/types";
 import { FreshnessDot, HistoricalLabel } from "./ui";
 
-function Shell({ a, children, bare, hideTitle, onPin, onRemove }: {
+function Shell({ a, children, bare, hideTitle, onPin, onShare, onRemove }: {
   a: Artifact; children: React.ReactNode; bare?: boolean; hideTitle?: boolean;
-  onPin?: (spec: Artifact) => void; onRemove?: () => void;
+  onPin?: (spec: Artifact) => void; onShare?: (spec: Artifact) => void; onRemove?: () => void;
 }) {
   const [pinned, setPinned] = useState(false);
   const body = (
@@ -39,6 +39,7 @@ function Shell({ a, children, bare, hideTitle, onPin, onRemove }: {
           <button type="button" className="artifact-toggle" disabled={pinned}
             onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 대시보드" : "＋ 대시보드"}</button>
         )}
+        {onShare && <button type="button" className="artifact-toggle" onClick={() => onShare(a)}>↗ 공유</button>}
         {onRemove && <button type="button" className="artifact-toggle" onClick={onRemove}>제거</button>}
       </div>
       {body}
@@ -51,7 +52,7 @@ const MAX_CHIPS = 12;
 
 export function BaseRatesArtifact({ a, ...shell }: {
   a: Artifact; bare?: boolean; hideTitle?: boolean;
-  onPin?: (spec: Artifact) => void; onRemove?: () => void;
+  onPin?: (spec: Artifact) => void; onShare?: (spec: Artifact) => void; onRemove?: () => void;
 }) {
   const d = a.base_rates as BaseRatesData;
   const [showAll, setShowAll] = useState(false);
@@ -111,7 +112,7 @@ const GRAYS = ["#8A8A90", "#9B9BA1", "#ACACB2", "#BDBDC3", "#CECED4"];
 
 export function AnalogueArtifact({ a, ...shell }: {
   a: Artifact; bare?: boolean; hideTitle?: boolean;
-  onPin?: (spec: Artifact) => void; onRemove?: () => void;
+  onPin?: (spec: Artifact) => void; onShare?: (spec: Artifact) => void; onRemove?: () => void;
 }) {
   const d = a.analogue as AnalogueData;
   const [hover, setHover] = useState<number | null>(null);

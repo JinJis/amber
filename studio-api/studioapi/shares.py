@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import secrets
+from datetime import datetime, timedelta
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -71,7 +72,8 @@ async def create_share(body: ShareIn, user: User = Depends(current_user)) -> dic
             raise HTTPException(429, "공유 한도에 도달했습니다 — 기존 공유를 해제한 뒤 다시 시도하세요.")
         s = ShareLink(token=secrets.token_urlsafe(24), user_email=user.email, kind=body.kind,
                       title=body.title, payload=json.dumps(body.payload, ensure_ascii=False),
-                      image_path=body.image_path)
+                      image_path=body.image_path,
+                      expires_at=datetime.utcnow() + timedelta(days=settings.share_ttl_days))
         db.add(s)
         db.commit()
         return _out(s)
@@ -105,6 +107,8 @@ async def read_share(token: str) -> dict:
         raise HTTPException(404, "share not found")
     if s.revoked:
         raise HTTPException(410, "이 공유는 게시자가 해제했습니다.")
+    if s.expires_at and s.expires_at < datetime.utcnow():
+        raise HTTPException(410, "이 공유는 만료되었습니다.")
     return {"token": s.token, "kind": s.kind, "title": s.title,
             "payload": json.loads(s.payload), "image_path": s.image_path,
             "created_at": s.created_at.isoformat() if s.created_at else None,
