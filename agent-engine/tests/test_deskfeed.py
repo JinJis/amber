@@ -163,3 +163,94 @@ async def test_desk_feed_gateway_down_degrades_to_state_cards(monkeypatch):
     cards = r.json()["cards"]
     assert cards and cards[0]["kind"] == "watchlist_nudge"
     assert r.json()["used_tools"] == []
+
+
+# --- M1 / HL-7: History Lab artifact builders ------------------------------
+# (in this file to keep test_agent.py's already-large module focused; these need no fixtures
+# beyond the builders themselves)
+
+def _hist_env(data: dict, params: dict | None = None) -> dict:
+    return {"source": "derived: ingested prices (close) via market_history", "method": "x",
+            "params": params or {"ticker": "^GSPC"}, "as_of": "2026-07-02", "freshness": "fresh",
+            "cadence": "daily", "label": "과거 기록 · 전망 아님",
+            "history_span": {"from": "1927-12-30", "to": "2026-07-02"}, "data": data}
+
+
+def test_artifact_base_rates_carries_label_and_shape():
+    from agentengine.artifacts import _build_artifacts
+
+    env = _hist_env({
+        "n": 60, "raw_n": 87,
+        "event_dates": ["1929-10-28", "1987-10-19", "2020-03-16"],
+        "horizons": [{"h": 20, "n": 60, "median": 2.81, "p25": -3.2, "p75": 8.9,
+                      "min": -22.0, "max": 24.0, "pos_share": 60.0}],
+        "histogram": {"h_ref": 20, "bins": [{"lo": -22.0, "hi": -17.4, "count": 2}]},
+    }, params={"ticker": "^GSPC", "event": {"daily_return_lte": -5.0}})
+    arts = _build_artifacts({"name": "market_history__base_rates", "source": "derived"}, {"data": env})
+    assert len(arts) == 1
+    a = arts[0]
+    assert a.kind == "base_rates" and a.label == "과거 기록 · 전망 아님"   # mandatory (invariant §2)
+    assert "일간 수익률 ≤ -5.0%" in a.title
+    assert a.base_rates["n"] == 60 and a.base_rates["raw_n"] == 87
+    assert a.base_rates["horizons"][0]["pos_share"] == 60.0
+    assert a.base_rates["event_dates"][0] == "1929-10-28"                 # enumerable events
+    assert a.ticker == "^GSPC" and a.tool == "market_history__base_rates"
+
+
+def test_artifact_analogue_paths_and_no_average():
+    from agentengine.artifacts import _build_artifacts
+
+    env = _hist_env({
+        "window": 120, "anchor": "now",
+        "current": {"label": "현재", "path": [100.0, 98.0, 95.0]},
+        "matches": [{"ticker": "^GSPC", "start_date": "2008-09-01", "end_date": "2009-02-20",
+                     "score": 0.91, "path": [100.0, 97.0, 94.0], "aftermath": [94.0, 96.0]}],
+    })
+    arts = _build_artifacts({"name": "market_history__analogues", "source": "derived"}, {"data": env})
+    a = arts[0]
+    assert a.kind == "analogue" and a.label == "과거 기록 · 전망 아님"
+    assert a.analogue["current"]["path"][0] == 100.0
+    assert a.analogue["matches"][0]["score"] == 0.91
+    assert a.analogue["matches"][0]["aftermath"] == [94.0, 96.0]          # per-match history, never averaged
+
+
+def test_artifact_regime_compare_reuses_analogue_kind():
+    from agentengine.artifacts import _build_artifacts
+
+    env = _hist_env({
+        "regime": {"slug": "gfc-2008", "name_kr": "글로벌 금융위기", "start_date": "2007-10-09",
+                   "end_date": "2009-03-09"},
+        "then": {"path": [100.0, 70.0, 43.2], "dates": [], "depth_pct": -56.78},
+        "now": {"path": [100.0, 99.0, 98.3], "dates": [], "depth_pct": -1.66, "days_since_peak": 3},
+    }, params={"ticker": "^GSPC", "slug": "gfc-2008"})
+    arts = _build_artifacts({"name": "market_history__regime_compare", "source": "derived"}, {"data": env})
+    a = arts[0]
+    assert a.kind == "analogue" and a.label == "과거 기록 · 전망 아님"
+    assert a.analogue["matches"][0]["ticker"] == "글로벌 금융위기"
+    assert a.table and a.table[1][0] == "최대 낙폭" and "-56.78%" in a.table[1][1]
+
+
+def test_artifact_episodes_and_vol_context_tables():
+    from agentengine.artifacts import _build_artifacts
+
+    eps = _hist_env({"threshold_pct": 20.0, "n": 1, "episodes": [
+        {"peak_date": "2007-10-09", "trough_date": "2009-03-09", "depth_pct": -56.78,
+         "decline_days": 517, "recovery_date": "2013-03-28", "recovery_days": 1480, "is_open": False}]})
+    a = _build_artifacts({"name": "market_history__episodes", "source": "d"}, {"data": eps})[0]
+    assert a.kind == "table" and a.label and a.table[1][2] == "-56.78%"
+
+    vol = _hist_env({"windows": {"20": {"realized_vol_pct": 14.2, "percentile": 62.5}},
+                     "level": {"current": 16.4, "percentile": 41.0}})
+    v = _build_artifacts({"name": "market_history__vol_context", "source": "d"}, {"data": vol})[0]
+    assert v.kind == "table" and v.label and v.table[1][1] == "14.2%"
+    assert v.table[-1][0] == "레벨(현재)"
+
+
+def test_artifact_history_handlers_guard_malformed():
+    from agentengine.artifacts import _build_artifacts
+
+    bad = _hist_env({"nothing": True})
+    for tool in ("market_history__base_rates", "market_history__analogues",
+                 "market_history__regime_compare", "market_history__drawdowns",
+                 "market_history__episodes", "market_history__vol_context", "market_history__regimes"):
+        assert _build_artifacts({"name": tool, "source": "d"}, {"data": bad}) == []

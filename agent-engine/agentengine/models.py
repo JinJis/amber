@@ -269,6 +269,18 @@ class Artifact(BaseModel):
     # pin→alert flow: a pinned chart/table can carry a notification bot iff cadence != one_shot.
     cadence: str | None = None   # intraday|daily|event|scheduled|streaming|one_shot
     category: str | None = None  # market|fundamentals|valuation|filings|gurus|macro|news|…
+    # --- History Lab (M1 / HL-7) ------------------------------------------
+    # The descriptive-statistics badge ("과거 기록 · 전망 아님") from the market_history envelope.
+    # MANDATORY on kind in {base_rates, analogue}: the web renderer shows it unconditionally
+    # (ROADMAP §2 invariant — base rates are history, not forecasts).
+    label: str | None = None
+    # kind=base_rates: {event: {text, spec}, n, raw_n, horizons: [{h, n, median, p25, p75, min,
+    # max, pos_share}], event_dates: [iso…], histogram: {h_ref, bins}}.
+    base_rates: dict | None = None
+    # kind=analogue: {window, anchor, current: {label, path}, matches: [{ticker, start_date,
+    # end_date, score, path, aftermath}]} — paths rebased to 100; aftermath drawn as history
+    # (dashed, right of day 0). NEVER an averaged path (that would manufacture a forecast).
+    analogue: dict | None = None
 
 
 class Step(BaseModel):

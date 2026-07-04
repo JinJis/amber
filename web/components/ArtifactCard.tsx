@@ -5,6 +5,7 @@ import { CadenceTag, FreshnessDot } from "./ui";
 import { TradeChart } from "./TradeChart";
 import { ComputationPanel } from "./ComputationPanel";
 import { demoWidget } from "./DemoWidgets";
+import { AnalogueArtifact, BaseRatesArtifact } from "./HistoryArtifacts";
 import type { Citation } from "./SourceCard";
 import type { Artifact, ArtifactCandle, ArtifactSeries, ChartAnnotations } from "../lib/types";
 import { currencyOf, fmt, fmtBig, fmtPrice, fmtVol } from "../lib/format";
@@ -256,6 +257,13 @@ export function ArtifactCard(
   // CE-4: a narrative artifact carries structured sections instead of a chart/table.
   if (a.kind === "narrative" && (a.sections?.length ?? 0) > 0) {
     return <NarrativeArtifact a={a} onPin={onPin} onRemove={onRemove} hideTitle={hideTitle} bare={bare} />;
+  }
+  // M1 / HL-7: History Lab artifacts — descriptive statistics of the record, labeled, never a forecast.
+  if (a.kind === "base_rates" && a.base_rates) {
+    return <BaseRatesArtifact a={a} onPin={onPin} onRemove={onRemove} hideTitle={hideTitle} bare={bare} />;
+  }
+  if (a.kind === "analogue" && a.analogue) {
+    return <AnalogueArtifact a={a} onPin={onPin} onRemove={onRemove} hideTitle={hideTitle} bare={bare} />;
   }
   // a KPI / table artifact carries a matrix instead of time series — render that shape.
   if ((a.kind === "kpi" || a.kind === "table" || (a.series?.length ?? 0) === 0) && a.table?.length) {

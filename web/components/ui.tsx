@@ -94,6 +94,14 @@ export function GuardrailLabel({ icon = "🛡", children }: { icon?: string; chi
   return <div className="guard">{icon} {children}</div>;
 }
 
+// ── Historical label (M1 / HL-7, UX_SPEC §6.4) ───────────────────────────────
+// The descriptive-statistics badge for History Lab artifacts. Deliberately NOT amber — it marks
+// safe-by-design content (aggregates of the historical record), not a refusal. Fixed copy,
+// non-dismissable; base_rates/analogue renderers show it unconditionally (ROADMAP §2 invariant).
+export function HistoricalLabel() {
+  return <span className="histlabel" title="과거 발생 사례의 기술 통계입니다 — 미래 수익률 예측이 아닙니다">⏳ 과거 기록 · 전망 아님</span>;
+}
+
 // ── Pixel mascot ──────────────────────────────────────────────────────────--
 export function Mascot({ size }: { size?: number }) {
   return <span className="mascot" aria-hidden style={size ? { width: size, height: size } : undefined} />;

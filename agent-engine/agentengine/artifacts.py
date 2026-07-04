@@ -660,6 +660,160 @@ def _h_technical_indicators(ctx: _Ctx) -> list[Artifact]:
     return []
 
 
+# --- History Lab (M1 / HL-7) — market_history envelope → artifacts ---------
+# market_history responses share the envelope {source, method, params, as_of, freshness, cadence,
+# label:"과거 기록 · 전망 아님", history_span, data:{…}}; ctx.data IS that envelope. Every artifact
+# built here carries the label — the web renders it unconditionally (ROADMAP §2 invariant).
+
+def _hist_env(ctx: _Ctx) -> tuple[dict, dict, str | None, str | None]:
+    """(envelope, payload, as_of, ticker) from a market_history result; payload {} if malformed."""
+    env = ctx.data
+    payload = env.get("data") if isinstance(env.get("data"), dict) else {}
+    ticker = (env.get("params") or {}).get("ticker")
+    return env, payload, env.get("as_of"), ticker
+
+
+def _event_sentence(ev: dict) -> str:
+    if "daily_return_lte" in ev:
+        return f"일간 수익률 ≤ {ev['daily_return_lte']}%"
+    if "drawdown_gte" in ev:
+        return f"고점 대비 낙폭 ≥ {abs(ev['drawdown_gte'])}%"
+    return str(ev)
+
+
+def _h_history_base_rates(ctx: _Ctx) -> list[Artifact]:
+    env, payload, as_of, tk = _hist_env(ctx)
+    if not isinstance(payload.get("horizons"), list):
+        return []  # zero events (n=0) is still a valid, honest artifact — only malformed shapes bail
+    ev = (env.get("params") or {}).get("event") or payload.get("event") or {}
+    return [Artifact(
+        kind="base_rates",
+        title=f"베이스레이트 — {tk or ''} · {_event_sentence(ev)}".strip(),
+        base_rates={
+            "event": {"text": _event_sentence(ev), "spec": ev},
+            "n": payload.get("n"), "raw_n": payload.get("raw_n"),
+            "horizons": payload.get("horizons") or [],
+            "event_dates": payload.get("event_dates") or [],
+            "histogram": payload.get("histogram") or {},
+        },
+        label=env.get("label"), source=env.get("source"), as_of=as_of,
+        freshness=env.get("freshness") or compute_freshness(as_of), ticker=tk, tool=ctx.name,
+    )]
+
+
+def _h_history_analogues(ctx: _Ctx) -> list[Artifact]:
+    env, payload, as_of, tk = _hist_env(ctx)
+    if not isinstance(payload.get("matches"), list) or not isinstance(payload.get("current"), dict):
+        return []
+    return [Artifact(
+        kind="analogue",
+        title=f"유사 구간 — {tk or ''} 최근 {payload.get('window')}거래일".strip(),
+        analogue={"window": payload.get("window"), "anchor": payload.get("anchor") or "now",
+                  "current": payload["current"], "matches": payload["matches"]},
+        label=env.get("label"), source=env.get("source"), as_of=as_of,
+        freshness=env.get("freshness") or compute_freshness(as_of), ticker=tk, tool=ctx.name,
+    )]
+
+
+def _h_history_regime_compare(ctx: _Ctx) -> list[Artifact]:
+    env, payload, as_of, tk = _hist_env(ctx)
+    then, now, regime = payload.get("then"), payload.get("now"), payload.get("regime") or {}
+    if not isinstance(then, dict) or not isinstance(now, dict):
+        return []
+    name = regime.get("name_kr") or regime.get("slug") or "과거 국면"
+    # reuse the analogue shape: THEN as the single match, NOW as the current path — one renderer.
+    return [Artifact(
+        kind="analogue",
+        title=f"그때 vs 지금 — {name} vs {tk or ''}".strip(),
+        analogue={
+            "window": len(now.get("path") or []), "anchor": "peak",
+            "current": {"label": f"지금 ({tk})", "path": now.get("path") or [],
+                        "depth_pct": now.get("depth_pct")},
+            "matches": [{"ticker": name, "start_date": regime.get("start_date"),
+                         "end_date": regime.get("end_date"), "score": None,
+                         "path": then.get("path") or [], "aftermath": [],
+                         "depth_pct": then.get("depth_pct")}],
+        },
+        table=[["", "그때 · " + name, "지금"],
+               ["최대 낙폭", f"{then.get('depth_pct')}%", f"{now.get('depth_pct')}%"],
+               ["구간", f"{regime.get('start_date')} ~ {regime.get('end_date')}",
+                f"최근 {len(now.get('path') or [])}거래일 · 고점 후 {now.get('days_since_peak')}일"]],
+        label=env.get("label"), source=env.get("source"), as_of=as_of,
+        freshness=env.get("freshness") or compute_freshness(as_of), ticker=tk, tool=ctx.name,
+    )]
+
+
+def _h_history_drawdowns(ctx: _Ctx) -> list[Artifact]:
+    env, payload, as_of, tk = _hist_env(ctx)
+    series = payload.get("series")
+    cur = payload.get("current") or {}
+    if not isinstance(series, list) or not series:
+        return []
+    pts = [ArtifactPoint(x=str(d), y=v) for d, v in series if v is not None]
+    return [Artifact(
+        kind="timeseries", chart_style="area",
+        title=f"{tk or ''} 낙폭(고점 대비) — 현재 {cur.get('dd_pct')}%".strip(),
+        series=[ArtifactSeries(label="고점 대비 낙폭 %", unit="%", points=pts)],
+        label=env.get("label"), source=env.get("source"), as_of=as_of,
+        freshness=env.get("freshness") or compute_freshness(as_of), ticker=tk, tool=ctx.name,
+    )]
+
+
+def _h_history_episodes(ctx: _Ctx) -> list[Artifact]:
+    env, payload, as_of, tk = _hist_env(ctx)
+    eps = payload.get("episodes")
+    if not isinstance(eps, list) or not eps:
+        return []
+    rows = [["고점일", "저점일", "깊이", "하락기간", "회복일", "회복기간"]]
+    for e in eps[:12]:
+        rows.append([e.get("peak_date") or "", e.get("trough_date") or "",
+                     f"{e.get('depth_pct')}%", f"{e.get('decline_days')}일",
+                     e.get("recovery_date") or ("진행 중" if e.get("is_open") else "—"),
+                     f"{e.get('recovery_days')}일" if e.get("recovery_days") is not None else "—"])
+    return [Artifact(
+        kind="table", title=f"{tk or ''} 낙폭 에피소드 (임계 {payload.get('threshold_pct')}%)".strip(),
+        table=rows, label=env.get("label"), source=env.get("source"), as_of=as_of,
+        freshness=env.get("freshness") or compute_freshness(as_of), ticker=tk, tool=ctx.name,
+    )]
+
+
+def _h_history_vol_context(ctx: _Ctx) -> list[Artifact]:
+    env, payload, as_of, tk = _hist_env(ctx)
+    windows = payload.get("windows")
+    if not isinstance(windows, dict) or not windows:
+        return []
+    rows = [["창(거래일)", "실현변동성(연율)", "자체 히스토리 퍼센타일"]]
+    for w in sorted(windows, key=lambda x: int(x)):
+        v = windows[w]
+        rv, pct = v.get("realized_vol_pct"), v.get("percentile")
+        rows.append([f"{w}일", f"{rv}%" if rv is not None else "—",
+                     f"{pct}퍼센타일" if pct is not None else "—"])
+    level = payload.get("level")
+    if isinstance(level, dict):
+        rows.append(["레벨(현재)", f"{level.get('current')}", f"{level.get('percentile')}퍼센타일"])
+    return [Artifact(
+        kind="table", title=f"{tk or ''} 변동성 컨텍스트".strip(), table=rows,
+        label=env.get("label"), source=env.get("source"), as_of=as_of,
+        freshness=env.get("freshness") or compute_freshness(as_of), ticker=tk, tool=ctx.name,
+    )]
+
+
+def _h_history_regimes(ctx: _Ctx) -> list[Artifact]:
+    env = ctx.data
+    payload = env.get("data") if isinstance(env.get("data"), dict) else {}
+    regs = payload.get("regimes")
+    if not isinstance(regs, list) or not regs:
+        return []
+    rows = [["국면", "구간", "유형", "기준 지수"]]
+    for r in regs:
+        rows.append([r.get("name_kr") or r.get("slug") or "", f"{r.get('start_date')} ~ {r.get('end_date')}",
+                     r.get("kind") or "", r.get("anchor_ticker") or ""])
+    return [Artifact(
+        kind="table", title="역사적 국면 (출처 표기 · 파생 에피소드 기반)", table=rows,
+        label=env.get("label"), source=env.get("source"), tool=ctx.name,
+    )]
+
+
 # tool-name suffix(es) → artifact handler. str.endswith accepts the tuple, so a handler covering
 # several shapes (the grouped snapshots) lists them together. Append order matches the old ladder.
 _BUILDERS: list[tuple[tuple[str, ...], object]] = [
@@ -683,6 +837,14 @@ _BUILDERS: list[tuple[tuple[str, ...], object]] = [
     (("__guru_trades",), _h_guru_trades),
     (("__guru_common",), _h_guru_common),
     (("__technical_indicators",), _h_technical_indicators),
+    # History Lab (M1 / HL-7) — market_history tools
+    (("__base_rates",), _h_history_base_rates),
+    (("__analogues",), _h_history_analogues),
+    (("__regime_compare",), _h_history_regime_compare),
+    (("__drawdowns",), _h_history_drawdowns),
+    (("__episodes",), _h_history_episodes),
+    (("__vol_context",), _h_history_vol_context),
+    (("__regimes",), _h_history_regimes),
 ]
 
 

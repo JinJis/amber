@@ -560,6 +560,30 @@ select.input { appearance: none; }
   border-radius: 999px; cursor: pointer; font-size: 13px; font-family: inherit; }
 .chip:hover { border-color: var(--ink); }
 
+/* History Lab artifacts (M1/HL-7) — base_rates + analogue + the historical label */
+.histlabel { display: inline-flex; align-items: center; gap: 4px; background: var(--panel-2);
+  border: 1px solid var(--line-2); color: var(--text-2); border-radius: 999px;
+  padding: 2px 9px; font-size: 10.5px; white-space: nowrap; }
+.br-head { padding: 8px 12px; font-size: 11px; color: var(--text-2); border-bottom: 1px solid var(--line-3); }
+.br-hist { display: flex; align-items: flex-end; gap: 2px; height: 44px; padding: 8px 12px 4px; }
+.br-bin { flex: 1; background: var(--line-2); border-radius: 2px 2px 0 0; min-height: 3px; }
+.br-bin.neg { background: #C9C9CF; }
+.br-bin.pos { background: #9FA3C4; }
+.br-dates { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 12px 10px; }
+.br-chip { font-size: 9.5px; border: 1px solid var(--line-2); border-radius: 999px; padding: 1px 7px;
+  color: var(--muted); background: var(--panel-2); }
+.br-chip.more { cursor: pointer; color: var(--accent-fg); background: var(--accent-bg); border: 1px solid transparent; }
+.ana-svg { width: 100%; height: auto; display: block; background: var(--panel-3); }
+.ana-d0 { font-family: var(--mono); font-size: 9px; fill: var(--muted); }
+.ana-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 8px 12px; font-size: 10.5px;
+  color: var(--text-2); border-top: 1px solid var(--line-3); }
+.ana-key { display: inline-flex; align-items: center; gap: 5px; cursor: default; }
+.ana-key.on { color: var(--text); }
+.ana-key.muted { color: var(--faint); }
+.ana-swatch { width: 14px; height: 2px; display: inline-block; border-radius: 1px; }
+.ana-swatch.now { background: var(--ink); height: 3px; }
+.hist-bare { display: flex; flex-direction: column; min-height: 0; }
+
 /* 오늘의 데스크 (M-DESK) — turn-zero suggestion cards in the empty chat */
 .deskfeed { margin-top: 20px; text-align: left; }
 .df-label { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600;

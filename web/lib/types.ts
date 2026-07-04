@@ -56,6 +56,33 @@ export type Computation = {
   steps?: CalcRow[];
   note?: string | null;
 };
+// --- History Lab (M1 / HL-7) ------------------------------------------------------------------
+export type BaseRateHorizon = {
+  h: number; n: number;
+  median: number | null; p25: number | null; p75: number | null;
+  min: number | null; max: number | null;
+  pos_share: number | null;  // 상승 마감 비율(과거) — a record, NEVER a probability
+};
+export type BaseRatesData = {
+  event: { text: string; spec: Record<string, number> };
+  n: number; raw_n?: number;              // clustered vs raw event counts
+  horizons: BaseRateHorizon[];
+  event_dates: string[];                  // enumerable — the trust feature
+  histogram?: { h_ref: number; bins: { lo: number; hi: number; count: number }[] };
+};
+export type AnalogueMatch = {
+  ticker: string; start_date?: string | null; end_date?: string | null;
+  score: number | null;                   // null for regime-compare (curated, not searched)
+  path: number[];                         // rebased to 100
+  aftermath?: number[];                   // what actually happened next — drawn dashed, as history
+  depth_pct?: number | null;
+};
+export type AnalogueData = {
+  window: number; anchor: string;
+  current: { label: string; path: number[]; depth_pct?: number | null };
+  matches: AnalogueMatch[];               // never averaged into one path (no manufactured forecast)
+};
+
 export type Artifact = {
   kind: string;
   chart_style?: string | null;  // "bar" for money amounts (revenue/income); else line
@@ -78,6 +105,12 @@ export type Artifact = {
   items?: FeedItem[];     // kind=feed: a vertical live news/event stream
   events?: CalEvent[];    // kind=calendar: upcoming dated events
   computation?: Computation | null;  // PH-DATA-6: how a self-computed figure was derived
+  // --- History Lab (M1 / HL-7) — descriptive statistics of the record, never forecasts -------
+  // the badge text ("과거 기록 · 전망 아님"); the renderers for base_rates/analogue show a
+  // HistoricalLabel UNCONDITIONALLY (ROADMAP §2 invariant), whether or not this rides along.
+  label?: string | null;
+  base_rates?: BaseRatesData | null;  // kind=base_rates
+  analogue?: AnalogueData | null;     // kind=analogue
   source?: string | null;
   as_of?: string | null;
   freshness?: string | null;

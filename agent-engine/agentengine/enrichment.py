@@ -33,6 +33,8 @@ _CAPABILITY_MENU = (
     "- 자산군/원자재/반도체 사이클 프록시.\n"
     "- 컨센서스 추정치·실적 캘린더(FMP, 제3자 데이터).\n"
     "- 종목 내러티브·밸류체인·뉴스 브리핑(구조화 합성).\n"
+    "- 시장 히스토리(히스토리 랩): 과거 낙폭 에피소드(닷컴버블·GFC·IMF 외환위기)·변동성 퍼센타일·"
+    "베이스레이트('하루 −5% 하락 뒤 과거 기록')·유사한 과거 구간 겹쳐 보기 — 전부 과거 기록, 전망 아님.\n"
 )
 
 # Two complementary personas, run in PARALLEL (deep model), then merged → diverse, itch-scratching,
@@ -182,6 +184,7 @@ def _fallback_followups(task: str, tickers: list[str] | None = None,
             out.append(f"{tickers[0]}와 {tickers[1]}를 핵심 지표로 비교해줘")
         out += [
             f"{tk}의 최근 공시에서 핵심 내용을 출처와 함께 보여줘",
+            f"{tk}의 현재 낙폭을 과거 약세장들과 겹쳐서 보여줘",
             f"{tk}의 매출·영업이익 추이를 차트로 보여줘",
             f"{tk}의 외국인·기관 수급 동향은 어때?",
             f"{tk}와 같은 업종 종목들과 밸류에이션을 비교해줘",
