@@ -217,6 +217,16 @@ in `web/components/ui.tsx` unless noted:
   `--line-2` border, `--text-2` text, ⏳ glyph, fixed copy **"과거 기록 · 전망 아님"**.
   Deliberately *not* amber (it marks safe-by-design content, not a refusal); sits beside
   ProvenanceFooter on every base_rates/analogue/this_day_history render. Non-dismissable.
+- **§6.6 Derivation Card** (M-DERIV, ROADMAP §12c): the trust envelope for a DERIVED figure —
+  formula line (mono) with **symbol chips** that two-way highlight their input rows; input rows
+  as `기호 · 값 · 출처(as_of)` with an `[원문↗]` evidence deep-link when the input came from a
+  filing cell; assumptions visually separated (muted — they are the USER's dials, not data);
+  numbered step pipeline (①②③) ending in the emphasized final value; a mandatory note line for
+  valuation/backtest kinds ("가정 기반 계산 · 예측·목표가 아님" / "과거 성과 · 미래 보장 아님");
+  a copy-as-text action for quoting into notes/shares. Renders in three homes: the artifact's
+  계산 근거 fold (existing), **the SourceViewer data shape as its BODY** (replacing the bare
+  snippet — the snippet becomes secondary), and the share/A4 render. Grayscale only; the final
+  value uses `--ink` weight, never color. No math-rendering dependency — mono text + chips.
 - **§6.5 Desk cards** (§3): compose Card + ProvenanceFooter + kind icon; hover raises
   `--shadow-card→pop`; entire card is one tap target with a visible `→` affordance.
 

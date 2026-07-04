@@ -616,6 +616,92 @@ tasks.
 
 ---
 
+## 12c. M-DERIV — 계산 근거 v2: Derivation Card (파생값의 공식·입력·도출 과정)
+
+**문제 (2026-07-04 분석).** 파생 계산값(PER·ROE 스냅샷, RSI/SMA, DCF, 베이스레이트, 백테스트)의
+신뢰 봉투는 "수학을 보여주는 것"인데 현재는 반쪽이다:
+- `Computation{method, formula, inputs, assumptions, steps, note}` 스키마와 `ComputationPanel`
+  (계산 근거 접이 패널)은 존재하지만 **Artifact에만** 부착되고, 정작 유저가 파생값을 검증하러
+  여는 **출처 preview(Citation의 data 카드 / SourceViewer data 셰이프)** 에는 없다 — 맨
+  snippet·추출표만 보인다.
+- 생산자 커버리지가 2곳뿐(valuation·quant_screen). `metrics_snapshot`/`comparables`(PER·PBR·ROE
+  파생), `technical_indicators`(SMA/EMA/RSI/MACD/볼린저), `market_history`(method·params·n을
+  envelope에 갖고 있으면서 Computation으로 미변환), backtest 일부가 공백.
+- `formula`가 맨 문자열이라 변수↔입력값 대응이 안 보이고, 입력값(재무 라인아이템)은 실제로
+  **원문 페이지가 있는데도** evidence 뷰어로 연결되지 않는다.
+
+**설계 원칙.** ① 파생 수치의 출처는 "공식 + 출처 있는 입력들"이다 — 입력 행 하나하나가 자기
+출처(as_of·accession)를 들고 evidence 뷰어로 열린다. ② 도출은 데이터 플레인이 계산한 그 자리에서
+`computation` 블록으로 응답에 동봉한다(에이전트가 재구성하지 않음 — 단일 진실). ③ 시각화는
+의존성 없이(모노 텍스트 공식 + 심볼 칩) 깔끔하게.
+
+### 데이터 계약 (스키마 확장 — 전부 additive)
+
+```python
+class CalcRow(BaseModel):
+    label: str; value: str
+    source: str | None          # "SEC EDGAR · FY2025 10-K"
+    symbol: str | None = None   # NEW: 공식 내 변수 기호 ("P", "EPS", "FCF₀")
+    evidence: dict | None = None  # NEW: {market, accession, concept, value} → /evidence 딥링크
+                                  # (입력값은 원문 페이지가 있다 — 셀 하이라이트로 연다)
+
+class Computation(BaseModel):
+    method: str; formula: str | None      # 기호로 쓴 공식: "PER = P ÷ EPS"
+    inputs / assumptions / steps: list[CalcRow]
+    note: str | None
+    # steps의 마지막 행 = 최종값 (렌더러가 강조)
+
+class Citation(BaseModel):
+    ...
+    computation: Computation | None = None   # NEW: 파생값 인용의 도출 과정
+```
+
+### 렌더 스펙 — Derivation Card (UX_SPEC §6.6에 시각 상세)
+
+```
+🧮 계산 근거 · 2단계 FCF 할인 (DCF)                            [접기 ▾]
+┌────────────────────────────────────────────────────────┐
+│  V = Σ PV(FCFₜ) + PV(터미널) − 순부채                    │  ← 공식(모노), 기호는 칩
+│  ────────────────────────────────────────────────────  │
+│  FCF₀   $108.8B   SEC EDGAR · FY2025 10-K      [원문↗]  │  ← 입력: 기호·값·출처·evidence
+│  g      8%        사용자 가정                            │  ← 가정: 회색 구분
+│  r      10%       사용자 가정                            │
+│  ① 1~5년 PV 합    $412.3B                               │  ← 단계: 번호 파이프라인
+│  ② 터미널 PV      $2.1T                                  │
+│  ③ 주당 내재가치   $111.30                    ◀ 최종값    │
+│  가정 기반 계산 · 예측·목표가 아님                        │  ← note (밸류에이션류 필수)
+└────────────────────────────────────────────────────────┘
+```
+공식 문자열의 기호가 inputs/assumptions의 `symbol`과 매칭되면 칩으로 렌더, hover 시 해당 행
+하이라이트(역방향도). 입력 행의 `evidence`는 기존 `/evidence` 셀 하이라이트 뷰어로 연다.
+복사 버튼: 전체 도출 과정을 텍스트로(공유·노트 인용용).
+
+### 태스크
+
+- **DRV-1 · 생산자 — 데이터 플레인 computation 동봉 (M)**: `metrics_snapshot`·`comparables`
+  (지표별 공식 + XBRL 라인아이템 입력, 입력마다 accession evidence), `technical_indicators`
+  (지표별 공식+윈도우 파라미터), `market_history`(§4 method·params·n → Computation 변환 —
+  dd-v1/base-rates/analogue 각각), backtest 누락분 보강. 응답 스키마에 `computation` 필드
+  (additive). Accept: 각 엔드포인트 응답에 computation 존재 + 골든 테스트; 입력 행 evidence가
+  실제 /evidence 파라미터로 유효.
+- **DRV-2 · 스키마+인용 전파 (S)**: CalcRow.symbol/evidence, Citation.computation (agent-engine
+  models + web types). citations 빌더: 파생 툴(valuation/quant/backtest/metrics/technical/
+  market_history) 인용에 결과의 computation 부착. Accept: 파생 인용의 done 이벤트에 computation
+  동봉; 기존 인용 하위호환.
+- **DRV-3 · Derivation Card 렌더러 (M)**: ComputationPanel v2 — 공식 심볼 칩↔행 하이라이트,
+  단계 번호 파이프라인+최종값 강조, 입력 evidence 딥링크, 복사 버튼. **SourceViewer data
+  셰이프가 이걸 본문으로 렌더**(현 맨 snippet 대체; snippet은 보조). Accept: vitest — 심볼 매칭,
+  evidence 클릭 핸들러, note 필수(밸류에이션류), 하위호환(computation 없으면 기존 표시).
+- **DRV-4 · 공유 연동 (S)**: 공유 스냅샷 payload에 computation 포함 → 공개 페이지·(SH-2b) A4
+  프리셋에서 도출 과정 섹션 렌더 — "공식까지 보여주는 인증짤". Accept: share payload에 동봉,
+  공개 페이지 렌더.
+- **DRV-5 · eval (S)**: +2 시나리오 — 파생 지표 질문의 인용 preview에 공식·입력 존재(deterministic
+  `expect_citation_computation`), judge criteria에 도출 설명 포함. 기존 `expect_computation`은
+  아티팩트용으로 유지.
+
+**순서**: DRV-2 → DRV-1(생산자별 분할 커밋) → DRV-3 → DRV-5 → DRV-4(SH-2b와 함께).
+QT-1(compute 엔진)과 정합: compute의 스펙-as-계산근거는 이 카드로 렌더된다 — 같은 스키마.
+
 ## 13. Test & eval accounting
 
 Every task adds tests; keep this table updated in the same PR (Definition of Done).
