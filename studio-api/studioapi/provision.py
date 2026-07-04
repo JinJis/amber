@@ -24,20 +24,36 @@ async def _admin(method: str, path: str, json: dict | None = None) -> dict:
         return resp.json()
 
 
+async def _activate_defaults(project_id: str) -> None:
+    """Activate every DEFAULT_CONNECTORS on a project (idempotent — the control-plane no-ops an
+    already-active one). Used at provision time AND to backfill when the default set grows."""
+    for connector_id in DEFAULT_CONNECTORS:
+        try:
+            await _admin("POST", f"/admin/projects/{project_id}/activations", {"connector_id": connector_id})
+        except Exception:  # noqa: BLE001 — best-effort: already active / connector absent / mocked-off in tests
+            pass  # the rest still activate; entitlement is never worth failing a request over
+
+
+# Emails reconciled this process lifetime — so an existing user (provisioned before the default set
+# grew) gets the new connectors activated ONCE on their next request after a deploy, without a
+# per-request admin round-trip or a schema migration.
+_reconciled: set[str] = set()
+
+
 async def ensure_user(email: str) -> User:
     with SessionLocal() as db:
         existing = db.get(User, email)
-        if existing:
-            return existing
+    if existing:
+        if email not in _reconciled:
+            await _activate_defaults(existing.project_id)  # backfill connectors added since signup
+            _reconciled.add(email)
+        return existing
 
     tenant = await _admin("POST", "/admin/tenants", {"name": email})
     project = await _admin("POST", f"/admin/tenants/{tenant['id']}/projects", {"name": "default"})
     key = await _admin("POST", f"/admin/projects/{project['id']}/keys", {"name": "web"})
-    for connector_id in DEFAULT_CONNECTORS:
-        try:
-            await _admin("POST", f"/admin/projects/{project['id']}/activations", {"connector_id": connector_id})
-        except httpx.HTTPError:
-            pass  # connector may not exist; default agent still works with the rest
+    await _activate_defaults(project["id"])
+    _reconciled.add(email)
 
     user = User(email=email, tenant_id=tenant["id"], project_id=project["id"], api_key=key["api_key"])
     with SessionLocal() as db:

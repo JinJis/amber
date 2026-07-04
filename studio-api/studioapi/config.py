@@ -34,5 +34,9 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Connectors auto-activated for a new user so the default agent has data.
-DEFAULT_CONNECTORS = ["sec_edgar", "yahoo", "fred", "opendart", "ecos", "google_news", "datasets_store", "rag"]
+# Connectors auto-activated for every project — the subscription model provides ALL data via
+# server-side keys, so every connector in the catalog is entitled (users pick TOOLS per agent, not
+# whole APIs). fmp (consensus/calendar, CE-11) + kis (KR realtime, CE-12) were missing, so those
+# tools 403'd through the gateway; include them.
+DEFAULT_CONNECTORS = ["sec_edgar", "yahoo", "fred", "opendart", "ecos", "google_news",
+                      "datasets_store", "rag", "fmp", "kis"]

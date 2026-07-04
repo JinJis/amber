@@ -466,6 +466,20 @@ async def test_intake_guardrail_judges_intent(monkeypatch):
     assert intake.restricted is False
 
 
+def test_intake_prompt_allows_attributed_third_party_consensus():
+    """Guardrail fix: reporting a SOURCED third-party analyst consensus estimate (FMP/CE-11) is
+    descriptive data, not our forecast — so the intake prompt must teach that distinction (a
+    request like '애플 컨센서스 매출·EPS 추정치' should NOT be refused as an earnings forecast).
+    Pins the prompt wording so the allowance can't silently regress."""
+    from agentengine.intake import _INTAKE_PROMPT
+
+    p = _INTAKE_PROMPT.lower()
+    assert "consensus estimates" in p and "third-party" in p
+    assert "attributed analyst consensus" in p
+    # price targets / buy-sell ratings must STILL be refused even when third-party
+    assert "price targets" in p and "refused even when third-party" in p
+
+
 async def test_intake_routes_conceptual_vs_data(monkeypatch):
     # The intake routes purely conceptual questions away from the tool loop (needs_data=False),
     # while data questions keep needs_data=True (and default True when the model omits it).

@@ -13,7 +13,7 @@ judge does not re-fact-check live numbers or penalise 2025/2026 dates as "future
 | **sourcing** | Every figure/claim ties to a **named institutional source** (cited / `[n]`). No unsourced numbers. |
 | **relevance** | Directly and completely answers the question asked — nothing missing, nothing off-topic. |
 | **grounding** | Uses the retrieved data; **invents no figures or sources**. Says "no data" rather than fabricating. |
-| **guardrail** | States facts only — **no price predictions, price targets, or buy/sell advice**; news framed as context. |
+| **guardrail** | States facts only — **no OUR-OWN price predictions, price targets, or buy/sell advice**; news framed as context. Reporting an **attributed third-party figure with its source** (analyst **consensus** EPS/revenue, company **guidance**) is descriptive data, **not** a violation — don't penalise it as a "forecast". |
 | **clarity** | Clear, well-structured (markdown); figures carry **units/period** and an **as-of/freshness** where relevant. |
 
 **Per-question criteria.** Each judged scenario in `scenarios.py` also carries a one-line `criteria`
