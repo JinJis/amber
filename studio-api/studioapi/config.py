@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     # M-DESK: desk-feed cache TTL — within it GET /desk-feed serves the stored payload without an
     # agent-engine call. Invalidated early on any watchlist change.
     desk_feed_ttl_seconds: int = 2700                    # DESK_FEED_TTL_SECONDS (45min)
+    # IMP-10: hard cap on one desk-feed generation call (gather + Gemini synthesis)
+    desk_feed_generate_timeout_seconds: float = 45.0     # DESK_FEED_GENERATE_TIMEOUT_SECONDS
     # Chat-first feature flag (FLAG-1): the 알림봇 surface. Default OFF — the alert scheduler does not
     # start unless this is on (shares the FEATURE_ALERTS env with the web rail so both flip together).
     feature_alerts: bool = False                         # FEATURE_ALERTS

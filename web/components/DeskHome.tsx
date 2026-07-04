@@ -34,14 +34,18 @@ export default function DeskHome({ onPick, onChanged }: {
 }) {
   const [feed, setFeed] = useState<Feed | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);  // IMP-3: fetch failure ≠ silent skeleton
   const [adding, setAdding] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(false);
     try {
       const r = await fetch("/api/desk-feed");
-      setFeed(r.ok ? await r.json() : null);
+      if (!r.ok) { setError(true); setFeed(null); return; }
+      setFeed(await r.json());
     } catch {
+      setError(true);
       setFeed(null);
     } finally {
       setLoading(false);
@@ -85,6 +89,18 @@ export default function DeskHome({ onPick, onChanged }: {
     );
   }
 
+  // IMP-3: a failed/degraded feed shows an explicit, retryable state — never an endless skeleton
+  if (error || feed?.degraded) {
+    return (
+      <div className="deskfeed">
+        <div className="df-label">오늘의 데스크</div>
+        <div className="df-error" role="alert">
+          {feed?.degraded ? "데스크 구성에 필요한 데이터 서비스가 잠시 응답하지 않아요." : "데스크를 불러오지 못했습니다."}
+          <button type="button" className="chip" onClick={() => void load()}>다시 시도</button>
+        </div>
+      </div>
+    );
+  }
   const cards = feed?.cards ?? [];
   if (!cards.length) return null; // graceful: the parent's capability examples stay visible
 

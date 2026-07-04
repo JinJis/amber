@@ -12,6 +12,7 @@ Serving the feed also advances ``User.last_seen_at``; the *previous* value rides
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta
@@ -67,19 +68,30 @@ def _user_context(db, email: str) -> dict:
 
 
 async def _generate(user: User, since: datetime | None) -> dict | None:
-    """One agent-engine composition call. None on failure (caller degrades)."""
+    """One agent-engine composition call. (feed, context_nonce) — feed None on failure/timeout
+    (caller degrades). The nonce (hash of the watchlist context the feed was generated FROM) lets
+    the caller skip the cache write if the watchlists changed mid-generation (IMP-10 race)."""
     with SessionLocal() as db:
         payload = _user_context(db, user.email)
+    nonce = _ctx_nonce(payload)
     payload["since"] = since.isoformat() if since else None
     try:
         async with httpx.AsyncClient(timeout=settings.http_timeout_seconds) as client:
-            r = await client.post(f"{settings.agent_engine_url}/agent/desk-feed",
-                                  json=payload, headers={"X-API-KEY": user.api_key})
+            r = await asyncio.wait_for(   # IMP-10: hard overall cap — a slow engine can't hold the request
+                client.post(f"{settings.agent_engine_url}/agent/desk-feed",
+                            json=payload, headers={"X-API-KEY": user.api_key}),
+                timeout=settings.desk_feed_generate_timeout_seconds)
             r.raise_for_status()
-            return r.json()
-    except Exception as exc:  # noqa: BLE001 — a down engine degrades the feed, never 500s it
+            return r.json(), nonce
+    except Exception as exc:  # noqa: BLE001 — a down/slow engine degrades the feed, never 500s it
         log.warning("desk-feed generation failed for %s: %s", user.email, exc)
-        return None
+        return None, nonce
+
+
+def _ctx_nonce(ctx: dict) -> str:
+    import hashlib
+    return hashlib.sha256(json.dumps(ctx.get("watchlists"), sort_keys=True,
+                                     ensure_ascii=False).encode()).hexdigest()[:16]
 
 
 @router.get("/desk-feed", summary="M-DESK: the turn-zero briefing (cached per user)")
@@ -92,7 +104,7 @@ async def get_desk_feed(user: User = Depends(current_user)) -> dict:
             return {**json.loads(row.payload), "cached": True}
         prev_seen = db.get(User, user.email).last_seen_at
 
-    fresh = await _generate(user, prev_seen)
+    fresh, nonce = await _generate(user, prev_seen)
 
     with SessionLocal() as db:
         # advance the visit marker regardless of generation outcome — the user WAS here
@@ -100,12 +112,17 @@ async def get_desk_feed(user: User = Depends(current_user)) -> dict:
         if u is not None:
             u.last_seen_at = now
         if fresh is not None:
-            row = db.get(DeskFeedCache, user.email)
-            if row is None:
-                row = DeskFeedCache(user_email=user.email, payload="{}")
-                db.add(row)
-            row.payload = json.dumps(fresh, ensure_ascii=False)
-            row.generated_at = now
+            # IMP-10: if the watchlists changed WHILE we generated, this feed is already wrong —
+            # serve it (best effort) but don't poison the cache with it.
+            if _ctx_nonce(_user_context(db, user.email)) == nonce:
+                row = db.get(DeskFeedCache, user.email)
+                if row is None:
+                    row = DeskFeedCache(user_email=user.email, payload="{}")
+                    db.add(row)
+                row.payload = json.dumps(fresh, ensure_ascii=False)
+                row.generated_at = now
+            else:
+                log.info("desk-feed cache write skipped (watchlists changed mid-generation) %s", user.email)
         db.commit()
 
     if fresh is not None:

@@ -277,9 +277,10 @@ export default function Chat({ name, features }: { name: string; features: Featu
     setFocusIdx(null);          // panel follows the latest answer of the opened conversation
     setView("explore");
     setBusy(false);
+    setLoadError(null);
     try {
       const r = await fetch(`/api/conversations/${id}/messages`);
-      if (!r.ok) return;
+      if (!r.ok) { setLoadError(id); return; }  // IMP-5: silent blank thread → visible banner
       const msgs = ((await r.json()).messages ?? []) as { role: string; content: string; citations?: Citation[] }[];
       setMessages(msgs.map((m) => ({
         role: m.role === "assistant" ? "assistant" : "user",
@@ -291,7 +292,8 @@ export default function Chat({ name, features }: { name: string; features: Featu
       const ar = await fetch(`/api/conversations/${id}/active-run`);
       const runId = ar.ok ? (await ar.json()).run_id : null;
       if (runId && viewConvRef.current === id) await tailRun(id, runId);
-    } catch {}
+    } catch {
+      setLoadError(id);}
   }
   function newChat() {
     viewConvRef.current = null;
@@ -559,6 +561,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
   const panelIdx = focusIdx != null && messages[focusIdx]?.role === "assistant" ? focusIdx : lastAssistantIdx;
   const panelMsg = panelIdx >= 0 ? messages[panelIdx] : null;
   const [shareArt, setShareArt] = useState<Artifact | null>(null);  // SH-2 share sheet
+  const [loadError, setLoadError] = useState<string | null>(null);  // IMP-5: conv-load failure banner
   const panelStreaming = busy && panelIdx === messages.length - 1;
 
   return (
@@ -658,6 +661,12 @@ export default function Chat({ name, features }: { name: string; features: Featu
                 </div>
               )}
 
+              {loadError && (
+                <div className="load-error" role="alert">
+                  이 대화를 불러오지 못했습니다.
+                  <button className="chip" onClick={() => openConversation(loadError)}>다시 시도</button>
+                </div>
+              )}
               {messages.map((m, i) => (
                 <div key={i} className={`msg ${m.role} ${m.role === "assistant" && panelIdx === i ? "focused" : ""}`}>
                   {m.role === "assistant" && (m.thinking?.length || 0) > 0 && (

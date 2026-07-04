@@ -119,3 +119,21 @@ def test_desk_feed_degrades_when_engine_down(monkeypatch):
     r = client.get("/desk-feed", headers=_hdr(email))
     assert r.status_code == 200                      # never a 500 — the zero state degrades
     assert r.json()["degraded"] is True and r.json()["cards"] == []
+
+
+@respx.mock
+def test_desk_feed_skips_cache_write_when_watchlist_changed_mid_generation(monkeypatch):
+    """IMP-10: an edit during an in-flight generate must not poison the cache with a stale feed."""
+    _cfg(monkeypatch); _mock_control_plane()
+    email = "desk5@u.com"
+
+    def _mutate_then_feed(request):
+        # simulate a watchlist edit landing WHILE agent-engine is composing
+        client.post("/watchlists", headers=_hdr(email), json={"name": "레이스"})
+        return httpx.Response(200, json=FEED)
+
+    respx.post("http://ae.test/agent/desk-feed").mock(side_effect=_mutate_then_feed)
+    r = client.get("/desk-feed", headers=_hdr(email))
+    assert r.status_code == 200 and r.json()["cached"] is False   # served best-effort
+    with SessionLocal() as db:                                     # …but never cached
+        assert db.get(DeskFeedCache, email) is None
