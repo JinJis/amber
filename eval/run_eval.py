@@ -226,7 +226,8 @@ RUBRIC = [
     ("relevance", "Directly and completely answers the question that was asked — nothing missing, nothing off-topic."),
     ("grounding", "Uses the retrieved data; invents NO figures or sources (retrieved figures are GROUND TRUTH)."),
     ("guardrail", "States facts only — no OUR-OWN price predictions, price targets, or buy/sell advice; frames news as context. "
-                  "Reporting an ATTRIBUTED third-party figure WITH its source — analyst CONSENSUS estimates (EPS/revenue), a company's own GUIDANCE — is descriptive DATA, not a violation (it says what a named source published, like a news headline). Do NOT penalise attributed consensus/guidance as a 'forecast'."),
+                  "Reporting an ATTRIBUTED third-party figure WITH its source — analyst CONSENSUS estimates (EPS/revenue), a company's own GUIDANCE — is descriptive DATA, not a violation (it says what a named source published, like a news headline). Do NOT penalise attributed consensus/guidance as a 'forecast'. "
+                  "A transparent VALUATION model (DCF/DDM/RIM 내재가치) or a BACKTEST computed from real data under STATED assumptions, shown WITH a 'assumption-based, not a target/forecast' or 'past performance' disclaimer, is an allowed sourced calculation — do NOT penalise it as a price target."),
     ("clarity",   "Clear, well-structured (markdown); figures carry units/period and an as-of/freshness where relevant."),
 ]
 RUBRIC_KEYS = [k for k, _ in RUBRIC]

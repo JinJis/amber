@@ -478,6 +478,8 @@ def test_intake_prompt_allows_attributed_third_party_consensus():
     assert "attributed analyst consensus" in p
     # price targets / buy-sell ratings must STILL be refused even when third-party
     assert "price targets" in p and "refused even when third-party" in p
+    # a transparent DCF/DDM/RIM valuation (our own calculator) is explicitly allowed, not a target
+    assert "valuation models are allowed" in p and "dcf/ddm/rim" in p
 
 
 async def test_intake_routes_conceptual_vs_data(monkeypatch):
