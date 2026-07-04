@@ -137,3 +137,33 @@ def test_desk_feed_skips_cache_write_when_watchlist_changed_mid_generation(monke
     assert r.status_code == 200 and r.json()["cached"] is False   # served best-effort
     with SessionLocal() as db:                                     # …but never cached
         assert db.get(DeskFeedCache, email) is None
+
+
+def test_run_event_buffer_capped_and_tail_resumes(monkeypatch):
+    """IMP-1: a chatty run trims its oldest events (bounded memory) while absolute-index tails
+    still resume correctly from the retained head."""
+    import asyncio
+
+    from studioapi.runs import Run, RunManager
+
+    async def go():
+        m = RunManager()
+        monkeypatch.setattr(RunManager, "_MAX_LIVE_EVENTS", 50)
+        monkeypatch.setattr(RunManager, "_KEEP_FINISHED", 10)
+        run = Run(id="r1", conversation_id="c1", cond=asyncio.Condition())
+        for k in range(120):
+            await m.append(run, {"type": "token", "k": k})
+        assert len(run.events) == 50 and run.base == 70          # live cap holds
+
+        got = []
+        async def consume():
+            async for ev in m.tail(run, from_index=100):          # absolute resume inside window
+                got.append(ev)
+        t = asyncio.create_task(consume())
+        await asyncio.sleep(0.05)
+        await m.finish(run, "done")
+        await asyncio.wait_for(t, 2)
+        assert got and got[0]["k"] == 100 and got[-1]["k"] == 119  # no dupes, no gaps in-window
+        assert len(run.events) == 10 and run.base == 110           # finished-run tail only
+
+    asyncio.run(go())

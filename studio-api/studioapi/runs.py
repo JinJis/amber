@@ -25,7 +25,10 @@ class Run:
     id: str
     conversation_id: str
     status: str = "running"  # running | done | error
-    events: list[dict] = field(default_factory=list)  # full SSE buffer (for replay)
+    events: list[dict] = field(default_factory=list)  # SSE buffer (for replay; head-trimmed, see base)
+    # IMP-1: absolute index of events[0] — the buffer head is trimmed on long runs/finish so one
+    # chatty run can't grow megabytes in-process; tails translate absolute → local via this.
+    base: int = 0
     cond: asyncio.Condition = field(default_factory=asyncio.Condition)
     task: asyncio.Task | None = None
 
@@ -71,14 +74,25 @@ class RunManager:
         run.task = asyncio.create_task(_wrap())
         return run
 
+    _MAX_LIVE_EVENTS = 4000   # in-flight cap (a run streaming beyond this trims its oldest chunk)
+    _KEEP_FINISHED = 300      # after finish, keep only the tail (persisted messages cover the rest)
+
     async def append(self, run: Run, event: dict) -> None:
         async with run.cond:
             run.events.append(event)
+            if len(run.events) > self._MAX_LIVE_EVENTS:   # IMP-1: bound live-buffer growth
+                drop = len(run.events) - self._MAX_LIVE_EVENTS
+                del run.events[:drop]
+                run.base += drop
             run.cond.notify_all()
 
     async def finish(self, run: Run, status: str) -> None:
         async with run.cond:
             run.status = status
+            if len(run.events) > self._KEEP_FINISHED:      # IMP-1: finished runs keep only a tail
+                drop = len(run.events) - self._KEEP_FINISHED
+                del run.events[:drop]
+                run.base += drop
             if self._active.get(run.conversation_id) == run.id:
                 self._active.pop(run.conversation_id, None)
             run.cond.notify_all()
@@ -86,17 +100,18 @@ class RunManager:
     async def tail(self, run: Run, from_index: int = 0) -> AsyncIterator[dict]:
         """Yield buffered events from ``from_index``, then live ones until the run ends.
         Cancelling this (client disconnect) does NOT stop the driver — it keeps generating."""
-        i = max(0, from_index)
+        i = max(0, from_index)                # ABSOLUTE index (client counts every event it got)
         while True:
             async with run.cond:
-                while i >= len(run.events) and run.status == "running":
+                while i >= run.base + len(run.events) and run.status == "running":
                     await run.cond.wait()
-                pending = run.events[i:]
-                i = len(run.events)
+                local = max(0, i - run.base)  # trimmed head → resume from the oldest retained
+                pending = run.events[local:]
+                i = run.base + len(run.events)
                 terminal = run.status != "running"
             for ev in pending:
                 yield ev
-            if terminal and i >= len(run.events):
+            if terminal and i >= run.base + len(run.events):
                 return
 
 
