@@ -39,4 +39,4 @@ settings = Settings()
 # whole APIs). fmp (consensus/calendar, CE-11) + kis (KR realtime, CE-12) were missing, so those
 # tools 403'd through the gateway; include them.
 DEFAULT_CONNECTORS = ["sec_edgar", "yahoo", "fred", "opendart", "ecos", "google_news",
-                      "datasets_store", "rag", "fmp", "kis"]
+                      "datasets_store", "rag", "fmp", "kis", "market_history"]

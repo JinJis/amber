@@ -112,7 +112,7 @@ Gaps that block the killer feature (verified in code, 2026-07-03):
 |---|---|---|---|---|
 | **FLAG-1** | Chat-first feature flags | 대시보드 + 알림봇 hidden behind env flags, default off | — | ✅ done |
 | **OPS-1** | Admin ingestion error detail | per-ticker real error messages, grouped summaries, retry-failed-only | — | ✅ done |
-| **M0** | Deep History Data Plane | max-history prices + VIX + regime/episode store + analytics engine + `/history/*` API through the gateway | — | ⬜ planned |
+| **M0** | Deep History Data Plane | max-history prices + VIX + regime/episode store + analytics engine + `/history/*` API through the gateway | — | 🚧 HL-1..4 ✅ · HL-5(era news) ⬜ |
 | **M1** | History Lab in Chat | agent answers "지금 낙폭 닷컴버블이랑 비교해줘" with analogue + base-rate artifacts, guardrail framing, new chart panes | M0 | ⬜ planned |
 | **M2** | History Lab Surface | dedicated 히스토리 랩 view: century ribbon, THEN\|NOW split, day scrubber, era news + point-in-time macro | M1 | ⬜ planned |
 | **M-DESK** | Proactive Desk (턴 제로) | the empty chat becomes a live, sourced briefing: what to ask today — news/filings/calendar/price-move suggestion cards, watchlist nudge & pulse | basic: FLAG-1 · history hooks: M0 | ✅ basic done (DK-1..4) · DK-3b after M0 |
@@ -179,7 +179,7 @@ Goal: the store can answer 30–90 years of index history and derived statistics
 catalog tools through the gateway like every other datum. Full detail:
 [`HISTORY_LAB_SPEC.md`](./HISTORY_LAB_SPEC.md) §3–§6.
 
-### HL-1 · Deep price backfill + history universe — ⬜
+### HL-1 · Deep price backfill + history universe — ✅ done (verified live: ^GSPC 1927-12-30~, ^VIX 1990~, ^KS11 1996~)
 - **What**: introduce a configured **history universe** (env `HISTORY_UNIVERSE`, default:
   `^GSPC, ^IXIC, ^DJI, ^VIX, ^KS11, ^KQ11, ^TNX, GC=F, CL=F, KRW=X, ^N225, ^HSI`) whose
   prices pipeline backfills **max available history** (Yahoo `range=max`), while ordinary
@@ -196,7 +196,7 @@ catalog tools through the gateway like every other datum. Full detail:
 - **Notes**: KR index depth on Yahoo starts ~1997; treat pre-1997 KOSPI as a **drawn gap**
   (never fabricate). An ECOS long-series complement may be a follow-up task — do not block.
 
-### HL-2 · Regime & episode store — ⬜
+### HL-2 · Regime & episode store — ✅ done (GFC derived depth −56.78% — matches the ±0.5pt accept)
 - **What**: two tables in the datasets store (next to `PriceBar`):
   `DrawdownEpisode` (derived: market, ticker, peak_date, peak_close, trough_date,
   trough_close, depth_pct, decline_days, recovery_date?, recovery_days?, open flag,
@@ -213,7 +213,7 @@ catalog tools through the gateway like every other datum. Full detail:
   sourced entries; unit tests cover the episode algorithm on a synthetic series with known
   answers (peak, trough, recovery, open episode).
 
-### HL-3 · Analytics engine — ⬜
+### HL-3 · Analytics engine — ✅ done (19 fixture tests)
 - **What**: pure, deterministic module `datasets/app/analytics/` (no LLM, no I/O — operates
   on bars passed in): `drawdown.py` (underwater series, episode detection),
   `volatility.py` (realized vol windows, percentile-vs-own-history, VIX percentile),
@@ -224,7 +224,7 @@ catalog tools through the gateway like every other datum. Full detail:
 - **Accept**: ≥25 unit tests on synthetic fixtures (hand-computed expected values, incl.
   NaN/gap handling, clustered events, window shorter than history). No network in tests.
 
-### HL-4 · `/history/*` REST + manifest + category — ⬜
+### HL-4 · `/history/*` REST + manifest + category — ✅ done (7 tools via market_history, category 시장 히스토리)
 - **What**: new router `datasets/app/routers/history.py` with endpoints
   `/history/drawdowns`, `/history/episodes`, `/history/vol-context`, `/history/base-rates`,
   `/history/analogues`, `/history/regimes` (request/response schemas in SPEC §5) — thin
