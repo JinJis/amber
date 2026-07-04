@@ -454,8 +454,11 @@ def main() -> int:
                 r = _run_scenario_chat(sc, agent["id"])
                 # transient upstream failure (5xx / dropped conn) is an INFRA flake, not answer
                 # quality — retry the scenario once (marked), like a flaky-CI retry. 4xx never retries.
-                if any(int(x) >= 500 or int(x) == 0 for x in (r.get("statuses") or []) if str(x).isdigit()):
-                    print(dim("        ↻ transient upstream 5xx — retrying scenario once"))
+                statuses = [int(x) for x in (r.get("statuses") or []) if str(x).isdigit()]
+                gen_failed = (r.get("answer") or "").startswith("답변 생성 중 문제")  # Gemini-side 503 fallback
+                if (any(x >= 500 or x in (0, 403) for x in statuses) or gen_failed
+                        or (r.get("tools") and not (r.get("answer") or "").strip())):
+                    print(dim("        ↻ transient failure (5xx/403/generation) — retrying scenario once"))
                     r = _run_scenario_chat(sc, agent["id"])
                 question = sc["turns"][-1] if sc.get("turns") else sc["question"]
         except Exception as e:  # never let one scenario abort the run

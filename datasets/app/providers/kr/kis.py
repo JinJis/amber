@@ -47,9 +47,23 @@ async def _token() -> str:
 
 async def _get(path: str, tr_id: str, params: dict, output_key: str = "output") -> list:
     app_key, app_secret = _creds()
-    headers = {"authorization": f"Bearer {await _token()}", "appkey": app_key,
-               "appsecret": app_secret, "tr_id": tr_id, "custtype": "P"}
-    data = await fetch_json("kis", f"{settings.kis_domain}{path}", params=params, headers=headers)
+
+    async def _call() -> dict | list:
+        headers = {"authorization": f"Bearer {await _token()}", "appkey": app_key,
+                   "appsecret": app_secret, "tr_id": tr_id, "custtype": "P"}
+        return await fetch_json("kis", f"{settings.kis_domain}{path}", params=params, headers=headers)
+
+    try:
+        data = await _call()
+    except Exception as exc:  # noqa: BLE001
+        # JUDGE-4.5 ③: a 401/403 mid-TTL means the cached 24h token died early (revoked/rotated
+        # server-side) — drop the cache and retry ONCE with a freshly issued token.
+        msg = str(exc)
+        if "401" in msg or "403" in msg:
+            _token_cache.clear()
+            data = await _call()
+        else:
+            raise
     if isinstance(data, dict) and data.get("rt_cd") is not None and str(data.get("rt_cd")) != "0":
         raise upstream_error("kis", str(data.get("msg1") or "KIS error")[:160])
     out = (data.get(output_key) if isinstance(data, dict) else None) or []
