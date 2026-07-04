@@ -7,8 +7,10 @@
 > same PR.
 >
 > Deep implementation detail for the M0–M2 killer feature lives in
-> [`docs/HISTORY_LAB_SPEC.md`](./HISTORY_LAB_SPEC.md). The UX overhaul + all screen specs
-> live in [`docs/UX_SPEC.md`](./UX_SPEC.md). Read the relevant spec section before building.
+> [`docs/HISTORY_LAB_SPEC.md`](./HISTORY_LAB_SPEC.md). The publish layer (공유 카드 · 팩트체크 ·
+> 노트 — M-SHARE/M-FACT/M-NOTE) lives in [`docs/PUBLISH_SPEC.md`](./PUBLISH_SPEC.md). The UX
+> overhaul + all screen specs live in [`docs/UX_SPEC.md`](./UX_SPEC.md). Read the relevant spec
+> section before building.
 
 ---
 
@@ -113,7 +115,12 @@ Gaps that block the killer feature (verified in code, 2026-07-03):
 | **FLAG-1** | Chat-first feature flags | 대시보드 + 알림봇 hidden behind env flags, default off | — | ✅ done |
 | **OPS-1** | Admin ingestion error detail | per-ticker real error messages, grouped summaries, retry-failed-only | — | ✅ done |
 | **M0** | Deep History Data Plane | max-history prices + VIX + regime/episode store + analytics engine + `/history/*` API through the gateway | — | 🚧 HL-1..4 ✅ · HL-5(era news) ⬜ |
-| **M1** | History Lab in Chat | agent answers "지금 낙폭 닷컴버블이랑 비교해줘" with analogue + base-rate artifacts, guardrail framing, new chart panes | M0 | ⬜ planned |
+| **M1** | History Lab in Chat | agent answers "지금 낙폭 닷컴버블이랑 비교해줘" with analogue + base-rate artifacts, guardrail framing, new chart panes | M0 | 🚧 HL-6/7/9 ✅ · HL-8(chart panes) ⬜ |
+| **QT-2*** | Number audit (pulled forward) | every numeral in prose/cards matches a tool value — the trust floor for anything that leaves the app | — | ⬜ next |
+| **M-SHARE** | 공유 파이프라인 (PUBLISH_SPEC §3) | share tap → provenance-baked card image (aspect presets) + public read-only page (`/s/{token}`, OG) + evidence quote cards + 데스크 브리핑 카드 | QT-2 | ⬜ planned |
+| **M-FACT** | 근거 기반 팩트체크 (PUBLISH_SPEC §4) | paste a claim → cited verdict artifact (사실/사실과 다름/미래 주장) with findings for/against; the receipt for 정보방 | M-SHARE | ⬜ planned |
+| **M-NOTE** | 인사이트 노트 (PUBLISH_SPEC §6) | conversation → structured, cited note → A4 report-grade image/PDF + share | M-SHARE, M2 | ⬜ planned |
+| **DATA-KR-1** | KR macro expansion | ECOS beyond rates (CPI·실업률·성장) — KR fact-check needs official KR macro | — | ⬜ planned |
 | **M2** | History Lab Surface | dedicated 히스토리 랩 view: century ribbon, THEN\|NOW split, day scrubber, era news + point-in-time macro | M1 | ⬜ planned |
 | **M-DESK** | Proactive Desk (턴 제로) | the empty chat becomes a live, sourced briefing: what to ask today — news/filings/calendar/price-move suggestion cards, watchlist nudge & pulse | basic: FLAG-1 · history hooks: M0 | ✅ basic done (DK-1..4) · DK-3b after M0 |
 | **M-QUANT** | Analysis→Artifact engine | declarative, deterministic multi-series computation (`/compute/series`) + numeric-integrity verify + scatter/distribution artifacts — the general "여러 데이터 → 통계 분석 → 차트/표" pipeline | — (M0 shares the analytics module) | ⬜ planned |
@@ -125,11 +132,22 @@ Gaps that block the killer feature (verified in code, 2026-07-03):
 Status legend: ⬜ planned · 🚧 in progress · ✅ done. **Update a task's marker in the same PR
 that completes it.**
 
-Recommended build order: **FLAG-1 → OPS-1 → M-DESK(basic: DK-1/2/3) → M0 → M1 →
-(M2 ∥ M-QUANT) → M3 → M4 → M5 → M6.** M-DESK basic needs only existing tools and fixes the
-first-session cold-start — ship it first; its history-percentile hooks (DK-3b) land right
-after M0. M0/M1 are the value proof; M2 is the demo-day surface; M-QUANT generalizes the
-same analytics discipline to every quantitative question; M3 is the daily-retention feature.
+**Build order v3 (2026-07-04 — publish layer added; see PUBLISH_SPEC §8 for rationale):**
+
+```
+[done] FLAG-1 · OPS-1 · M-DESK basic · M0(HL-1..4) · M1(HL-6/7/9)
+[next] QT-2(number audit) → M-SHARE(SH-1..3) → M-FACT(FC-1..3) → SH-4/5 · FC-4
+     → HL-5(era news) · HL-8(chart panes) · DATA-KR-1 → M2(히스토리 랩 surface)
+     → M-NOTE → M3(어닝) → M4(공시 인텔리전스) → M-QUANT(QT-1/3/4) → M5(UX) → M6(호라이즌)
+```
+
+Rationale: the desk now produces trustworthy artifacts (M0/M1) — the highest-leverage next
+step is **distribution**: the number audit is the trust floor, then the share pipeline turns
+every artifact into a provenance-carrying card (growth loop: share → public page → sign-up),
+then fact-check rides that distribution (the receipt for 정보방). Depth content (era news,
+chart panes, 히스토리 랩 surface, earnings) interleaves after, each new artifact kind gaining
+distribution the moment it ships. QT-2 is pulled out of M-QUANT; the rest of M-QUANT keeps
+its place.
 
 ### FLAG-1 · Chat-first feature flags — ✅ done
 - **What**: env flags `FEATURE_DASHBOARD` and `FEATURE_ALERTS` (default **false**; documented
