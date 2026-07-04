@@ -224,3 +224,43 @@ def test_sanitize_passive_csp_and_base_for_external_pages():
     # filings keep the strict default (self-contained; zero egress)
     strict = sanitize(page)
     assert "img-src data:" in strict and "<base" not in strict
+
+
+# --- IMP-2: transient-upstream backoff + circuit breaker ---------------------
+async def test_fetch_json_retries_503_then_succeeds(monkeypatch):
+    import httpx
+    import respx
+
+    import app.http as H
+    monkeypatch.setattr(H, "_BACKOFFS", (0.0, 0.0, 0.0))   # no real sleeping in tests
+    H._breaker.clear()
+    with respx.mock:
+        route = respx.get("https://u.example/x").mock(side_effect=[
+            httpx.Response(503), httpx.Response(503), httpx.Response(200, json={"ok": 1})])
+        out = await H.fetch_json("prov1", "https://u.example/x")
+        assert out == {"ok": 1} and route.call_count == 3
+
+
+async def test_fetch_json_404_never_retries_and_breaker_opens(monkeypatch):
+    import httpx
+    import pytest as _pt
+    import respx
+
+    import app.http as H
+    monkeypatch.setattr(H, "_BACKOFFS", (0.0,))
+    monkeypatch.setattr(H, "_BREAK_AFTER", 2)
+    H._breaker.clear()
+    with respx.mock:
+        r404 = respx.get("https://u.example/nf").mock(return_value=httpx.Response(404))
+        with _pt.raises(Exception):
+            await H.fetch_json("prov2", "https://u.example/nf")
+        assert r404.call_count == 1                         # 404 = an answer, not a retry
+
+        respx.get("https://u.example/dn").mock(return_value=httpx.Response(503))
+        for _ in range(2):                                  # trip the breaker
+            with _pt.raises(Exception):
+                await H.fetch_json("prov3", "https://u.example/dn")
+        with _pt.raises(Exception) as ei:                   # now fails FAST (no upstream hit)
+            await H.fetch_json("prov3", "https://u.example/dn")
+        assert "cooling down" in str(ei.value.detail if hasattr(ei.value, "detail") else ei.value)
+    H._breaker.clear()
