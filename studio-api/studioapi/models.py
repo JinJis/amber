@@ -55,6 +55,21 @@ class DeskFeedCache(Base):
     generated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class ShareLink(Base):
+    """M-SHARE (SH-1): an immutable share snapshot — public read via unguessable token, revocable.
+    payload = JSON snapshot (a share never silently changes; its as_of stays visible)."""
+
+    __tablename__ = "share_links"
+    token: Mapped[str] = mapped_column(String(48), primary_key=True)
+    user_email: Mapped[str] = mapped_column(ForeignKey("users.email"), index=True)
+    kind: Mapped[str] = mapped_column(String(12))            # artifact | verdict | note | quote
+    title: Mapped[str] = mapped_column(String(160))
+    payload: Mapped[str] = mapped_column(Text)
+    image_path: Mapped[str | None] = mapped_column(String(256), nullable=True)  # OG PNG (optional v1)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
     id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: _uid("cnv"))
