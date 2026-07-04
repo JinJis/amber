@@ -663,6 +663,25 @@ S-batch) → IMP-2 → IMP-1 → IMP-8(=UX-4 runner pulled forward)** — then r
 (M-FACT …). Review also confirmed: no guardrail/forecast violations anywhere; data plane sound
 apart from rate-limit gracelessness and the era-news gap.
 
+
+### JUDGE-4.5 — eval LLM-judge 상향 트랙 (2026-07-04)
+
+측정 궤적: **3.73 → 3.91 → 4.09** (모든 루브릭 차원 동반 상승: sourcing 4.2 · relevance 4.3 ·
+grounding 4.7 · guardrail 4.9 · clarity 4.8). 적용된 개선: 합성 완결성 원칙(요구 항목 체크리스트
++ 항목별 '자료에 없음' 명시), 문장 단위 인용 밀도, 백테스트 함수 스키마(매니페스트 body 선언),
+eval 하네스 5xx 1회 재시도(9회 발동).
+
+4.5 도달 잔여 항목 (≤2점 8개의 분해):
+1. **재시도 범위 확대** (S): 403(KIS 토큰 블립)·빈 답변(all-dims-1 플립: DCF 5/5→1/5 같은
+   단일 런 변동)도 1회 재시도 대상에 포함 — 판정 안정화.
+2. **데이터-기준 불일치 정합** (S): 실업률 시나리오 criteria가 비농업고용까지 요구하나 현재
+   툴 응답에 없음 → BLS payroll 시리즈 라우팅 힌트 또는 criteria를 실데이터에 정직하게 정렬.
+   (컨센서스 연도별 breakdown도 동일 — FMP 응답 필드 확인 후 합성 or criteria 조정.)
+3. **KIS 403 근본 해결** (M): 토큰 만료/재발급 경로 점검 — IMP-2 브레이커와 별개의 인증 블립.
+4. **판정 분산 축소** (S): judge를 시나리오당 2-call 중앙값으로(비용 2배, 신뢰도↑) — 옵션.
+
+예상: 1+2만으로 ~4.3-4.4, 3까지 하면 4.5 안착.
+
 ## 14. Non-goals (unchanged)
 
 No forecasts, price targets, momentum scores, or advice — in any milestone, including
