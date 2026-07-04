@@ -323,6 +323,15 @@ async def build_desk_feed(req: DeskFeedRequest, api_key: str | None) -> dict:
         cites = [by_idx[i]["citation"] for i in rc.get("sources") or [] if i in by_idx]
         if not cites:
             continue  # citation-drop rule: an unsourced hook never ships
+        # QT-2: the hook's numerals must trace to the cited sources' actual data — a card with an
+        # invented number never ships (stronger than the citation-drop: right source, wrong figure).
+        from agentengine.audit import audit_answer
+        hook_audit = audit_answer(rc.get("hook") or "",
+                                  [by_idx[i]["data"] for i in rc.get("sources") or [] if i in by_idx])
+        if hook_audit["unsupported"]:
+            logger.warning("desk-feed card dropped (unsupported figures %s): %s",
+                           hook_audit["unsupported"], rc.get("hook"))
+            continue
         data_cards.append(DeskCard(
             kind=kind, question=(rc.get("question") or "").strip(), hook=(rc.get("hook") or "").strip(),
             citations=cites, ticker=rc.get("ticker") or cites[0].ticker,

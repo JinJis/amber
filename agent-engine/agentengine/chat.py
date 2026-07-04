@@ -416,10 +416,26 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
         yield {"type": "token", "text": " " + anchor_markers(used_idx)}
     used = [c.get("index") for c in citations if c.get("used")]
 
+    # QT-2: the number audit (publish trust floor) — every numeral in the prose must trace to a
+    # value a tool returned THIS turn (deterministic extraction+matching, no LLM). Skipped for
+    # tool-less conceptual answers (no pool to match against). The result rides `done`; M-SHARE
+    # gates share-card minting on it, and the verify line makes the check visible (trust brand).
+    audit = None
+    if cite_ctx and final_text:
+        from agentengine.audit import audit_answer
+        audit = audit_answer(final_text, [d for _, _, d in cite_ctx] + artifacts)
+        if audit["checked"]:
+            ok = not audit["unsupported"]
+            yield {"type": "thinking", "phase": "verify",
+                   "text": (f"숫자 검증 ✓ {audit['checked']}개 수치 모두 자료와 대조 확인" if ok else
+                            f"숫자 검증: {audit['checked']}개 중 {audit['supported']}개 확인 · "
+                            f"미확인 {len(audit['unsupported'])}건")}
+
     # PH-THINK: capability-aware follow-up chips — ALWAYS shown after a real answer (deep LLM when
     # gemini, deterministic capability-aware fallback otherwise), so the chip row is never empty.
     sev = await _followups_event(task, final_text, citations, bk, conversation=messages)
     if sev:
         yield sev
 
-    yield {"type": "done", "citations": citations, "artifacts": artifacts, "refused": False, "used": used}
+    yield {"type": "done", "citations": citations, "artifacts": artifacts, "refused": False,
+           "used": used, "audit": audit}
