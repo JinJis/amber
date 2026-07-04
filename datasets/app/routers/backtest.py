@@ -24,7 +24,9 @@ class Holding(BaseModel):
 
 
 class BacktestRequest(BaseModel):
-    holdings: list[Holding]
+    # the LLM planner passes `holdings` as a JSON STRING (function-calling schemas are flat) —
+    # accept both shapes so the tool is actually callable end-to-end.
+    holdings: list[Holding] | str
     start_date: date | None = None
     end_date: date | None = None
     initial: float = 10000.0
@@ -46,7 +48,15 @@ router = APIRouter(tags=["Backtest"])
     ),
 )
 async def backtest(body: BacktestRequest, market: MarketParam = Market.US) -> dict:
-    holdings = [{"ticker": h.ticker, "weight": h.weight} for h in body.holdings]
+    import json as _json
+    raw = body.holdings
+    if isinstance(raw, str):
+        try:
+            raw = [Holding(**h) for h in _json.loads(raw)]
+        except Exception:  # noqa: BLE001 — honest 422, not a silent empty backtest
+            from fastapi import HTTPException
+            raise HTTPException(422, 'holdings must be JSON like [{"ticker":"AAPL","weight":0.6}]')
+    holdings = [{"ticker": h.ticker, "weight": h.weight} for h in raw]
     res = await asyncio.to_thread(
         run_backtest, market.value, holdings, start=body.start_date, end=body.end_date,
         initial=body.initial, benchmark=body.benchmark)

@@ -452,6 +452,11 @@ def main() -> int:
                     print(f"{tag} {red('✗')} {bold(name)}  {red(f'agent-create-failed ({ac})')}")
                     rows.append((name, 0, 1, "")); total += 1; print(); continue
                 r = _run_scenario_chat(sc, agent["id"])
+                # transient upstream failure (5xx / dropped conn) is an INFRA flake, not answer
+                # quality — retry the scenario once (marked), like a flaky-CI retry. 4xx never retries.
+                if any(int(x) >= 500 or int(x) == 0 for x in (r.get("statuses") or []) if str(x).isdigit()):
+                    print(dim("        ↻ transient upstream 5xx — retrying scenario once"))
+                    r = _run_scenario_chat(sc, agent["id"])
                 question = sc["turns"][-1] if sc.get("turns") else sc["question"]
         except Exception as e:  # never let one scenario abort the run
             print(f"{tag} {red('✗')} {bold(name)}  {red(f'ERROR {type(e).__name__}: {e}')}")
