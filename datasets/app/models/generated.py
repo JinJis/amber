@@ -720,6 +720,9 @@ class FinancialMetricSnapshot(BaseModel):
 
 class InsiderTrade(BaseModel):
     ticker: str | None = Field(None, description='The ticker symbol of the company.')
+    # IMP-12: canonical Form 4 provenance — lets citations link the actual filing in the viewer
+    accession_number: str | None = Field(None, description='SEC accession number of the Form 4.')
+    filing_url: str | None = Field(None, description='Canonical SEC URL of the Form 4 document.')
     issuer: str | None = Field(None, description='The name of the issuing company.')
     name: str | None = Field(None, description='The name of the insider.')
     title: str | None = Field(None, description='The title of the insider.')

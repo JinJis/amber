@@ -451,6 +451,8 @@ class SecEdgarInsiderProvider:
                 out.append(
                     InsiderTrade(
                         ticker=ref.ticker.upper(),
+                        accession_number=accn,
+                        filing_url=url,   # IMP-12: provenance travels → citation/evidence viewer links the Form 4
                         issuer=issuer,
                         name=owner,
                         title=title,
