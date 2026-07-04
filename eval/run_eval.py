@@ -233,7 +233,23 @@ RUBRIC_KEYS = [k for k, _ in RUBRIC]
 
 
 def judge(question: str, answer: str, citations: list[str], criteria: str | None = None) -> dict | None:
-    """Deep-model rubric grade. Returns {overall, dims:{...}, reason} or None."""
+    """Rubric grade with variance control (JUDGE-4.5 ④): EVAL_JUDGE_VOTES calls (default 2);
+    if the two overalls disagree by >1 a third breaks the tie; the MEDIAN result is returned.
+    Single-run judge scores flip ±2 on identical answers — voting stabilizes the signal."""
+    votes = int(os.environ.get("EVAL_JUDGE_VOTES") or _envval("EVAL_JUDGE_VOTES") or "2")
+    results = [r for r in (_judge_once(question, answer, citations, criteria) for _ in range(max(1, votes))) if r]
+    if not results:
+        return None
+    if len(results) >= 2 and abs(results[0]["overall"] - results[1]["overall"]) > 1:
+        extra = _judge_once(question, answer, citations, criteria)
+        if extra:
+            results.append(extra)
+    results.sort(key=lambda r: r["overall"])
+    return results[len(results) // 2]
+
+
+def _judge_once(question: str, answer: str, citations: list[str], criteria: str | None = None) -> dict | None:
+    """One deep-model rubric grade. Returns {overall, dims:{...}, reason} or None."""
     if not GKEY or not answer:
         return None
     today = os.environ.get("EVAL_TODAY") or datetime.date.today().isoformat()
