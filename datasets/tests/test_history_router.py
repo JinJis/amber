@@ -137,3 +137,63 @@ def test_recompute_episodes_idempotent():
     n1 = recompute_episodes("US", T)
     n2 = recompute_episodes("US", T)         # re-run replaces, never duplicates
     assert n1 == n2 == len(list_episodes("US", T, 20.0)) + len(list_episodes("US", T, 10.0))
+
+
+# --- HL-1: deep backfill + history universe --------------------------------
+def test_history_universe_symbols_parse(monkeypatch):
+    from app.config import settings
+    from app.store.prices_ingest import history_universe_symbols
+    monkeypatch.setattr(settings, "history_universe", " ^gspc , ^VIX,, GC=F ")
+    assert history_universe_symbols() == {"^GSPC", "^VIX", "GC=F"}
+
+
+async def test_prices_ingest_deep_start_for_universe_anchor(monkeypatch):
+    """HL-1: a history-universe anchor with no stored bars starts at history_backfill_start
+    ("max"); an ordinary ticker keeps the N-year window; both stay incremental afterwards."""
+    from datetime import date as _d
+
+    import app.store.prices_ingest as PI
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "history_universe", "^GSPC")
+    monkeypatch.setattr(settings, "history_backfill_start", "1920-01-01")
+    monkeypatch.setattr(PI, "_last_bar_date", lambda market, t: None)  # nothing stored yet
+    starts: dict[str, _d] = {}
+
+    async def fake_ingest(mk, t, start, end, retries=1):
+        starts[t] = start
+        return 1
+
+    monkeypatch.setattr(PI, "ingest_prices_ticker", fake_ingest)
+    await PI.run_prices_ingest("US", ["^GSPC", "AAPL"], years=10)
+    assert starts["^GSPC"] == _d(1920, 1, 1)                    # anchor → max backfill
+    assert starts["AAPL"].year == _d.today().year - 10          # ordinary → 10y window
+
+
+async def test_prices_sweep_includes_universe_and_recomputes(monkeypatch):
+    """HL-1/HL-2: the US prices sweep appends the anchor universe (deduped) and re-derives
+    episodes + seeds regimes afterwards; the KR sweep is untouched."""
+    import app.store.history as SH
+    import app.store.prices_ingest as PI
+    from app.config import settings
+    from app.pipelines import _run_prices
+
+    monkeypatch.setattr(settings, "history_universe", "^GSPC,^VIX")
+    calls: dict = {"tickers": None, "recomputed": [], "seeded": 0}
+
+    async def fake_run(market, tickers, years):
+        calls["tickers"] = list(tickers)
+        return {}
+
+    monkeypatch.setattr(PI, "run_prices_ingest", fake_run)
+    monkeypatch.setattr(SH, "recompute_episodes",
+                        lambda m, t, **k: calls["recomputed"].append(t) or 0)
+    monkeypatch.setattr(SH, "seed_regimes", lambda: calls.update(seeded=calls["seeded"] + 1) or 0)
+
+    await _run_prices("US", ["AAPL", "^GSPC"])                  # ^GSPC already present → deduped
+    assert calls["tickers"].count("^GSPC") == 1 and "^VIX" in calls["tickers"]
+    assert calls["recomputed"] == ["^GSPC", "^VIX"] and calls["seeded"] == 1
+
+    calls["tickers"] = None
+    await _run_prices("KR", ["005930"])                         # KR sweep: no anchors appended
+    assert calls["tickers"] == ["005930"]

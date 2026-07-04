@@ -22,8 +22,28 @@ async def _run_financials(market: str, tickers: list[str]) -> None:
 
 async def _run_prices(market: str, tickers: list[str]) -> None:
     from app.config import settings
-    from app.store.prices_ingest import run_prices_ingest
+    from app.store.prices_ingest import history_universe_symbols, run_prices_ingest
+
+    # HL-1: every US prices sweep also refreshes the History Lab anchor universe (^GSPC, ^VIX,
+    # ^KS11 … — all Yahoo-global symbols living in the US namespace). First ingest deep-backfills
+    # to max history inside run_prices_ingest; afterwards it's the same cheap incremental fetch.
+    if market.upper() == "US":
+        seen = {t.upper() for t in tickers}
+        tickers = list(tickers) + [s for s in sorted(history_universe_symbols()) if s not in seen]
     await run_prices_ingest(market, tickers, years=settings.prices_backfill_years)
+    if market.upper() == "US":
+        # HL-2: re-derive drawdown episodes for the anchors while their bars are fresh (idempotent;
+        # cheap — pure function of the closes) + keep the curated regimes seeded.
+        from app.store.history import recompute_episodes, seed_regimes
+        for s in sorted(history_universe_symbols()):
+            try:
+                recompute_episodes("US", s)
+            except Exception as exc:  # noqa: BLE001 — one anchor never sinks the sweep
+                logger.warning("episode recompute failed for %s: %s", s, exc)
+        try:
+            seed_regimes()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("regime seeding failed: %s", exc)
 
 
 async def _run_corp_actions(market: str, tickers: list[str]) -> None:

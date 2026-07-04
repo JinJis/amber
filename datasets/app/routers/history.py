@@ -158,8 +158,11 @@ async def regime_compare(ticker: str, slug: str, market: MarketParam = Market.US
     if regime is None:
         raise HTTPException(404, f"unknown regime '{slug}' — see /history/regimes")
     bars = await asyncio.to_thread(_bars_or_404, market.value, ticker)
-    anchor_market = "US" if regime["market"] == "US" else regime["market"]
-    then_bars = await asyncio.to_thread(H.load_closes, anchor_market, regime["anchor_ticker"])
+    # anchors live in the US namespace (HL-1: Yahoo-global symbols incl. ^KS11) — try the regime's
+    # own market first for flexibility, then fall back to US.
+    then_bars = await asyncio.to_thread(H.load_closes, regime["market"], regime["anchor_ticker"])
+    if not then_bars and regime["market"] != "US":
+        then_bars = await asyncio.to_thread(H.load_closes, "US", regime["anchor_ticker"])
     if not then_bars:
         raise HTTPException(404, f"anchor {regime['anchor_ticker']} has no ingested bars — "
                                  "deep-backfill the history universe first")
