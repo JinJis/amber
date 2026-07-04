@@ -62,10 +62,14 @@ async def create_share(body: ShareIn, user: User = Depends(current_user)) -> dic
         raise HTTPException(422, "이 자료에는 원본 데이터와 대조되지 않은 수치가 있어 공유할 수 없습니다: "
                                  + ", ".join(map(str, body.audit["unsupported"][:5])))
     with SessionLocal() as db:
-        n_today = db.execute(select(ShareLink).where(ShareLink.user_email == user.email)).scalars().all()
-        if len([s for s in n_today if not s.revoked]) >= settings.shares_per_user_cap:
+        # COUNT, not fetch-all (IMP-6). The check-then-insert isn't strictly atomic, but the cap is
+        # a soft abuse guard (not a billing invariant) — an off-by-one race is acceptable.
+        from sqlalchemy import func as _f
+        active = db.execute(select(_f.count()).select_from(ShareLink).where(
+            ShareLink.user_email == user.email, ShareLink.revoked.is_(False))).scalar() or 0
+        if active >= settings.shares_per_user_cap:
             raise HTTPException(429, "공유 한도에 도달했습니다 — 기존 공유를 해제한 뒤 다시 시도하세요.")
-        s = ShareLink(token=secrets.token_urlsafe(16), user_email=user.email, kind=body.kind,
+        s = ShareLink(token=secrets.token_urlsafe(24), user_email=user.email, kind=body.kind,
                       title=body.title, payload=json.dumps(body.payload, ensure_ascii=False),
                       image_path=body.image_path)
         db.add(s)
