@@ -41,6 +41,7 @@ class Category(str, Enum):
     news = "news"  # 뉴스룸 — 최신 헤드라인
     screener = "screener"  # 스크리너·퀀트 — 재무 기준 스크리닝
     portfolio = "portfolio"  # 포트폴리오 — 백테스트·포트폴리오 분석
+    history = "history"  # 시장 히스토리 — 낙폭·국면·베이스레이트·유사 구간 (과거 기록, 전망 아님)
 
 
 # Ordered, user-facing metadata for the builder (label + one-line description). The ONLY place
@@ -55,6 +56,7 @@ CATEGORIES: list[dict] = [
     {"id": "news", "label": "뉴스룸", "description": "최신 뉴스 헤드라인"},
     {"id": "screener", "label": "스크리너·퀀트", "description": "재무·팩터 기준 종목 스크리닝"},
     {"id": "portfolio", "label": "포트폴리오 관리", "description": "포트폴리오 백테스트·성과 분석"},
+    {"id": "history", "label": "시장 히스토리", "description": "낙폭·역사적 국면·베이스레이트·유사 구간 — 과거 기록(전망 아님)"},
 ]
 
 

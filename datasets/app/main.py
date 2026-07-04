@@ -15,6 +15,7 @@ from app.logging_config import install_request_logging, setup_logging
 from app.routers import (  # noqa: I001
     backtest,
     fmp,
+    history,
     kis,
     admin,
     catalog,
@@ -88,7 +89,7 @@ install_request_logging(app)
 for module in (
     company, prices, financials, filings, macro, metrics,
     news, earnings, insider, institutional, funds, gurus, corporate_actions, technical,
-    market, search, evidence, catalog, admin, scaffold, valuation, backtest, fmp, kis,
+    market, search, evidence, catalog, admin, scaffold, valuation, backtest, fmp, kis, history,
 ):
     app.include_router(module.router)
 

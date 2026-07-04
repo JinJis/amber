@@ -382,6 +382,68 @@ CONNECTORS: list[ConnectorManifest] = [
                      provenance=Provenance(source="FMP", as_of_field="date", freshness=Freshness.periodic)),
         ],
     ),
+    ConnectorManifest(
+        id="market_history", name="Market History (히스토리 랩)", domain="analytics",
+        description="시장 히스토리 분석 — 낙폭·역사적 국면·베이스레이트·유사 구간. 저장된 가격의 결정론적 "
+                    "기술통계(과거 기록 · 전망 아님); 모든 응답에 계산 방법·사건 날짜·라벨 포함.",
+        markets=["US", "KR"],
+        upstream=UpstreamCredential(requires_key=False),
+        license=LIC_DERIVED,
+        resources=[
+            Resource(name="drawdowns",
+                     description="낙폭(underwater) 시리즈 — 고점 대비 하락률 추이와 현재 낙폭·고점일. 과거 기록.",
+                     path="/history/drawdowns", markets=["US", "KR"], cost_tier=CostTier.low,
+                     params=[P_TICKER_REQ, P_MARKET],
+                     provenance=Provenance(source="derived: ingested prices", as_of_field="as_of", freshness=Freshness.eod)),
+            Resource(name="episodes",
+                     description="낙폭 에피소드 — 고점→저점→회복 구간 목록(깊이·기간·회복일, dd-v1). 닷컴버블·GFC 같은 "
+                                 "과거 약세장과의 비교 기반. 과거 기록.",
+                     path="/history/episodes", markets=["US", "KR"], cost_tier=CostTier.low,
+                     params=[P_TICKER_REQ, ResourceParam(name="threshold", type="number",
+                                                         description="에피소드 임계 낙폭 %(기본 20)."), P_MARKET],
+                     provenance=Provenance(source="derived: ingested prices", as_of_field="as_of", freshness=Freshness.eod)),
+            Resource(name="vol_context",
+                     description="변동성 컨텍스트 — 실현변동성(20/60/252일)과 자체 히스토리 퍼센타일; ^VIX는 레벨 퍼센타일 "
+                                 "포함(is_level=true). 과거 기록.",
+                     path="/history/vol-context", markets=["US", "KR"], cost_tier=CostTier.low,
+                     params=[P_TICKER_REQ, ResourceParam(name="is_level", type="boolean",
+                                                         description="변동성 '레벨' 지수(^VIX)면 true."), P_MARKET],
+                     provenance=Provenance(source="derived: ingested prices", as_of_field="as_of", freshness=Freshness.eod)),
+            Resource(name="base_rates",
+                     description="베이스레이트 — 과거 사건(예: 일간 −5% 하락) 뒤 1/5/20/60/120일 수익률의 기술통계 "
+                                 "(n·중앙값·사분위·상승마감비율)와 사건 날짜 전체. 과거 발생 기록이며 확률 예측이 아님.",
+                     path="/history/base-rates", markets=["US", "KR"], cost_tier=CostTier.low,
+                     params=[P_TICKER_REQ,
+                             ResourceParam(name="event", required=True,
+                                           description='사건 JSON: {"daily_return_lte": -5.0} 또는 {"drawdown_gte": 20.0}.'),
+                             ResourceParam(name="horizons", description="구간(거래일) 콤마 목록, 기본 1,5,20,60,120."),
+                             P_MARKET],
+                     provenance=Provenance(source="derived: ingested prices", as_of_field="as_of", freshness=Freshness.eod)),
+            Resource(name="analogues",
+                     description="유사 구간 검색 — 최근 N일 경로와 가장 닮은 과거 구간 top-k(유사도·기간·그 뒤 실제 경로). "
+                                 "과거 기록; 평균 경로/예측선 없음.",
+                     path="/history/analogues", markets=["US", "KR"], cost_tier=CostTier.low,
+                     params=[P_TICKER_REQ, ResourceParam(name="window", type="integer", description="비교 구간 거래일(기본 120)."),
+                             ResourceParam(name="k", type="integer", description="반환 매치 수(기본 5)."), P_MARKET],
+                     provenance=Provenance(source="derived: ingested prices", as_of_field="as_of", freshness=Freshness.eod)),
+            Resource(name="regimes",
+                     description="역사적 국면 목록 — 닷컴버블·GFC·코로나·IMF 외환위기 등 큐레이션+출처 표기 국면과 파생 "
+                                 "에피소드. '그때'를 고를 때 사용.",
+                     path="/history/regimes", markets=["US", "KR"], cost_tier=CostTier.low,
+                     params=[ResourceParam(name="market", description="US | KR (생략 시 전체).")],
+                     provenance=Provenance(source="curated + derived", freshness=Freshness.periodic)),
+            Resource(name="regime_compare",
+                     description="그때 vs 지금 — 현재 티커의 최근 경로와 선택한 과거 국면 경로를 정렬해 낙폭·경과일 비교. "
+                                 "과거 기록.",
+                     path="/history/regime-compare", markets=["US", "KR"], cost_tier=CostTier.low,
+                     params=[P_TICKER_REQ, ResourceParam(name="slug", required=True,
+                                                         description="국면 slug (/history/regimes에서)."),
+                             ResourceParam(name="window", type="integer", description="'지금' 경로 거래일(기본 252)."),
+                             P_MARKET],
+                     provenance=Provenance(source="derived: ingested prices + curated regimes",
+                                           as_of_field="as_of", freshness=Freshness.eod)),
+        ],
+    ),
 ]
 
 
@@ -447,6 +509,14 @@ _RESOURCE_META: dict[tuple[str, str], tuple[Category, Cadence]] = {
     # fmp
     ("fmp", "consensus_estimates"): (Category.valuation, Cadence.event),
     ("fmp", "earnings_calendar"): (Category.fundamentals, Cadence.event),
+    # market_history (히스토리 랩 — derived daily from ingested prices; regimes are curated+event)
+    ("market_history", "drawdowns"): (Category.history, Cadence.daily),
+    ("market_history", "episodes"): (Category.history, Cadence.daily),
+    ("market_history", "vol_context"): (Category.history, Cadence.daily),
+    ("market_history", "base_rates"): (Category.history, Cadence.daily),
+    ("market_history", "analogues"): (Category.history, Cadence.daily),
+    ("market_history", "regimes"): (Category.history, Cadence.event),
+    ("market_history", "regime_compare"): (Category.history, Cadence.daily),
     # kis
     ("kis", "volume_rank"): (Category.market, Cadence.intraday),
     ("kis", "investor_flow"): (Category.gurus, Cadence.daily),
