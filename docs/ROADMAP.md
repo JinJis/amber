@@ -643,19 +643,19 @@ touches the same files; overlaps with already-planned tasks are marked "=".
 
 | id | finding | size | status / plan |
 |---|---|---|---|
-| IMP-1 | run event buffers unbounded in-memory (`runs.py` — long chats grow MBs; `_MAX_RUNS` prunes runs, not their buffers) | M | ⬜ cap events per run + evict on finish |
-| IMP-2 | Yahoo 5xx has no backoff/circuit-breaker (`http.py` — one rate-limit event fails a whole sweep; observed live 503s) | M | ⬜ per-provider backoff + breaker; retry-recommended flag in error_details (pairs with OPS-1) |
-| IMP-3 | DeskHome fetch failure = silent skeleton (`DeskHome.tsx` — no error UI/retry, `degraded` flag unused) | S | ⬜ error state + retry (UX_SPEC §3.2 graceful-empty) |
+| IMP-1 | run event buffers unbounded in-memory | M | ✅ live cap 4000 + finished tail 300, offset-safe resume |
+| IMP-2 | Yahoo 5xx no backoff/breaker | M | ✅ bounded backoff on 429/5xx + 60s per-provider breaker; 404 never retried |
+| IMP-3 | DeskHome fetch failure = silent skeleton | S | ✅ retryable error state; degraded flag consumed |
 | IMP-4 | public share page `/s/[token]` absent | — | = **SH-3** (already next in M-SHARE) |
-| IMP-5 | conversation-history load fails silently (`Chat.tsx` catch{}) | S | ⬜ error banner + reload |
+| IMP-5 | conversation-history load fails silently | S | ✅ banner + 다시 시도 |
 | IMP-6 | shares cap counted via fetch-all + races | S | ✅ fixed (COUNT + soft-cap note); token entropy 16→24 bytes |
-| IMP-7 | `fred__macro_panel` absent from planner routing hints → single-series answers (known eval failure) | S | ⬜ add hint; same pass adds the backtest-tool routing hint (AQ-5) |
-| IMP-8 | web has zero unit tests (vitest absent) | M | = **UX-4** scope; pull the runner forward before SH-2 UI work |
+| IMP-7 | macro_panel/backtest/quant/market_history absent from planner hints | S | ✅ routing hints 6–9 added |
+| IMP-8 | web has zero unit tests (vitest absent) | M | ⬜ **NEXT** (= UX-4 runner; deliberately deferred over 3am npm risk) |
 | IMP-9 | transcript archive capped at 4Q | M | = **EC-1** (already planned) |
-| IMP-10 | desk-feed regenerate lacks overall timeout + invalidation race (edit during in-flight generate → stale write) | S | ⬜ wait_for + generation nonce |
+| IMP-10 | desk-feed timeout + mid-generation race | S | ✅ 45s cap + context nonce (stale write skipped) |
 | IMP-11 | news is rolling-only — era news absent | L | = **HL-5** (already planned) |
-| IMP-12 | Form 4 / deck citations lack evidence URL·page (known eval failures) | S | ⬜ stamp URL/page into citations + eval checks |
-| IMP-13 | shares never expire (retention liability) | S | ⬜ `expires_at` (+90d default) + cleanup, lands with SH-3 |
+| IMP-12 | Form 4 / deck citations lack evidence URL·page | S | 🚧 Form 4 filing_url/accession ✅ · deck page-jump ⬜ |
+| IMP-13 | shares never expire | S | ✅ expires_at +90d, 410 on expiry |
 | IMP-14 | KR macro beyond rates absent | M | = **DATA-KR-1** (already planned) |
 
 Sequencing: **SH-2/SH-3 (with IMP-13) → IMP-3/5/10 (S-batch) → IMP-7/12 (answer-quality
