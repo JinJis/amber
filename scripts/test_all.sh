@@ -32,6 +32,11 @@ for d in datasets control-plane mcp agent-engine studio-api; do
 done
 echo "-- rag (pipeline on a fake embedder; live semantic skips without GOOGLE_API_KEY)"; unit rag "" || FAIL=1
 
+step "Web unit tests (vitest in docker node — IMP-8/UX-4)"
+docker run --rm -v "$PWD/web:/app" -v "vg_webmodules:/app/node_modules" -w /app node:20-alpine \
+  sh -lc "npm install --no-audit --no-fund --loglevel=error >/dev/null && ./node_modules/.bin/vitest run" \
+  && echo "  web unit ok" || FAIL=1
+
 step "Web build (docker build)"
 docker compose build web >/dev/null 2>&1 && echo "  web build ok" || { echo "  web build FAILED"; FAIL=1; }
 
