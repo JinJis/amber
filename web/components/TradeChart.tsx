@@ -12,6 +12,7 @@ import {
   type Time,
 } from "lightweight-charts";
 import type { Artifact, ArtifactMarker, ChartAnnotations, Citation } from "../lib/types";
+import { attachRegimeZones, underwaterSeries } from "./chartPrimitives";
 import { fmtBig } from "../lib/format";
 
 const MARKER_SHAPE: Record<string, "circle" | "arrowUp" | "arrowDown" | "square"> = {
@@ -69,6 +70,7 @@ export function TradeChart(
   const [range, setRange] = useState("MAX");  // default to all available data (fitContent) — a short
   //                                              window looks empty/ugly when the series is sparse
   const [logScale, setLogScale] = useState(false);
+  const [underwater, setUnderwater] = useState(false);   // HL-8(a): drawdown % sub-pane toggle
   const [rebase, setRebase] = useState(false);   // line mode only: index each series to 100
   // PH-VIZ-5: drawing mode (only when onDraw is provided). The pending point of a 2-click
   // trend line lives in a ref so it survives a re-render between clicks.
@@ -343,6 +345,36 @@ export function TradeChart(
       });
     }
 
+    // HL-8(b): regime shading — semi-transparent background spans for the fetched regimes
+    // (annotations.zones), behind the series. Only meaningful on long ranges; the primitive
+    // clips to the visible window itself.
+    let detachZones: (() => void) | null = null;
+    if (mainSeries && a.annotations?.zones?.length) {
+      detachZones = attachRegimeZones(mainSeries as any, a.annotations.zones.map((z) => ({
+        t0: toTime(z.t0) ?? z.t0, t1: toTime(z.t1) ?? z.t1, label: z.label, color: z.color,
+      })));
+    }
+
+    // HL-8(a): underwater (drawdown %) sub-pane — computed peer-to-date from the chart's OWN
+    // close series (no extra fetch). Its own bottom scale; area under zero.
+    if (underwater) {
+      const closes = isCandle
+        ? candleData.map((c) => ({ time: toTime(c.time) ?? "", value: c.close ?? 0 }))
+        : (lineData[0]?.points ?? []).map((p) => ({ time: toTime(p.x) ?? "", value: p.y ?? 0 }));
+      const uw = underwaterSeries(closes.filter((c) => c.time && c.value > 0));
+      if (uw.length) {
+        const uwSeries = chart.addAreaSeries({
+          priceScaleId: "uw", lineColor: "rgba(209,72,58,0.7)", lineWidth: 1,
+          topColor: "rgba(209,72,58,0.04)", bottomColor: "rgba(209,72,58,0.22)",
+          priceFormat: { type: "custom", formatter: (v: number) => `${v.toFixed(0)}%` },
+          lastValueVisible: false, priceLineVisible: false,
+        });
+        uwSeries.setData(uw.map((u) => ({ time: u.time as Time, value: u.value })));
+        uwSeries.priceScale().applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } });
+        chart.priceScale("right").applyOptions({ scaleMargins: { top: 0.05, bottom: 0.26 } });
+      }
+    }
+
     // apply the selected range (MAX → fit all)
     const days = RANGES.find(([k]) => k === range)?.[1] ?? 0;
     if (days && lastTime) {
@@ -358,8 +390,8 @@ export function TradeChart(
       width: el.clientWidth, ...(fillHeight ? { height: el.clientHeight || 220 } : {}),
     }));
     ro.observe(el);
-    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
-  }, [a, bars, series, currency, range, logScale, rebase, isCandle, userAnn, drawMode, onDraw, fillHeight]);
+    return () => { ro.disconnect(); detachZones?.(); chart.remove(); chartRef.current = null; };
+  }, [a, bars, series, currency, range, logScale, rebase, isCandle, userAnn, drawMode, onDraw, fillHeight, underwater]);
 
   const hasDrawings = (userAnn?.lines?.length || 0) + (userAnn?.hlines?.length || 0) > 0;
 
@@ -407,6 +439,9 @@ export function TradeChart(
           {!isCandle && lineCount >= 1 && (
             <button type="button" className={rebase ? "on" : ""} onClick={() => setRebase((v) => !v)} title="시작점=100 기준 % 변화">% 기준</button>
           )}
+          {/* HL-8(a): drawdown (underwater) sub-pane */}
+          <button type="button" className={underwater ? "on" : ""} onClick={() => setUnderwater((v) => !v)}
+            title="고점 대비 낙폭(%) 하단 패널">낙폭</button>
           {/* PH-VIZ-5: drawing tools (only when the parent persists them via onDraw) */}
           {onDraw && (
             <>

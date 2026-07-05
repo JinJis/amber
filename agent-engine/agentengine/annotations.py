@@ -116,7 +116,7 @@ def _validate(raw: dict, lo_t: str, hi_t: str, lo_p: float, hi_p: float) -> Char
               for h in (raw.get("hlines") or []) if in_p(h.get("price"))]
     vlines = [ChartVLine(time=v["time"], label=v.get("label"), color="#D9A300")
               for v in (raw.get("vlines") or []) if in_t(v.get("time"))]
-    zones = [ChartZone(t0=z["t0"], t1=z["t1"], label=z.get("label"), color="rgba(79,140,255,0.10)")
+    zones = [ChartZone(t0=z["t0"], t1=z["t1"], label=z.get("label"), color="rgba(26,27,30,0.055)")  # HL-8: ink shade, brand grayscale
              for z in (raw.get("zones") or []) if in_t(z.get("t0")) and in_t(z.get("t1"))]
     if not (lines or hlines or vlines or zones or raw.get("rebase")):
         return None
