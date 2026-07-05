@@ -65,7 +65,10 @@ class ShareLink(Base):
     kind: Mapped[str] = mapped_column(String(12))            # artifact | verdict | note | quote
     title: Mapped[str] = mapped_column(String(160))
     payload: Mapped[str] = mapped_column(Text)
-    image_path: Mapped[str | None] = mapped_column(String(256), nullable=True)  # OG PNG (optional v1)
+    image_path: Mapped[str | None] = mapped_column(String(256), nullable=True)  # OG PNG path (reserved)
+    # SH-2b: the client-rendered OG card PNG, base64 (data URL body). Served by GET /shares/{token}/image
+    # and referenced by the public page's og:image. Stored with the share so it needs no volume.
+    og_image: Mapped[str | None] = mapped_column(Text, nullable=True)
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
     # IMP-13: shares expire (+90d default) — corrected/deleted research must not stay public forever
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

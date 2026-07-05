@@ -87,9 +87,12 @@ def _add_missing_columns() -> None:
     # IMP-13: share expiry on existing share_links tables
     if "share_links" in names:
         scols = {c["name"] for c in inspector.get_columns("share_links")}
-        if "expires_at" not in scols:
-            with engine.begin() as conn:
+        with engine.begin() as conn:
+            if "expires_at" not in scols:
                 conn.execute(text(f"ALTER TABLE share_links ADD COLUMN expires_at {ts}"))
+            # SH-2b: base64 OG card image
+            if "og_image" not in scols:
+                conn.execute(text("ALTER TABLE share_links ADD COLUMN og_image TEXT"))
 
 
 def init_db() -> None:

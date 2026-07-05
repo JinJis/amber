@@ -104,3 +104,46 @@ def test_share_expiry_410(monkeypatch):
         db.commit()
     r = client.get(f"/shares/{tok}", headers={"X-Service-Token": SVC})
     assert r.status_code == 410 and "만료" in r.json()["detail"]
+
+
+# --- SH-2b: OG card image attach + public serve ---------------------------------------
+# a minimal valid 1x1 PNG (the endpoint only checks the PNG signature + size)
+_PNG_1x1 = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01"
+    b"\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+@respx.mock
+def test_share_image_attach_and_public_serve(monkeypatch):
+    import base64
+
+    from studioapi.config import settings
+    monkeypatch.setattr(settings, "control_plane_url", "http://cp.test")
+    monkeypatch.setattr(settings, "public_base_url", "https://vg.example")
+    _cp()
+    tok = client.post("/shares", headers=_hdr("img@u.com"), json={
+        "kind": "artifact", "title": "카드", "payload": ART}).json()["token"]
+
+    # no image yet → 404, and the public read reports has_image=false
+    assert client.get(f"/shares/{tok}/image", headers={"X-Service-Token": SVC}).status_code == 404
+    assert client.get(f"/shares/{tok}", headers={"X-Service-Token": SVC}).json()["has_image"] is False
+
+    data_url = "data:image/png;base64," + base64.b64encode(_PNG_1x1).decode()
+    r = client.put(f"/shares/{tok}/image", headers=_hdr("img@u.com"), json={"data_url": data_url})
+    assert r.status_code == 200 and r.json()["image_url"] == f"/shares/{tok}/image"
+
+    # public serve returns the exact PNG bytes, cacheable
+    img = client.get(f"/shares/{tok}/image", headers={"X-Service-Token": SVC})
+    assert img.status_code == 200 and img.headers["content-type"] == "image/png"
+    assert img.content == _PNG_1x1 and "max-age" in img.headers.get("cache-control", "")
+    assert client.get(f"/shares/{tok}", headers={"X-Service-Token": SVC}).json()["has_image"] is True
+
+    # non-owner cannot attach; non-PNG is rejected; revoked hides the image
+    assert client.put(f"/shares/{tok}/image", headers=_hdr("other@u.com"),
+                      json={"data_url": data_url}).status_code == 404
+    assert client.put(f"/shares/{tok}/image", headers=_hdr("img@u.com"),
+                      json={"data_url": "data:image/png;base64,Zm9v"}).status_code == 422  # 'foo' → not PNG
+    client.delete(f"/shares/{tok}", headers=_hdr("img@u.com"))
+    assert client.get(f"/shares/{tok}/image", headers={"X-Service-Token": SVC}).status_code == 404

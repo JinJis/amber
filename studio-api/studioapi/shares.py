@@ -14,7 +14,10 @@ import secrets
 from datetime import datetime, timedelta
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+import base64
+import binascii
+
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -34,6 +37,24 @@ class ShareIn(BaseModel):
     payload: dict                      # the snapshot (artifact JSON / note blocks / quote card)
     audit: dict | None = None          # QT-2 result from the turn ({checked, unsupported: []})
     image_path: str | None = None      # client-rendered OG PNG (uploaded separately, optional v1)
+
+
+class ShareImageIn(BaseModel):
+    """SH-2b: the client-rendered OG card PNG as a base64 data URL (or bare base64)."""
+    data_url: str = Field(..., description="data:image/png;base64,… or bare base64")
+
+
+def _decode_png(data_url: str) -> bytes:
+    b64 = data_url.split(",", 1)[1] if data_url.startswith("data:") else data_url
+    try:
+        raw = base64.b64decode(b64, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(422, "이미지 데이터가 올바르지 않습니다.")
+    if not raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise HTTPException(422, "PNG 이미지만 허용됩니다.")
+    if len(raw) > 3_000_000:  # a card PNG is ~50-300KB; cap abuse
+        raise HTTPException(413, "이미지가 너무 큽니다 (최대 3MB).")
+    return raw
 
 
 def _share_urls(token: str, title: str) -> dict:
@@ -98,6 +119,35 @@ async def revoke_share(token: str, user: User = Depends(current_user)) -> dict:
         return {"revoked": token}
 
 
+@router.put("/shares/{token}/image", summary="SH-2b: OG 카드 이미지 첨부 (게시자만)")
+async def set_share_image(token: str, body: ShareImageIn, user: User = Depends(current_user)) -> dict:
+    raw = _decode_png(body.data_url)  # validate before touching the DB
+    with SessionLocal() as db:
+        s = db.get(ShareLink, token)
+        if s is None or s.user_email != user.email:
+            raise HTTPException(404, "share not found")
+        s.og_image = base64.b64encode(raw).decode("ascii")
+        db.commit()
+        return {"token": token, "image_url": f"/shares/{token}/image", "bytes": len(raw)}
+
+
+@router.get("/shares/{token}/image", summary="공개 OG 카드 이미지 (PNG)")
+async def get_share_image(token: str) -> Response:
+    """Public: the baked card PNG for og:image. 404 when absent/revoked/expired (never a broken image)."""
+    with SessionLocal() as db:
+        s = db.get(ShareLink, token)
+    if s is None or s.revoked or not s.og_image:
+        raise HTTPException(404, "no image")
+    if s.expires_at and s.expires_at < datetime.utcnow():
+        raise HTTPException(410, "expired")
+    try:
+        raw = base64.b64decode(s.og_image)
+    except (binascii.Error, ValueError):
+        raise HTTPException(404, "no image")
+    return Response(content=raw, media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
 @router.get("/shares/{token}", summary="공개 읽기 — 스냅샷 페이로드 (유저 인증 불필요)")
 async def read_share(token: str) -> dict:
     """The web /s/{token} page calls this server-side with the service token only — no user."""
@@ -111,5 +161,6 @@ async def read_share(token: str) -> dict:
         raise HTTPException(410, "이 공유는 만료되었습니다.")
     return {"token": s.token, "kind": s.kind, "title": s.title,
             "payload": json.loads(s.payload), "image_path": s.image_path,
+            "has_image": bool(s.og_image),
             "created_at": s.created_at.isoformat() if s.created_at else None,
             "share_urls": _share_urls(s.token, s.title)}

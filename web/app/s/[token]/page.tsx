@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 type Share = {
   token: string; kind: string; title: string; payload: Record<string, unknown>;
-  created_at?: string | null; share_urls?: Record<string, string>;
+  created_at?: string | null; share_urls?: Record<string, string>; has_image?: boolean;
 };
 
 async function fetchShare(token: string): Promise<{ status: number; share: Share | null }> {
@@ -29,10 +29,13 @@ export async function generateMetadata({ params }: { params: { token: string } }
   const { share } = await fetchShare(params.token);
   const title = share ? `${share.title} · ValueGraph` : "공유된 자료 · ValueGraph";
   const description = "출처·기준일이 함께 담긴 검증 가능한 리서치 자료입니다. 원본 데이터로 직접 확인해보세요.";
+  // SH-2b: when the share carries a baked card image, use it as the OG/Twitter preview (large card).
+  const img = share?.has_image ? `/api/shares/${encodeURIComponent(params.token)}/image` : undefined;
   return {
     title, description,
-    openGraph: { title, description, type: "article" },
-    twitter: { card: "summary", title, description },
+    openGraph: { title, description, type: "article", ...(img ? { images: [{ url: img }] } : {}) },
+    twitter: { card: img ? "summary_large_image" : "summary", title, description,
+               ...(img ? { images: [img] } : {}) },
   };
 }
 

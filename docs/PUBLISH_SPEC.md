@@ -93,6 +93,13 @@ on the image must have passed the number audit (§5). 텍스트 최소 12px(모�
   (`POST /shares`, `GET /shares`, `DELETE /shares/{token}` revoke, public `GET /shares/{token}`
   no-auth read), payload snapshot, rate limit (per-user/day). Tests: create/read/revoke/410,
   snapshot immutability, public route needs no service headers.
+- **SH-2b · Aspect-preset card images + OG (web + studio-api)** — ✅ done. The share sheet renders
+  the artifact into a grayscale PNG at 1:1 / 4:5 / 16:9 (`web/lib/shareCard.ts`, canvas 2D, no libs)
+  with the **provenance strip baked in** (non-removable; history kinds carry '과거 기록 · 전망 아님';
+  source · as_of · ValueGraph + short link). 저장 · 이미지 복사(clipboard); the 1:1 auto-uploads as the
+  share's OG image (`PUT /shares/{token}/image`, base64 PNG stored on the share row — no volume), served
+  publicly by `GET /shares/{token}/image` and used as `og:image`/`summary_large_image` on `/s/{token}`.
+  Numbers are already QT-2-gated at share-create, so an image can't carry an unsupported figure.
 - **SH-2 · Share tap + card composer (web)** — 공유 버튼 on every ArtifactCard/HistoryArtifact
   (＋대시보드 옆): opens a sheet → aspect preset preview (client-render to canvas, reusing the
   PH-VIZ-6 pipeline generalized beyond TradeChart: html-to-canvas for table/base_rates/analogue
