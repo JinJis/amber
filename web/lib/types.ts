@@ -115,6 +115,9 @@ export type Artifact = {
   base_rates?: BaseRatesData | null;  // kind=base_rates
   analogue?: AnalogueData | null;     // kind=analogue
   verdict?: VerdictData | null;       // kind=verdict (M-FACT 팩트체크)
+  passage?: string | null;            // kind=quote (SH-4 원문 인용 카드) — verbatim highlighted text
+  doc_title?: string | null;          // kind=quote: the document the passage came from
+  url?: string | null;                // kind=quote: link back to the source document
   source?: string | null;
   as_of?: string | null;
   freshness?: string | null;

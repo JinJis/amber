@@ -822,7 +822,8 @@ export default function Chat({ name, features }: { name: string; features: Featu
         />
       )}
 
-      {viewer && <SourceViewer c={viewer} onClose={() => setViewer(null)} />}
+      {viewer && <SourceViewer c={viewer} onClose={() => setViewer(null)}
+        onQuote={(q) => { setViewer(null); setShareArt(q); }} />}
       {pinTarget && (
         <PinPicker spec={pinTarget} onClose={() => setPinTarget(null)} onPinned={() => setPinTarget(null)} />
       )}

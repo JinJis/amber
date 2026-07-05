@@ -108,7 +108,12 @@ on the image must have passed the number audit (§5). 텍스트 최소 12px(모�
 - **SH-3 · Public share page (web)** — `/s/[token]` public route + OG/Twitter meta + read-only
   render + CTA + revoked/expired states. Middleware auth exception. Tests: no-auth fetch, OG
   tags, 410.
-- **SH-4 · Evidence highlight card** — the evidence viewer gains "이 문단 카드로": captures the
+- **SH-4 · Evidence highlight card** — ✅ done. The SourceViewer side panel gains "이 문단 카드로 ↗":
+  captures the user's TEXT selection (window.getSelection, ≥4 chars) or the cited snippet into a
+  `quote` artifact {passage(verbatim), doc_title, source, as_of, url} → the existing share pipeline
+  (studio-api kind `quote`, public page renders the blockquote). No screenshot — the passage is text,
+  and it needs no number audit. The share card image renders the quote too.
+  ORIGINAL: the evidence viewer gains "이 문단 카드로": captures the
   highlighted passage (text, not screenshot) into a quote-card artifact {passage, doc title,
   filing date, url} → same share pipeline. The 원문 인증짤. Tests: quote fidelity (verbatim),
   source fields mandatory.

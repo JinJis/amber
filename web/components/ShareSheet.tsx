@@ -33,8 +33,12 @@ export function ShareSheet({ a, audit, onClose }: {
       try {
         const r = await fetch("/api/shares", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kind: "artifact", title: a.title || "ValueGraph 자료",
-                                 payload: a, audit: audit ?? null }),
+          body: JSON.stringify(
+            a.kind === "quote"
+              ? { kind: "quote", title: a.title || "원문 인용",
+                  payload: { passage: a.passage, source: a.source, doc_title: a.doc_title, url: a.url, as_of: a.as_of },
+                  audit: null }  // a verbatim quote has no computed numbers to audit
+              : { kind: "artifact", title: a.title || "ValueGraph 자료", payload: a, audit: audit ?? null }),
         });
         if (r.status === 422) { setDetail((await r.json()).error ?? ""); setState("blocked"); return; }
         if (!r.ok) { setState("error"); return; }

@@ -19,7 +19,9 @@ const TABS: { key: "filing" | "web" | "data"; label: string }[] = [
   { key: "data", label: "▤ 데이터" },
 ];
 
-export function SourceViewer({ c, onClose }: { c: Citation; onClose: () => void }) {
+export function SourceViewer({ c, onClose, onQuote }: {
+  c: Citation; onClose: () => void; onQuote?: (a: import("@/lib/types").Artifact) => void;
+}) {
   const shape = sourceShape(c);
   const [copied, setCopied] = useState(false);
   // DRV-3: an input row's [원문↗] swaps the stage to the /evidence viewer for THAT input —
@@ -33,6 +35,18 @@ export function SourceViewer({ c, onClose }: { c: Citation; onClose: () => void 
   // transcripts, macro pages, news) uses the HTML FilingViewer.
   const isDeck = !!deckSrc(c);
   const frameSrc = isDeck ? null : viewerSrc(c);
+
+  // SH-4: capture the highlighted passage (or the cited snippet) into a quote card → share pipeline.
+  function quoteThis() {
+    const sel = typeof window !== "undefined" ? window.getSelection?.()?.toString().trim() : "";
+    const passage = (sel && sel.length >= 4 ? sel : c.snippet || "").trim();
+    if (!passage || !onQuote) return;
+    onQuote({
+      kind: "quote", title: `${c.source || "원문"} 인용`, series: [],
+      passage, doc_title: [c.source, c.doc_type, c.page].filter(Boolean).join(" · ") || c.source || null,
+      source: c.source || null, as_of: c.as_of || null, url: c.url || null,
+    });
+  }
 
   async function copyCite() {
     const text = `“${c.snippet ?? ""}” — ${c.source ?? ""}${c.as_of ? ` (${c.as_of})` : ""}${c.url ? ` ${c.url}` : ""}`.trim();
@@ -127,6 +141,11 @@ export function SourceViewer({ c, onClose }: { c: Citation; onClose: () => void 
             <div className="sv-ctx-actions">
               {c.url ? <a className="sv-act primary" href={c.url} target="_blank" rel="noreferrer">원문 보기 ↗</a> : null}
               <button className="sv-act" onClick={copyCite}>{copied ? "복사됨 ✓" : "인용 복사"}</button>
+              {onQuote && (c.snippet || c.url) ? (
+                <button className="sv-act" onClick={quoteThis} title="선택한 문단(없으면 인용 구절)을 카드로 공유">
+                  이 문단 카드로 ↗
+                </button>
+              ) : null}
             </div>
           </aside>
         </div>

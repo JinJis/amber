@@ -33,6 +33,11 @@ export function shareCardLines(a: Artifact, max = 8): string[] {
   const out: string[] = [];
   const push = (s: string | null | undefined) => { if (s && out.length < max) out.push(String(s)); };
 
+  if (a.kind === "quote" && a.passage) {
+    push(`“${a.passage}”`);
+    if (a.doc_title) push(`— ${a.doc_title}`);
+    return out.slice(0, max);
+  }
   if (a.kind === "verdict" && a.verdict) {
     const v = a.verdict as VerdictData;
     push(`${VERDICT_GLYPH[v.verdict] ?? ""} 판정: ${v.verdict}`.trim());

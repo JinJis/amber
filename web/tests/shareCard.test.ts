@@ -63,6 +63,16 @@ describe("shareCard helpers", () => {
     expect(isHistoryKind(fut)).toBe(true);
   });
 
+  it("quote lines carry the verbatim passage and doc title (SH-4)", () => {
+    const a: Artifact = { kind: "quote", title: "SEC 인용", series: [],
+      passage: "We face intense competition in all markets.", doc_title: "AAPL 10-K · 위험요소",
+      source: "SEC EDGAR", as_of: "2024-11-01" };
+    const lines = shareCardLines(a);
+    expect(lines[0]).toContain("We face intense competition");
+    expect(lines.some((l) => l.includes("AAPL 10-K"))).toBe(true);
+    expect(isHistoryKind(a)).toBe(false);  // a quote is not a history kind
+  });
+
   it("wrap breaks on words within the char budget", () => {
     expect(wrap("the quick brown fox", 9)).toEqual(["the quick", "brown fox"]);
     expect(wrap("single", 20)).toEqual(["single"]);
