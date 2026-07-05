@@ -85,6 +85,29 @@ class NoteBlock(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class StandingQuestion(Base):
+    """M-SA: a QUESTION the user subscribed to — not an alert rule. Created from the one-tap
+    "🔔 이 질문 계속 지켜보기" chip after an answer whose evidence is periodic (cadence-gated).
+    The desk-feed generation piggybacks a cheap SIGNATURE check (latest as_of / accession /
+    bar date from the recorded source call); a changed signature yields a `standing_update`
+    desk card. Delivery is the DESK, never a push channel (chat-first)."""
+
+    __tablename__ = "standing_questions"
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: _uid("sq"))
+    user_email: Mapped[str] = mapped_column(ForeignKey("users.email"), index=True)
+    question: Mapped[str] = mapped_column(String(400))
+    ticker: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    market: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    cadence: Mapped[str] = mapped_column(String(12), default="daily")   # daily | event | weekly
+    # the signature source: ONE recorded tool call {tool, args} whose freshest identifier
+    # (as_of / accession / bar date) stands in for "did the underlying data change?"
+    probe: Mapped[str] = mapped_column(Text, default="{}")
+    last_signature: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class ShareLink(Base):
     """M-SHARE (SH-1): an immutable share snapshot — public read via unguessable token, revocable.
     payload = JSON snapshot (a share never silently changes; its as_of stays visible)."""

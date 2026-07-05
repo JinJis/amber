@@ -1434,6 +1434,18 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .share-nb-ev { font-size: 12px; color: var(--text); }
 .share-nb-why { margin: 6px 0 0; font-size: 10.5px; color: var(--text-2); }
 .share-nb-pin .muted { color: var(--muted); }
+
+/* ── SA: 스탠딩 알림 (질문 구독) ─────────────────────────────── */
+.fu-chip.standing { border-style: dashed; color: var(--text-2); }
+.fu-chip.standing.on { border-style: solid; background: var(--panel-2); color: var(--muted); cursor: default; }
+.standing { margin-top: 18px; border-top: 1px solid var(--line-3); padding-top: 12px;
+  display: flex; flex-direction: column; gap: 6px; }
+.standing-h { font-size: 12px; font-weight: 600; color: var(--text); display: flex; gap: 8px; align-items: baseline; }
+.standing-sub { font-size: 10px; color: var(--muted); font-weight: 400; }
+.standing-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+  border: 1px solid var(--line-3); border-radius: 8px; background: var(--panel); }
+.standing-q { flex: 1; font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.standing-meta { font-size: 10px; color: var(--muted); white-space: nowrap; }
 .share-blocked { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-fg);
   border-radius: 9px; padding: 9px 11px; font-size: 12.5px; }
 .share-page { min-height: 100vh; background: var(--bg); display: flex; flex-direction: column; }

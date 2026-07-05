@@ -144,6 +144,7 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
     history: list = []
     citations: list[dict] = []
     cite_ctx: list[tuple[dict, dict, object]] = []  # (citation, tool, data) → re-anchor evidence post-answer
+    probes: list[dict] = []   # SA-1: periodic sources this turn → the standing-question offer
     artifacts: list[dict] = []
     art_objs: list = []          # the Artifact objects → enrich with chart markers post-loop
     seen_artifacts: set = set()
@@ -340,6 +341,11 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                     yield {"type": "thinking", "phase": "found", "text": f"· {label} 호출에 실패했어요"}
                     continue
                 yield {"type": "tool_result", "status": result["status"], "connector": result.get("connector")}
+                # SA-1: a 200 from a PERIODIC source makes this question standing-able —
+                # record the call as the subscription's change probe (path+args+cadence).
+                if result.get("status") == 200 and tool.get("cadence") not in (None, "one_shot"):
+                    probes.append({"path": tool.get("path"), "args": d.args or {},
+                                   "cadence": tool.get("cadence"), "source": tool.get("source")})
                 before = len(citations)
                 for c in _citations(tool, result):
                     cit = c.model_dump()
@@ -458,5 +464,19 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
     if sev:
         yield sev
 
+    # SA-1: offer "이 질문 계속 지켜보기" when the turn touched a periodic source. The chip is
+    # cadence-gated here (never a keyword rule) and shown ONCE by the client; event-y sources
+    # (filings/earnings) beat daily prices as the probe (the reader cares about the event).
+    standing_offer = None
+    if probes:
+        rank = {"event": 0, "scheduled": 1, "daily": 2, "intraday": 3, "streaming": 4}
+        best = sorted(probes, key=lambda p: rank.get(p.get("cadence"), 9))[0]
+        sa_cadence = {"event": "event", "scheduled": "event"}.get(best.get("cadence"), "daily")
+        standing_offer = {"cadence": sa_cadence,
+                          "ticker": (best.get("args") or {}).get("ticker"),
+                          "market": (best.get("args") or {}).get("market"),
+                          "probe": {"path": best.get("path"), "args": best.get("args"),
+                                    "source": best.get("source")}}
+
     yield {"type": "done", "citations": citations, "artifacts": artifacts, "refused": False,
-           "used": used, "audit": audit}
+           "used": used, "audit": audit, "standing_offer": standing_offer}

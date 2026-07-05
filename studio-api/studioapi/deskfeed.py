@@ -106,6 +106,19 @@ async def get_desk_feed(user: User = Depends(current_user)) -> dict:
 
     fresh, nonce = await _generate(user, prev_seen)
 
+    # SA-3: piggyback the standing-question signature check on feed generation (no new worker).
+    # Cards prepend — "지켜보던 것" leads the briefing. Best-effort: a probe failure never
+    # degrades the feed itself.
+    try:
+        from studioapi.standing import check_standing
+        updates = await check_standing(user)
+        if updates:
+            if fresh is None:
+                fresh = {"cards": [], "generated_at": now.isoformat(), "used_tools": []}
+            fresh["cards"] = updates + (fresh.get("cards") or [])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("standing check failed for %s: %s", user.email, exc)
+
     with SessionLocal() as db:
         # advance the visit marker regardless of generation outcome — the user WAS here
         u = db.get(User, user.email)

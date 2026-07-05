@@ -191,6 +191,9 @@ export type Msg = {
   clarify?: Clarify;
   subagents?: SubAgent[];
   suggestions?: string[];
+  // M-SA: the turn touched a periodic source → offer "이 질문 계속 지켜보기" (cadence-gated)
+  standing_offer?: { cadence: string; ticker?: string | null; market?: string | null;
+    probe: { path?: string | null; args?: Record<string, unknown>; source?: string | null } } | null;
 };
 
 // --- dashboard widget (a pinned artifact OR citation OR a text note) --------------------------

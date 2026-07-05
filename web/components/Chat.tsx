@@ -160,6 +160,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
   const [view, setView] = useState<"dashboard" | "explore" | "watch" | "bot" | "notes">(
     features.dashboard ? "dashboard" : "explore");
   const [nbPin, setNbPin] = useState<PinPayload | null>(null);   // NB-2: asset awaiting 노트 담기
+  const [standingDone, setStandingDone] = useState<Set<number>>(new Set());  // SA-1: subscribed turns
   const [handles, setHandles] = useState<string[]>([]);
   const [mention, setMention] = useState<string[]>([]); // open @-autocomplete suggestions
   const [pinTarget, setPinTarget] = useState<any | null>(null);  // asset awaiting a board-picker pin
@@ -254,6 +255,22 @@ export default function Chat({ name, features }: { name: string; features: Featu
     setNbPin({ kind: "pin_citation", payload: c as unknown as Record<string, unknown>,
                title: c.source || "출처" });
   }
+  // SA-1: one-tap 질문 구독 — the question is THIS turn's user message; the probe is the
+  // periodic source the answer actually used (recorded by the engine, cadence-gated).
+  async function subscribeStanding(i: number, m: Msg) {
+    const q = messages[i - 1]?.role === "user" ? messages[i - 1].content : null;
+    const offer = m.standing_offer;
+    if (!q || !offer) return;
+    try {
+      const r = await fetch("/api/standing", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: q, ticker: offer.ticker ?? null, market: offer.market ?? null,
+                               cadence: offer.cadence, probe: offer.probe }),
+      });
+      if (r.ok) setStandingDone((prev) => new Set(prev).add(i));
+    } catch { /* the chip stays tappable */ }
+  }
+
   function pinLedger(row: Record<string, unknown>, c: Citation | null) {
     setNbPin({ kind: "pin_ledger", title: `수치 ${row.raw}`,
                payload: { ...row, source: c?.source ?? null, as_of: c?.as_of ?? null, url: c?.url ?? null } });
@@ -377,6 +394,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
       else if (ev.type === "done") {
         if (ev.refused) a.refused = true;
         if (ev.audit) a.audit = ev.audit;   // QT-2 — gates share-card minting
+        if (ev.standing_offer) a.standing_offer = ev.standing_offer;   // M-SA
         if (Array.isArray(ev.used)) a.used = ev.used;
         // PH-PROV3d: the done list is authoritative — its citations carry the evidence
         // image re-anchored on the figure the answer actually cited. Replace the streamed set.
@@ -676,6 +694,14 @@ export default function Chat({ name, features }: { name: string; features: Featu
                             {q} <span className="fu-arrow">→</span>
                           </button>
                         ))}
+                        {m.standing_offer && (
+                          <button type="button" className={`fu-chip standing ${standingDone.has(i) ? "on" : ""}`}
+                            disabled={busy || standingDone.has(i)}
+                            title="이 데이터가 갱신되면 다음 방문 때 데스크에 알려드려요 (푸시 없음)"
+                            onClick={() => void subscribeStanding(i, m)}>
+                            {standingDone.has(i) ? "✓ 지켜보는 중 — 갱신되면 데스크에 알림" : "🔔 이 질문 계속 지켜보기"}
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}

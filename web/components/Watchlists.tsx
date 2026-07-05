@@ -26,6 +26,40 @@ const PRESETS: { id: string; name: string; items: { market: string; ticker: stri
     { market: "US", ticker: "JNJ" }, { market: "US", ticker: "PG" }, { market: "US", ticker: "KO" }, { market: "US", ticker: "PEP" }] },
 ];
 
+// M-SA (SA-4): the standing-question manager — list + 해제. Lives at the bottom of 관심
+// because subscriptions are "things I watch", same mental bucket as watchlists.
+export function StandingList() {
+  const [items, setItems] = useState<{ id: string; question: string; ticker?: string | null;
+    cadence: string; last_checked_at?: string | null }[]>([]);
+  const load = async () => {
+    try {
+      const r = await fetch("/api/standing");
+      if (r.ok) setItems((await r.json()).standing ?? []);
+    } catch { /* section hides */ }
+  };
+  useEffect(() => { void load(); }, []);
+  if (!items.length) return null;
+  return (
+    <div className="standing" data-testid="standing-list">
+      <div className="standing-h">🔔 지켜보는 질문 <span className="mono">{items.length}</span>
+        <span className="standing-sub">갱신되면 다음 방문 때 데스크에 알려드려요</span></div>
+      {items.map((it) => (
+        <div key={it.id} className="standing-row">
+          <span className="standing-q">“{it.question}”</span>
+          <span className="standing-meta mono">
+            {it.ticker ? `${it.ticker} · ` : ""}{it.cadence}
+            {it.last_checked_at ? ` · 확인 ${it.last_checked_at.slice(0, 10)}` : ""}
+          </span>
+          <button type="button" className="chip" onClick={async () => {
+            await fetch(`/api/standing/${encodeURIComponent(it.id)}`, { method: "DELETE" });
+            void load();
+          }}>해제</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function Watchlists(
   { onClose, onChanged, embedded = false }:
   { onClose?: () => void; onChanged?: () => void; embedded?: boolean },
@@ -225,6 +259,7 @@ export default function Watchlists(
           </div>
         </div>
       )}
+      <StandingList />
       <p className="disclaimer">그룹 이름은 탐색에서 <span className="mono">@핸들</span> 로 사용됩니다.</p>
     </>
   );
