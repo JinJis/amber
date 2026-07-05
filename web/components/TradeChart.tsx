@@ -465,6 +465,29 @@ export function TradeChart(
       </div>
       )}
       <div ref={box} className={`tc-canvas${fillHeight ? " tc-canvas-fill" : ""}${drawMode ? " drawing" : ""}`} />
+      {/* HL-8c: vol-context ribbon — realized vol + self-history percentile (+ VIX level) */}
+      {a.vol_context?.windows && Object.keys(a.vol_context.windows).length > 0 && (() => {
+        const vc = a.vol_context!;
+        const ws = Object.entries(vc.windows!).sort((x, y) => Number(x[0]) - Number(y[0]));
+        const pctLabel = (p?: number | null) => p == null ? "—"
+          : `${Math.round(p)}p${p >= 80 ? " · 상위권" : p <= 20 ? " · 하위권" : ""}`;
+        return (
+          <div className="tc-vol mono" title="실현변동성(연율)과 자체 히스토리 퍼센타일 · 과거 기록">
+            <span className="tc-vol-h">변동성</span>
+            {ws.map(([w, v]) => (
+              <span key={w} className="tc-vol-item">
+                {w}일 <b>{v.realized_vol_pct != null ? `${v.realized_vol_pct.toFixed(1)}%` : "—"}</b>
+                <span className="tc-vol-pct">{pctLabel(v.percentile)}</span>
+              </span>
+            ))}
+            {vc.level && (
+              <span className="tc-vol-item">VIX <b>{vc.level.current ?? "—"}</b>
+                <span className="tc-vol-pct">{pctLabel(vc.level.percentile)}</span></span>
+            )}
+            <span className="tc-vol-src">{vc.source || "출처"}{vc.as_of ? ` · ${vc.as_of}` : ""}</span>
+          </div>
+        );
+      })()}
       {drawMode && (
         <div className="tc-note">
           {drawMode === "trend" ? "추세선: 시작점과 끝점을 차례로 클릭하세요." : "수평선: 차트에서 원하는 가격대를 클릭하세요."}

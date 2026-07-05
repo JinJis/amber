@@ -791,10 +791,16 @@ def _h_history_vol_context(ctx: _Ctx) -> list[Artifact]:
     level = payload.get("level")
     if isinstance(level, dict):
         rows.append(["레벨(현재)", f"{level.get('current')}", f"{level.get('percentile')}퍼센타일"])
+    ribbon = {"windows": {w: {"realized_vol_pct": windows[w].get("realized_vol_pct"),
+                              "percentile": windows[w].get("percentile")} for w in windows},
+              "source": env.get("source"), "as_of": as_of}
+    if isinstance(level, dict):
+        ribbon["level"] = {"current": level.get("current"), "percentile": level.get("percentile")}
     return [Artifact(
         kind="table", title=f"{tk or ''} 변동성 컨텍스트".strip(), table=rows,
         label=env.get("label"), source=env.get("source"), as_of=as_of,
         freshness=env.get("freshness") or compute_freshness(as_of), ticker=tk, tool=ctx.name,
+        vol_context=ribbon,
     )]
 
 
@@ -894,6 +900,27 @@ def _overlays_from_technical(data: dict) -> list[ChartOverlay]:
                 unit=ind.get("unit"), lines=lines, source=src,
             ))
     return out
+
+
+def enrich_vol_ribbon(artifacts: list[Artifact]) -> None:
+    """HL-8c: fold a vol-context artifact's ribbon onto the same-ticker price (candlestick)
+    chart so 실현변동성 퍼센타일 shows under the chart legend. When no price chart exists this
+    turn, the vol-context artifact stays as its own sourced table. Mutates in place."""
+    vcs = [a for a in artifacts if a.vol_context and a.kind != "candlestick"]
+    if not vcs:
+        return
+    merged: list[Artifact] = []
+    for p in artifacts:
+        if p.kind != "candlestick" or not p.candles or p.vol_context:
+            continue
+        for v in vcs:
+            if v in merged:
+                continue
+            if (v.ticker or "").upper() == (p.ticker or "").upper():
+                p.vol_context = v.vol_context
+                merged.append(v)
+    if merged:
+        artifacts[:] = [a for a in artifacts if a not in merged]
 
 
 def enrich_chart_overlays(artifacts: list[Artifact]) -> None:
@@ -1012,6 +1039,7 @@ async def enrich_artifacts(artifacts: list[Artifact], history: list, task: str, 
     delays the `done` event (timeout/error → skip); run_agent passes None (await it directly)."""
     enrich_chart_markers(artifacts, history)
     enrich_chart_overlays(artifacts)
+    enrich_vol_ribbon(artifacts)   # HL-8c
     from agentengine.annotations import annotate_charts  # lazy: avoids an artifacts<->annotations cycle
     if annotate_timeout is None:
         await annotate_charts(artifacts, task, model, backend)

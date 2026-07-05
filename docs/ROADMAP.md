@@ -143,7 +143,7 @@ that completes it.**
 [now]  LG-1/2/3/5 ✅ · ENT-1/2/3/4/5 ✅ (관제탑 엔트리 — pulse/watch 라이브 검증; ENT-3 ghost 리스트는
        제안 3개 인라인으로 구현, ↑↓ 키보드는 후속) → NB-1/2/3/4 ✅(노트북: 담기 시트·노트 화면·kind=note 공유 — 라이브 검증) · SA-1/2/3/4 ✅(스탠딩 알림 — offer/구독/서명 체크/관리 UI 라이브 검증) · NB-5(e2e)·SA eval ⬜
 [next] NB-1..5(리서치 노트북) → SA-1..4(스탠딩 알림)   — NOTEBOOK_SPEC.md
-[then] DATA-KR-1 ✅ · HL-8(a·b) ✅ · HL-5b(레짐 도시에) · HL-8c(vol 리본) → M2
+[then] DATA-KR-1 ✅ · HL-8(a·b·c) ✅ · HL-5b(레짐 도시에) → M2(히스토리 랩 화면)
      → HL-5(era news) · HL-8(chart panes) · DATA-KR-1 → M2(히스토리 랩 surface)
      → M-NOTE → M3(어닝) → M4(공시 인텔리전스) → M-QUANT(QT-1/3/4) → M5(UX) → M6(호라이즌)
 ```
@@ -310,7 +310,7 @@ catalog tools through the gateway like every other datum. Full detail:
   both kinds carry `tool+args` so re-fetch works wherever artifacts are re-hydrated (board
   pinning itself stays behind `FEATURE_BOARD`, off by default — no board work in this task).
 
-### HL-8 · Chart panes: underwater + regime zones + vol context — 🚧 (a)underwater ✅ (b)regime 셰이딩 ✅ · (c)vol 리본 ⬜(HL-8c)
+### HL-8 · Chart panes: underwater + regime zones + vol context — ✅ (a)underwater (b)regime 셰이딩 (c)vol 리본
 - **What**: `TradeChart.tsx` gains (a) an optional **underwater pane** (drawdown % area,
   reuses overlay-pane mechanism), (b) **regime shading** on ≥5Y ranges via the existing
   `annotations.zones` (regimes fetched with the artifact; 4%-alpha ink fills + tiny mono

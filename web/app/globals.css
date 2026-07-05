@@ -1446,6 +1446,15 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
   border: 1px solid var(--line-3); border-radius: 8px; background: var(--panel); }
 .standing-q { flex: 1; font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .standing-meta { font-size: 10px; color: var(--muted); white-space: nowrap; }
+
+/* HL-8c: vol-context ribbon under the chart */
+.tc-vol { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 5px 8px;
+  font-size: 10.5px; color: var(--text-2); border-top: 1px solid var(--line-3); }
+.tc-vol-h { font-size: 9px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.tc-vol-item { display: inline-flex; align-items: baseline; gap: 3px; }
+.tc-vol-item b { color: var(--text); }
+.tc-vol-pct { color: var(--muted); font-size: 9.5px; }
+.tc-vol-src { margin-left: auto; color: var(--muted); font-size: 9px; }
 .share-blocked { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-fg);
   border-radius: 9px; padding: 9px 11px; font-size: 12.5px; }
 .share-page { min-height: 100vh; background: var(--bg); display: flex; flex-direction: column; }

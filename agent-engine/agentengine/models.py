@@ -314,6 +314,9 @@ class Artifact(BaseModel):
     # end_date, score, path, aftermath}]} — paths rebased to 100; aftermath drawn as history
     # (dashed, right of day 0). NEVER an averaged path (that would manufacture a forecast).
     analogue: dict | None = None
+    # HL-8c: the vol-context ribbon folded onto a price chart — {windows: {w: {realized_vol_pct,
+    # percentile}}, level?: {current, percentile}, source, as_of}. Descriptive; never a signal.
+    vol_context: dict | None = None
 
 
 class Step(BaseModel):

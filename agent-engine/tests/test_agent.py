@@ -2021,3 +2021,40 @@ def test_8k_filing_listing_derives_cik_from_url_when_absent():
         "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019324000101/x.htm"}]}
     c = A._citations(tool, {"data": data})[0]
     assert c.evidence_image_url and "cik=320193" in c.evidence_image_url  # pulled from the url
+
+
+def test_enrich_vol_ribbon_folds_onto_price_and_stands_alone():
+    # HL-8c: a same-ticker vol-context artifact's ribbon folds onto the price chart;
+    # without a price chart it stays as its own sourced table.
+    from agentengine.artifacts import enrich_vol_ribbon
+    from agentengine.models import Artifact, ArtifactCandle
+    price = Artifact(kind="candlestick", title="^GSPC", ticker="^GSPC",
+                     candles=[ArtifactCandle(time="2024-01-02", open=1, high=2, low=1, close=1.5)])
+    vc = Artifact(kind="table", title="^GSPC 변동성 컨텍스트", ticker="^GSPC", source="derived",
+                  vol_context={"windows": {"20": {"realized_vol_pct": 17.6, "percentile": 74.4}},
+                               "source": "derived", "as_of": "2026-07-02"})
+    arts = [price, vc]
+    enrich_vol_ribbon(arts)
+    assert arts == [price]                                   # vc merged away
+    assert price.vol_context["windows"]["20"]["percentile"] == 74.4
+
+    # no price chart → the vol-context table survives untouched
+    vc2 = Artifact(kind="table", title="MSFT 변동성", ticker="MSFT",
+                   vol_context={"windows": {"20": {"realized_vol_pct": 12.0, "percentile": 40}}})
+    solo = [vc2]
+    enrich_vol_ribbon(solo)
+    assert solo == [vc2] and vc2.vol_context
+
+
+def test_vol_context_artifact_carries_ribbon_field():
+    # the handler emits the structured ribbon alongside the human table (+ VIX level when present)
+    tool = {"name": "market_history__vol_context", "source": "derived: ingested prices",
+            "connector": "market_history"}
+    data = {"label": "과거 기록 · 전망 아님", "source": "derived: ingested prices",
+            "as_of": "2026-07-02", "data": {"params": {"ticker": "^VIX"},
+            "windows": {"20": {"realized_vol_pct": 17.6, "percentile": 74.4},
+                        "60": {"realized_vol_pct": 13.9, "percentile": 56.5}},
+            "level": {"current": 14.2, "percentile": 22.0}}}
+    art = A._artifacts(tool, {"data": data})[0]
+    assert art.vol_context and art.vol_context["windows"]["20"]["percentile"] == 74.4
+    assert art.vol_context["level"]["current"] == 14.2       # VIX level rides too

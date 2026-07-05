@@ -114,6 +114,11 @@ export type Artifact = {
   label?: string | null;
   base_rates?: BaseRatesData | null;  // kind=base_rates
   analogue?: AnalogueData | null;     // kind=analogue
+  vol_context?: {                     // HL-8c: vol ribbon folded onto the price chart
+    windows?: Record<string, { realized_vol_pct?: number | null; percentile?: number | null }>;
+    level?: { current?: number | null; percentile?: number | null } | null;
+    source?: string | null; as_of?: string | null;
+  } | null;
   verdict?: VerdictData | null;       // kind=verdict (M-FACT 팩트체크)
   passage?: string | null;            // kind=quote (SH-4 원문 인용 카드) — verbatim highlighted text
   doc_title?: string | null;          // kind=quote: the document the passage came from
