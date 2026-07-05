@@ -143,7 +143,7 @@ that completes it.**
 [now]  LG-1/2/3/5 ✅ · ENT-1/2/3/4/5 ✅ (관제탑 엔트리 — pulse/watch 라이브 검증; ENT-3 ghost 리스트는
        제안 3개 인라인으로 구현, ↑↓ 키보드는 후속) → NB-1/2/3/4 ✅(노트북: 담기 시트·노트 화면·kind=note 공유 — 라이브 검증) · SA-1/2/3/4 ✅(스탠딩 알림 — offer/구독/서명 체크/관리 UI 라이브 검증) · NB-5(e2e)·SA eval ⬜
 [next] NB-1..5(리서치 노트북) → SA-1..4(스탠딩 알림)   — NOTEBOOK_SPEC.md
-[then] DATA-KR-1 ✅ · HL-8(a·b·c) ✅ · HL-5b(레짐 도시에) → M2(히스토리 랩 화면)
+[then] DATA-KR-1 ✅ · HL-8(a·b·c) ✅ · HL-5b(시대뉴스 인제스트) ✅ · HL-5c(레짐 도시에) → M2(히스토리 랩 화면)
      → HL-5(era news) · HL-8(chart panes) · DATA-KR-1 → M2(히스토리 랩 surface)
      → M-NOTE → M3(어닝) → M4(공시 인텔리전스) → M-QUANT(QT-1/3/4) → M5(UX) → M6(호라이즌)
 ```

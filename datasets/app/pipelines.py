@@ -76,6 +76,11 @@ async def _run_kr_earnings(market: str, tickers: list[str]) -> None:
     await run_kr_earnings_ingest(market, tickers)
 
 
+async def _run_era_news(market: str, tickers: list[str]) -> None:
+    from app.store.era_news_ingest import run_era_news_ingest
+    await run_era_news_ingest(market, tickers)   # tickers = regime slugs (empty = all)
+
+
 # pipeline cadence tiers — the scheduler skips a pipeline that ran within `min_interval_seconds`,
 # so heavy historical pulls don't re-fetch the full history every sweep. Pairs with incremental
 # fetch in the runners (prices/corp_actions only pull since the last stored date).
@@ -172,6 +177,17 @@ PIPELINES: list[dict] = [
      "fetch": "최근 KR_EARNINGS_INGEST_LIMIT개(기본 4) 잠정실적 공정공시 본문 HTML을 텍스트 추출→RAG 색인 "
               "(doc_id={rcept_no}:s.{n}, doc_type=earnings). HTML은 인앱 DART 뷰어와 동일 원천 공유·캐시. "
               "US는 no-op(어닝콜 트랜스크립트 파이프라인 사용)."},
+    {"id": "era_news", "label": "시대 뉴스 → RAG", "source": "GDELT · NYT Archive", "store": "RAG corpus",
+     "kind": "era_news", "markets": ["US"], "default": False, "runner": _run_era_news,
+     "min_interval_seconds": _WEEK,
+     "desc": "큐레이션된 역사적 국면(닷컴버블·GFC·코로나·IMF 등)의 구간 뉴스를 RAG 색인(doc_type=era_news) — "
+             "2017+는 GDELT(무료), 이전은 NYT Archive(NYT_API_KEY 필요, 없으면 갭). ticker=국면 slug로 검색 범위.",
+     "upstream": [
+         "US · GDELT DOC 2.0 artlist — GET https://api.gdeltproject.org/api/v2/doc/doc?mode=artlist (키 불필요, 2017+)",
+         "US · NYT Archive — GET https://api.nytimes.com/svc/archive/v1/{year}/{month}.json?api-key=… (1851+)",
+     ],
+     "fetch": "각 국면 구간(start~end)의 위기 관련 기사(제목·초록)를 최대 60건 RAG 색인 "
+              "(doc_id=era:{slug}:{url}). 커버리지 없는 구간(2017 이전+NYT 키 없음)은 0 chunks(갭)."},
 ]
 
 PIPELINE_BY_ID = {p["id"]: p for p in PIPELINES}
