@@ -27,6 +27,8 @@ from studioapi.prompts import router as prompts_router
 from studioapi.prompts import seed_community_prompts
 from studioapi.search import router as search_router
 from studioapi.templates import router as templates_router, seed_dashboard_templates
+from studioapi.askfeed import router as askfeed_router
+from studioapi.askfeed import start as askfeed_start
 from studioapi.deskfeed import router as deskfeed_router
 from studioapi.shares import router as shares_router
 from studioapi.watchlists import router as watchlists_router
@@ -48,6 +50,7 @@ async def lifespan(_: FastAPI):
     seed_dashboard_templates()
     tasks: list = []
     scheduler.start(tasks)  # background notification-alert dispatcher
+    askfeed_start(tasks)    # ASK-5: 5-minute ask-feed refresher (per-ticker questions + hot trend)
     yield
     for t in tasks:
         t.cancel()
@@ -148,6 +151,7 @@ app.include_router(templates_router)
 app.include_router(prompts_router)
 app.include_router(watchlists_router)
 app.include_router(deskfeed_router)
+app.include_router(askfeed_router)
 app.include_router(shares_router)
 app.include_router(board_router)
 app.include_router(boards_router)

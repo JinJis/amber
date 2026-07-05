@@ -11,21 +11,6 @@ describe("shareCard helpers", () => {
     expect(PRESETS["4:5"].h).toBeGreaterThan(PRESETS["4:5"].w);
   });
 
-  it("verdict lines carry the verdict, quoted claim and cited findings", () => {
-    const a: Artifact = {
-      kind: "verdict", title: "팩트체크", series: [], source: "공시 대조",
-      verdict: {
-        claim: "매출 5천억 넘었대", verdict: "사실과 다름",
-        findings: [{ point: "실제 4,161억", supports: false, citation_idx: 1 }],
-        corrected: "기록상 4,161억",
-      },
-    };
-    const lines = shareCardLines(a);
-    expect(lines[0]).toContain("사실과 다름");
-    expect(lines.some((l) => l.includes("“매출 5천억 넘었대”"))).toBe(true);
-    expect(lines.some((l) => l.includes("반박") && l.includes("[1]"))).toBe(true);
-  });
-
   it("base_rates lines summarize the horizon table", () => {
     const a: Artifact = {
       kind: "base_rates", title: "베이스레이트", series: [], source: "derived",
@@ -57,10 +42,6 @@ describe("shareCard helpers", () => {
     expect(provenanceStrip(table, "x").label).toBeNull();
     expect(isHistoryKind(table)).toBe(false);
 
-    // a FUTURE verdict is descriptive-about-the-record → carries the label
-    const fut: Artifact = { kind: "verdict", title: "t", series: [],
-      verdict: { claim: "c", verdict: "미래 주장(검증 불가)", findings: [] } };
-    expect(isHistoryKind(fut)).toBe(true);
   });
 
   it("quote lines carry the verbatim passage and doc title (SH-4)", () => {

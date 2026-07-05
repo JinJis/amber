@@ -58,7 +58,7 @@ Supporting killer features (analyst daily-driver work): the turn-zero **Proactiv
 Shipped and green (see `docs/deprecate/ROADMAP.md` for the full ledger):
 
 - **Platform**: 6 services + worker, gateway-enforced entitlement/metering, Procrastinate
-  queue, admin console, 339 unit tests, e2e/coverage/eval harnesses.
+  queue, admin console, 521 unit tests (datasets 262 · agent-engine 137 · studio-api 74 · web 48), e2e/coverage/eval harnesses.
 - **Provenance**: SEC iXBRL + DART HTML evidence viewers with highlight, 8-K deck PDF viewer
   (pdf.js + Document AI), 계산 근거 panel, freshness/cadence on every artifact.
 - **Answer quality**: Gemini intake (guardrail+plan), clarify/decompose, parallel sub-agents,
@@ -118,7 +118,8 @@ Gaps that block the killer feature (verified in code, 2026-07-03):
 | **M1** | History Lab in Chat | agent answers "지금 낙폭 닷컴버블이랑 비교해줘" with analogue + base-rate artifacts, guardrail framing, new chart panes | M0 | 🚧 HL-6/7/9 ✅ · HL-8(chart panes) ⬜ |
 | **QT-2*** | Number audit (pulled forward) | every numeral in prose/cards matches a tool value — the trust floor for anything that leaves the app | — | ✅ done (audit module + done-event ride-along + desk-feed card drop; share gating lands with SH-2) |
 | **M-SHARE** | 공유 파이프라인 (PUBLISH_SPEC §3) | share tap → provenance-baked card image (aspect presets) + public read-only page (`/s/{token}`, OG) + evidence quote cards + 데스크 브리핑 카드 | QT-2 | ✅ done — SH-1/2/2b/3/4/5 + IMP-13 (라이브 검증) |
-| **M-FACT** | 근거 기반 팩트체크 (PUBLISH_SPEC §4) | paste a claim → cited verdict artifact (사실/사실과 다름/미래 주장) with findings for/against; the receipt for 정보방 | M-SHARE | ✅ FC-1..4 (라이브 검증: 3 시나리오 10/10 · judge 4.33 · verdict 카드 방출) |
+| **M-FACT** | 근거 기반 팩트체크 (PUBLISH_SPEC §4) | paste a claim → cited verdict artifact (사실/사실과 다름/미래 주장) with findings for/against; the receipt for 정보방 | M-SHARE | ❌ **제거됨 (2026-07-05, ASK-1)** — 사용 흐름에서 겉돌아 유지비만 남음; 신뢰는 수치 원장으로 일원화 |
+| **M-ASK** | "물어보기" 표면 개편 ([ASK_SURFACE_SPEC](./ASK_SURFACE_SPEC.md)) | 팩트체크 제거 · 근거 담기 "+노트북" 단일화 · 근거 패널 챗 전용 · 네비 "물어보기" 통합 · 첫 화면 = 사전 생성 질문거리(per-ticker)+Hot Trend(5분 파이프라인, 접속 시 LLM 0회) · 온보딩 v2(관심종목 필수 3+) | LG, M-NB, M-DESK | 🚧 ASK-1..4·6 ✅ (521 유닛 green) · ASK-5 백엔드+화면 ✅, 라이브 파이프라인 검증 ⬜ |
 | **M-NB** | 리서치 노트북 ([NOTEBOOK_SPEC](./NOTEBOOK_SPEC.md) §A) | 대시보드 개편: 근거 패널에서 📌 담기 → 세로 블록 노트(왜 담았는지 메모) → kind=note 공유·A4. 알림 UI 제거 | LG(원장), M-SHARE | 🚧 NB-1..4 ✅ · NB-5 ⬜ |
 | **M-SA** | 스탠딩 알림 ([NOTEBOOK_SPEC](./NOTEBOOK_SPEC.md) §B) | 답변 근거의 cadence 기반 "🔔 이 질문 계속 지켜보기" 칩 → 서명 비교 → 데스크 `standing_update` 카드 (푸시 채널 없음, 챗-퍼스트) | M-DESK | ✅ SA-1..4 (라이브 검증) |
 | **M-NOTE** | 인사이트 노트 (PUBLISH_SPEC §6) | conversation → structured, cited note → A4 report-grade image/PDF + share | M-SHARE, M2 | ➡ **M-NB로 흡수** (노트북 공유 = NT-3/4) |
@@ -142,8 +143,9 @@ that completes it.**
 [done] M-SHARE 전체 · M-FACT · M-DERIV · HL-5 커넥터(GDELT+NYT) · IMP-17(8-K)
 [now]  LG-1/2/3/5 ✅ · ENT-1/2/3/4/5 ✅ (관제탑 엔트리 — pulse/watch 라이브 검증; ENT-3 ghost 리스트는
        제안 3개 인라인으로 구현, ↑↓ 키보드는 후속) → NB-1/2/3/4 ✅(노트북: 담기 시트·노트 화면·kind=note 공유 — 라이브 검증) · SA-1/2/3/4 ✅(스탠딩 알림 — offer/구독/서명 체크/관리 UI 라이브 검증) · NB-5(e2e)·SA eval ⬜
-[next] NB-1..5(리서치 노트북) → SA-1..4(스탠딩 알림)   — NOTEBOOK_SPEC.md
-[then] DATA-KR-1 ✅ · HL-8(a·b·c) ✅ · HL-5b(시대뉴스 인제스트) ✅ · HL-5c(레짐 도시에) → M2(히스토리 랩 화면)
+[now]  M-ASK(ASK-1..6 — 물어보기 표면 개편, ASK_SURFACE_SPEC.md)
+[next] NB-5(e2e) · HL-5c(레짐 도시에) → M2(히스토리 랩 화면)
+[then] DATA-KR-1 ✅ · HL-8(a·b·c) ✅ · HL-5b(시대뉴스 인제스트) ✅
      → HL-5(era news) · HL-8(chart panes) · DATA-KR-1 → M2(히스토리 랩 surface)
      → M-NOTE → M3(어닝) → M4(공시 인텔리전스) → M-QUANT(QT-1/3/4) → M5(UX) → M6(호라이즌)
 ```

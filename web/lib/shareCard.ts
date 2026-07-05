@@ -6,7 +6,7 @@
 // Pure helpers (presets, line extraction, wrapping) are exported for unit tests; the canvas draw
 // is a thin shell around them.
 
-import type { Artifact, VerdictData } from "./types";
+import type { Artifact } from "./types";
 
 export type PresetKey = "1:1" | "4:5" | "16:9";
 
@@ -16,17 +16,10 @@ export const PRESETS: Record<PresetKey, { w: number; h: number; label: string }>
   "16:9": { w: 1200, h: 675, label: "가로 (X·블로그)" },
 };
 
-// history kinds must always carry the descriptive label (ROADMAP §2 invariant); a future
-// verdict is descriptive-about-the-record too.
+// history kinds must always carry the descriptive label (ROADMAP §2 invariant).
 export function isHistoryKind(a: Artifact): boolean {
-  if (a.kind === "base_rates" || a.kind === "analogue") return true;
-  if (a.kind === "verdict") return (a.verdict?.verdict ?? "").startsWith("미래 주장");
-  return false;
+  return a.kind === "base_rates" || a.kind === "analogue";
 }
-
-const VERDICT_GLYPH: Record<string, string> = {
-  "사실": "✓", "대체로 사실": "△", "사실과 다름": "✕", "확인 불가": "?", "미래 주장(검증 불가)": "⏳",
-};
 
 /** The card body as a list of lines — a compact, kind-aware summary. Pure (unit-tested). */
 export function shareCardLines(a: Artifact, max = 8): string[] {
@@ -47,14 +40,6 @@ export function shareCardLines(a: Artifact, max = 8): string[] {
   if (a.kind === "quote" && a.passage) {
     push(`“${a.passage}”`);
     if (a.doc_title) push(`— ${a.doc_title}`);
-    return out.slice(0, max);
-  }
-  if (a.kind === "verdict" && a.verdict) {
-    const v = a.verdict as VerdictData;
-    push(`${VERDICT_GLYPH[v.verdict] ?? ""} 판정: ${v.verdict}`.trim());
-    push(`주장: “${v.claim}”`);
-    for (const f of v.findings ?? []) push(`${f.supports ? "지지" : "반박"} · ${f.point} [${f.citation_idx}]`);
-    if (v.corrected) push(`기록상: ${v.corrected}`);
     return out.slice(0, max);
   }
   if (a.kind === "base_rates" && a.base_rates) {

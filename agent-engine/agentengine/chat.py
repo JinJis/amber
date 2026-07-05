@@ -132,13 +132,6 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
     if intake.value_chain:
         yield {"type": "thinking", "phase": "plan", "text": "밸류체인(공급망 구조)으로 정리할게요…"}
         system = ((system or "") + _VALUE_CHAIN_GUIDE).strip()
-    # FC-1 (M-FACT): a claim to verify → gather evidence for/against against PRIMARY records;
-    # after synthesis a structured verdict card (the receipt) is composed from the answer.
-    if intake.fact_check:
-        yield {"type": "thinking", "phase": "plan", "text": "주장을 1차 기록과 대조해 팩트체크할게요…"}
-        from agentengine.factcheck import FACT_CHECK_GUIDE
-        system = ((system or "") + FACT_CHECK_GUIDE).strip()
-
     planner = get_planner(bk)
     from agentengine.planner import resolve_ticker
     history: list = []
@@ -445,18 +438,6 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                    "text": (f"숫자 검증 ✓ {audit['checked']}개 수치 모두 자료와 대조 확인" if ok else
                             f"숫자 검증: {audit['checked']}개 중 {audit['supported']}개 확인 · "
                             f"미확인 {len(audit['unsupported'])}건")}
-
-    # FC-1/FC-2 (M-FACT): compose the verdict card from the completed, cited answer — the
-    # shareable receipt. One structured flash call; composition failure never blocks the answer.
-    if intake.fact_check and final_text:
-        from agentengine.factcheck import compose_verdict, verdict_artifact
-        v = await compose_verdict(task, final_text, citations, bk)
-        if v:
-            art = verdict_artifact(v, [c.get("tool") for c in citations if c.get("used")])
-            d_art = art.model_dump()
-            artifacts.append(d_art)
-            yield {"type": "artifact", "artifact": d_art}
-            yield {"type": "thinking", "phase": "verify", "text": f"판정: {v.verdict} · 근거 {len(v.findings)}건"}
 
     # PH-THINK: capability-aware follow-up chips — ALWAYS shown after a real answer (deep LLM when
     # gemini, deterministic capability-aware fallback otherwise), so the chip row is never empty.

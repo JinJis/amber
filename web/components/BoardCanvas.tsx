@@ -290,7 +290,7 @@ export default function BoardCanvas({ onEvidence }: { onEvidence?: (c: Citation)
         <div className="dash-empty">
           <div className="dash-hero">
             <h2>나만의 실시간 대시보드를 시작하세요</h2>
-            <p>템플릿으로 바로 채우거나, <b>탐색</b>에서 자연어로 찾아 위젯을 추가하세요.</p>
+            <p>템플릿으로 바로 채우거나, <b>물어보기</b>에서 자연어로 찾아 위젯을 추가하세요.</p>
           </div>
           <div className="tpl-grid">
             {templates.map((t) => (

@@ -6,7 +6,6 @@ import BoardCanvas from "./BoardCanvas";
 import BotHome from "./BotHome";
 import { ShareSheet } from "./ShareSheet";
 import Onboarding from "./Onboarding";
-import PinPicker from "./PinPicker";
 import NotebookView from "./NotebookView";
 import { NotebookPicker, type PinPayload } from "./NotebookPicker";
 import PromptLibrary from "./PromptLibrary";
@@ -163,14 +162,12 @@ export default function Chat({ name, features }: { name: string; features: Featu
   const [standingDone, setStandingDone] = useState<Set<number>>(new Set());  // SA-1: subscribed turns
   const [handles, setHandles] = useState<string[]>([]);
   const [mention, setMention] = useState<string[]>([]); // open @-autocomplete suggestions
-  const [pinTarget, setPinTarget] = useState<any | null>(null);  // asset awaiting a board-picker pin
   const [onboarded, setOnboarded] = useState<boolean | null>(null);  // null = checking; false = show onboarding
   const [viewer, setViewer] = useState<Citation | null>(null);  // expanded source viewer
   // LG-3: [n] ↔ 근거 패널 two-way link. hover mirrors; click scrolls+flashes the card.
   const [hoverCite, setHoverCite] = useState<number | null>(null);
   const [flashCite, setFlashCite] = useState<{ n: number; ts: number } | null>(null);
   const bubbleRefs = useRef(new Map<number, HTMLDivElement>());   // msg idx → answer bubble el
-  const [factCheck, setFactCheck] = useState(false);  // FC-4: explicit 팩트체크 mode (never inferred)
   // ENT-1: the empty-state composer placeholder rotates today's REAL questions (from the desk feed).
   const [todayQs, setTodayQs] = useState<string[]>([]);
   const [phIdx, setPhIdx] = useState(0);
@@ -243,15 +240,13 @@ export default function Chat({ name, features }: { name: string; features: Featu
     setFocusIdx(null);
   }
 
-  // Pin anything (chart/table artifact, source card) → open the board picker (choose board[s]).
-  // NB-2: 담기 — snapshots go to the research notebook (the board pin is legacy, flag-gated).
+  // ASK-2: 담기 언어는 "+노트북" 하나 — 모든 근거(차트/표·출처 카드·수치)는 리서치 노트북으로
+  // 직행한다 (보드 핀 분기 제거; FEATURE_BOARD는 FLAG-1로 꺼진 죽은 가지였음).
   function pinArtifact(a: Artifact) {
-    if (features.dashboard) { setPinTarget(a); return; }
     setNbPin({ kind: "pin_artifact", payload: a as unknown as Record<string, unknown>,
                title: a.title || "차트·표" });
   }
   function pinCitation(c: Citation) {
-    if (features.dashboard) { setPinTarget({ kind: "source", title: c.source || c.ticker || "출처", ...c }); return; }
     setNbPin({ kind: "pin_citation", payload: c as unknown as Record<string, unknown>,
                title: c.source || "출처" });
   }
@@ -459,16 +454,12 @@ export default function Chat({ name, features }: { name: string; features: Featu
     }
   }
 
-  async function send(text: string, opts?: { factCheck?: boolean }) {
+  async function send(text: string) {
     if (!text.trim() || busy) return;
-    // FC-4: the 팩트체크 chip is an EXPLICIT signal (not a heuristic) — frame the turn as a claim
-    // to verify so the LLM intake classifies fact_check and composes the verdict card.
-    if (opts?.factCheck) text = `다음 주장이 사실인지 1차 기록으로 팩트체크해줘: “${text.trim()}”`;
     const history: Msg[] = [...messages, { role: "user", content: text }];
     const startConv = conversationId;  // may be null → a new conversation
     setMessages([...history, { role: "assistant", content: "", tools: [], citations: [] }]);
     setInput("");
-    setFactCheck(false);
     setBusy(true);
     setFocusIdx(null);  // panel follows the new answer as its assets stream in
     try {
@@ -537,26 +528,23 @@ export default function Chat({ name, features }: { name: string; features: Featu
   return (
     <FeaturesProvider value={features}>
     {onboarded === false && (
-      <Onboarding features={features} onDone={() => { setOnboarded(true); setView(features.dashboard ? "dashboard" : "explore"); loadHandles(); }} />
+      <Onboarding onDone={() => { setOnboarded(true); setView("explore"); loadHandles(); }} />
     )}
     {shareArt && (
       <ShareSheet a={shareArt} audit={panelMsg?.audit ?? null} onClose={() => setShareArt(null)} />
     )}
     <div className={`shell ${view === "explore" ? "with-ctx" : "no-right"}`}
-      style={view === "explore" ? { gridTemplateColumns: `210px minmax(0,1fr) ${ctxWidth}px` } : undefined}>
+      style={view === "explore" && messages.length > 0 ? { gridTemplateColumns: `210px minmax(0,1fr) ${ctxWidth}px` } : undefined}>
       <nav className="rail">
         <div className="rail-brand"><span className="mascot" aria-hidden /><span className="wordmark">ValueGraph</span></div>
         <button className="rail-new" onClick={newChat}>
-          <span className="ic">✎</span><span>새 탐색</span>
+          <span className="ic">✎</span><span>물어보기</span>
         </button>
         {features.dashboard && (
           <button className={`rail-item ${view === "dashboard" ? "on" : ""}`} onClick={() => setView("dashboard")}>
             <span className="ic">📊</span><span className="lbl">대시보드</span>
           </button>
         )}
-        <button className={`rail-item ${view === "explore" ? "on" : ""}`} onClick={() => setView("explore")}>
-          <span className="ic">🔍</span><span className="lbl">탐색</span>
-        </button>
         <button className={`rail-item ${view === "notes" ? "on" : ""}`} onClick={() => setView("notes")}>
           <span className="ic">📓</span><span className="lbl">노트</span>
         </button>
@@ -603,7 +591,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
               <div className="desk-id">
                 <Mascot />
                 <FreshnessDot f="fresh" />
-                <span className="explore-title">탐색<span className="explore-sub"> — 자연어로 데이터를 찾아 대시보드에 추가</span></span>
+                <span className="explore-title">물어보기<span className="explore-sub"> — 출처와 함께 답합니다</span></span>
               </div>
               <div className="agentbar">
                 <Button variant="ghost" size="sm" onClick={() => setLibrary(true)} title="프롬프트 라이브러리">프롬프트</Button>
@@ -613,13 +601,11 @@ export default function Chat({ name, features }: { name: string; features: Featu
             <main className="chat" ref={scrollRef}>
               {messages.length === 0 && (
                 <div className="empty">
-                  {/* ENT: 관제탑 — 시장 스트립·오늘의 제안·내 종목→능력 칩·데스크 접이.
-                      모든 탭은 컴포저를 채운다 (auto-send 금지); 워터폴은 제거. */}
+                  {/* ASK-5: 물어보기 엔트리 — 시장 한 줄·내 종목 질문거리(사전 생성)·Hot Trend.
+                      모든 탭은 컴포저를 채운다 (auto-send 금지); 접속 시 LLM 0회. */}
                   <CockpitEntry
                     onPick={(q) => { setInput(q); inputRef.current?.focus(); }}
                     onQuestions={setTodayQs}
-                    onChanged={loadHandles}
-                    onShareBriefing={(a) => setShareArt(a)}
                   />
                 </div>
               )}
@@ -736,17 +722,13 @@ export default function Chat({ name, features }: { name: string; features: Featu
                 </div>
               )}
               <form className={messages.length === 0 ? "hero" : undefined}
-                onSubmit={(e) => { e.preventDefault(); if (mention.length) { pickHandle(mention[0]); return; } send(input, { factCheck }); }}>
-                <button type="button" className={`fc-toggle ${factCheck ? "on" : ""}`}
-                  aria-pressed={factCheck} title="주장을 1차 기록으로 팩트체크"
-                  onClick={() => setFactCheck((v) => !v)}>✓ 팩트체크</button>
+                onSubmit={(e) => { e.preventDefault(); if (mention.length) { pickHandle(mention[0]); return; } send(input); }}>
                 <input ref={inputRef} className="input" value={input} onChange={(e) => onInput(e.target.value)}
                   onBlur={() => setTimeout(() => setMention([]), 120)}
-                  placeholder={factCheck ? "검증할 주장을 붙여넣으세요 — 예: 삼성전자 영업이익 15조 넘었대"
-                    : (messages.length === 0 && todayQs.length
+                  placeholder={messages.length === 0 && todayQs.length
                         ? `오늘: “${todayQs[phIdx % todayQs.length]}”`
-                        : "무엇이든 물어보거나 — /프롬프트 · @그룹 호출…")} disabled={busy} />
-                <Button disabled={busy || !input.trim()}>{factCheck ? "검증" : "보내기"}</Button>
+                        : "무엇이든 물어보거나 — /프롬프트 · @그룹 호출…"} disabled={busy} />
+                <Button disabled={busy || !input.trim()}>보내기</Button>
               </form>
               {(input.match(/@([^\s@]+)/g) ?? []).length > 0 && (
                 <div className="composer-meta">
@@ -761,7 +743,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
         )}
       </div>
 
-      {view === "explore" && (
+      {view === "explore" && messages.length > 0 && (
         <ContextPanel
           hoverCite={hoverCite}
           setHoverCite={setHoverCite}
@@ -802,9 +784,6 @@ export default function Chat({ name, features }: { name: string; features: Featu
         onQuote={(q) => { setViewer(null); setShareArt(q); }} />}
       {nbPin && (
         <NotebookPicker pin={nbPin} onClose={() => setNbPin(null)} />
-      )}
-      {pinTarget && (
-        <PinPicker spec={pinTarget} onClose={() => setPinTarget(null)} onPinned={() => setPinTarget(null)} />
       )}
     </div>
     </FeaturesProvider>

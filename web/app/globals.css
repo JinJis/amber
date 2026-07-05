@@ -498,11 +498,6 @@ a { color: var(--text); text-decoration-color: var(--muted); }
   margin-right: 6px; }
 .vd-method { font-size: 10px; color: var(--muted); }
 
-/* --- M-FACT (FC-4): explicit 팩트체크 composer toggle --- */
-.fc-toggle { flex-shrink: 0; font-size: 11px; padding: 0 10px; border: 1px solid var(--line-2);
-  border-radius: 6px; background: var(--panel); color: var(--muted); cursor: pointer; white-space: nowrap; }
-.fc-toggle:hover { background: var(--panel-3); color: var(--text-2); }
-.fc-toggle.on { background: var(--ink, #1a1a1a); color: var(--panel, #fff); border-color: var(--ink, #1a1a1a); }
 
 /* ───────── PH-DEMO: high-impact dashboard widgets (stat · heatmap · feed · calendar) ───────── */
 .dw-wrap { height: 100%; width: 100%; overflow: auto; }
@@ -689,9 +684,13 @@ select.input { appearance: none; }
 .ck-cap { padding: 5px 11px; border: 1px dashed var(--line-2); border-radius: 999px; background: var(--panel-2);
   color: var(--text-2); font-size: 11.5px; cursor: pointer; }
 .ck-cap:hover { border-color: var(--ink); color: var(--text); border-style: solid; }
-.ck-desk-toggle { font-size: 11.5px; color: var(--muted); background: none; border: none; cursor: pointer;
-  padding: 4px 0; }
-.ck-desk-toggle:hover { color: var(--text-2); }
+/* ASK-5: 내 종목 질문거리(티커별 풀) + Hot Trend */
+.ck-mine, .ck-hot { display: flex; flex-direction: column; gap: 6px; }
+.ck-pool { display: flex; flex-direction: column; gap: 6px; }
+.ck-pool > .ck-tick { align-self: flex-start; }
+.ck-pending { flex-direction: row; align-items: center; gap: 10px; opacity: .75; }
+.ck-empty .ck-sg-hook { padding: 9px 0; }
+.ck-hot-tag { font-size: 9.5px; letter-spacing: .05em; color: var(--muted); text-transform: uppercase; }
 /* ENT-1: 빈 상태에서 컴포저 승격 (같은 컴포저, 시각만 크게) */
 .composer form.hero { max-width: 640px; margin: 0 auto; width: 100%; }
 .composer form.hero .input { font-size: 15px; padding: 14px 16px; border-width: 1.5px; }
@@ -1235,6 +1234,19 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .onb-land-row { font-size: 13.5px; color: var(--text-2); }
 .onb-land-row b { color: var(--muted); font-weight: 600; margin-right: 8px; font-size: 11px; }
 .onb-land-bot { margin-top: 4px; font-size: 12.5px; color: var(--accent-fg); background: var(--accent-bg); border-radius: 8px; padding: 8px 11px; }
+/* ASK-6: onboarding v2 — 제품 약속 + 필수 관심종목 등록 */
+.onb-promises { display: flex; flex-direction: column; gap: 14px; margin-top: 6px; }
+.onb-promise { display: flex; gap: 12px; align-items: flex-start; }
+.onb-promise p { margin: 3px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.onb-pi { flex-shrink: 0; width: 34px; height: 34px; display: grid; place-items: center;
+  border: 1px solid var(--line-2); border-radius: 9px; font-size: 13px; background: var(--panel-2); }
+.onb-search { margin-top: 10px; }
+.onb-results { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.onb-picked { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.onb-chip { padding: 4px 10px; border: 1px solid var(--ink); border-radius: 999px; background: var(--ink);
+  color: var(--on-ink); font-size: 11.5px; cursor: pointer; }
+.onb-count { font-variant-numeric: tabular-nums; }
+
 .onb-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--line); }
 
 /* 탐색(explore) header title */

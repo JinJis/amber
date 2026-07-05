@@ -147,6 +147,11 @@ class KisPricesProvider:
     whole app (charts, snapshots, backtest, portfolio) uses live broker data when
     ``PRICES_PROVIDER_KR=kis``. Daily-chart calls cap ~100 bars, so history is paginated back."""
 
+    async def corporate_actions(self, ref, start, end) -> dict:
+        # KIS has no dividend/split endpoint wired — corp actions come from Yahoo. Return the
+        # empty shape so a direct call (PRICES_PROVIDER_KR=kis) never crashes the ingest.
+        return {"currency": None, "dividends": [], "splits": []}
+
     async def snapshot(self, ref: SecurityRef) -> PriceSnapshot:
         rows = await _get("/uapi/domestic-stock/v1/quotations/inquire-price", "FHKST01010100",
                           {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ref.ticker})

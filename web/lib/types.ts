@@ -119,7 +119,6 @@ export type Artifact = {
     level?: { current?: number | null; percentile?: number | null } | null;
     source?: string | null; as_of?: string | null;
   } | null;
-  verdict?: VerdictData | null;       // kind=verdict (M-FACT 팩트체크)
   passage?: string | null;            // kind=quote (SH-4 원문 인용 카드) — verbatim highlighted text
   doc_title?: string | null;          // kind=quote: the document the passage came from
   url?: string | null;                // kind=quote: link back to the source document
@@ -133,18 +132,6 @@ export type Artifact = {
   has_gap?: boolean;
   tool?: string | null;
   args?: ({ market?: string } & Record<string, unknown>) | null;  // tool args (for re-fetch / market)
-};
-
-// M-FACT (FC-2): the fact-check verdict — findings are always cited ([n]); confidence is
-// evidentiary support, never a probability about the future.
-export type VerdictFinding = { point: string; supports: boolean; citation_idx: number };
-export type VerdictData = {
-  claim: string;
-  verdict: string; // 사실 | 대체로 사실 | 사실과 다름 | 확인 불가 | 미래 주장(검증 불가)
-  confidence?: string | null; // high | medium | low
-  findings: VerdictFinding[];
-  corrected?: string | null;
-  method?: string | null;
 };
 
 // --- citations (provenance for a cited figure / passage) --------------------------------------

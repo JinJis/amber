@@ -6,7 +6,6 @@ import { TradeChart } from "./TradeChart";
 import { ComputationPanel } from "./ComputationPanel";
 import { demoWidget } from "./DemoWidgets";
 import { AnalogueArtifact, BaseRatesArtifact } from "./HistoryArtifacts";
-import { VerdictArtifact } from "./VerdictArtifact";
 import type { Citation } from "./SourceCard";
 import type { Artifact, ArtifactCandle, ArtifactSeries, ChartAnnotations } from "../lib/types";
 import { currencyOf, fmt, fmtBig, fmtPrice, fmtVol } from "../lib/format";
@@ -75,7 +74,7 @@ function TableArtifact(
         <span className="grow" />
         {onPin && (
           <button type="button" className="artifact-toggle" disabled={pinned}
-            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 대시보드" : "＋ 대시보드"}</button>
+            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 노트북" : "＋ 노트북"}</button>
         )}
         {onRemove && (
           <button type="button" className="artifact-toggle" onClick={onRemove} title="보드에서 제거">✕</button>
@@ -121,7 +120,7 @@ function NarrativeArtifact(
         <span className="grow" />
         {onPin && (
           <button type="button" className="artifact-toggle" disabled={pinned}
-            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 대시보드" : "＋ 대시보드"}</button>
+            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 노트북" : "＋ 노트북"}</button>
         )}
         {onRemove && (
           <button type="button" className="artifact-toggle" onClick={onRemove} title="보드에서 제거">✕</button>
@@ -244,7 +243,7 @@ export function ArtifactCard(
           <span className="grow" />
           {onPin && (
             <button type="button" className="artifact-toggle" disabled={pinned}
-              onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 대시보드" : "＋ 대시보드"}</button>
+              onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 노트북" : "＋ 노트북"}</button>
           )}
           {onRemove && <button type="button" className="artifact-toggle" onClick={onRemove} title="보드에서 제거">✕</button>}
         </div>
@@ -260,9 +259,6 @@ export function ArtifactCard(
     return <NarrativeArtifact a={a} onPin={onPin} onRemove={onRemove} hideTitle={hideTitle} bare={bare} />;
   }
   // M-FACT (FC-2): the fact-check verdict card — cited findings for/against; the receipt.
-  if (a.kind === "verdict" && a.verdict) {
-    return <VerdictArtifact a={a} onPin={onPin} onShare={onShare} onRemove={onRemove} hideTitle={hideTitle} bare={bare} />;
-  }
   // M1 / HL-7: History Lab artifacts — descriptive statistics of the record, labeled, never a forecast.
   if (a.kind === "base_rates" && a.base_rates) {
     return <BaseRatesArtifact a={a} onPin={onPin} onShare={onShare} onRemove={onRemove} hideTitle={hideTitle} bare={bare} />;
@@ -335,7 +331,7 @@ export function ArtifactCard(
         {onPin && (
           <button type="button" className="artifact-toggle" disabled={pinned}
             onClick={() => { onPin({ ...a, user_annotations: userAnn ?? undefined }); setPinned(true); }}>
-            {pinned ? "✓ 대시보드" : "＋ 대시보드"}
+            {pinned ? "✓ 노트북" : "＋ 노트북"}
           </button>
         )}
         {onRemove && (

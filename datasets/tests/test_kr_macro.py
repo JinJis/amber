@@ -59,3 +59,38 @@ async def test_kr_fetch_indicator_labels_ecos_source(monkeypatch):
     assert res["source"] == "Bank of Korea ECOS" and res["region"] == "KR"
     assert res["as_of"] == "2025-04-01" and res["observations"][-1]["value"] == 3.1
     assert "ecos.bok.or.kr" in res["source_url"]
+
+
+# --- corp-actions fix: KIS prices provider must never crash the corp-actions ingest ----
+def test_kis_provider_has_graceful_corporate_actions():
+    from app.providers.kr.kis import KisPricesProvider
+    import asyncio
+    from app.symbols import Market, build_ref
+    prov = KisPricesProvider()
+    assert hasattr(prov, "corporate_actions")   # was missing → AttributeError in the seed
+    out = asyncio.run(prov.corporate_actions(build_ref(Market.KR, "005930"), None, None))
+    assert out == {"currency": None, "dividends": [], "splits": []}   # empty shape, no crash
+
+
+async def test_corp_actions_ingest_falls_back_to_yahoo_when_provider_lacks_it(monkeypatch):
+    import app.store.corp_actions_ingest as CA
+    from app.symbols import Market
+
+    class _NoCorpActions:  # e.g. a pinned KIS/stooq without the method
+        async def prices(self, *a):
+            return []
+
+    used = {}
+
+    class _Yahoo:
+        async def corporate_actions(self, ref, start, end):
+            used["yahoo"] = True
+            return {"dividends": [], "splits": []}
+
+    monkeypatch.setattr(CA, "get_prices_provider", lambda m: _NoCorpActions())
+    import app.providers.us.yahoo as Y
+    monkeypatch.setattr(Y, "YahooProvider", lambda: _Yahoo())
+    from datetime import date
+    # should NOT raise AttributeError; should route corp actions to Yahoo
+    await CA.ingest_corp_actions_ticker(Market.KR, "005930", date(2024, 1, 1), date(2024, 6, 1), retries=0)
+    assert used.get("yahoo") is True

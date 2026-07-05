@@ -16,6 +16,7 @@ from agentengine.agent import refresh_artifact, run_agent
 from agentengine.chat import stream_chat
 from agentengine.client import PlatformClient
 from agentengine.config import settings
+from agentengine.askfeed import AskFeedRequest, build_ask_feed
 from agentengine.deskfeed import DeskFeedRequest, build_desk_feed
 from agentengine.logging_config import install_request_logging, setup_logging
 from agentengine.models import (
@@ -75,6 +76,13 @@ async def desk_feed(body: DeskFeedRequest, x_api_key: Annotated[str | None, Head
     """Compose the Proactive Desk briefing: parallel entitled tool gather → one Gemini pass →
     4–8 cards {kind, question, hook, citations[]}. Data cards without citations are dropped."""
     return await build_desk_feed(body, x_api_key)
+
+
+@app.post("/agent/ask-feed", tags=["Agent"], summary="ASK-5: pre-generated ask-feed (per-ticker questions / hot trend)")
+async def ask_feed(body: AskFeedRequest, x_api_key: Annotated[str | None, Header(alias="X-API-KEY")] = None) -> dict:
+    """Called by studio-api's 5-minute feed refresher, never at request time: gather the scope's
+    latest records → signature check (unchanged → no LLM) → one Gemini pass → audited cards."""
+    return await build_ask_feed(body, x_api_key)
 
 
 @app.post("/agent/compile", tags=["Agent"], summary="Natural-language → reusable AgentSpec")

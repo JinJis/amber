@@ -55,6 +55,19 @@ class DeskFeedCache(Base):
     generated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class AskFeedCache(Base):
+    """ASK-5: pre-generated ask-feed content. One row per SCOPE — ``ticker:{MKT}:{TICKER}``
+    (shared by every user watching that ticker) or ``hot_trend`` (global). The 5-minute feed
+    refresher upserts these; the entry screen is a pure read. ``signature`` is the digest of
+    the gathered records — when unchanged the refresher keeps the cards and skips the LLM."""
+
+    __tablename__ = "ask_feed_cache"
+    scope: Mapped[str] = mapped_column(String(64), primary_key=True)
+    payload: Mapped[str] = mapped_column(Text)  # JSON {cards, generated_at}
+    signature: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class Notebook(Base):
     """M-NB (리서치 노트북): a vertical block document — the successor of the grid Board.
     Research accrues in TIME order (evidence blocks + the user's own notes between them),

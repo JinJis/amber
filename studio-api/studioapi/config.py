@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # flags-on install without touching the UI).
     alerts_scheduler_enabled: bool = True                # ALERTS_SCHEDULER_ENABLED
     alerts_tick_seconds: int = 60                        # ALERTS_TICK_SECONDS
+    # ASK-5: the 물어보기 entry feed — pre-generated per-ticker questions + global Hot Trend.
+    ask_feed_enabled: bool = True                        # ASK_FEED_ENABLED
+    ask_feed_refresh_seconds: int = 300                  # ASK_FEED_REFRESH_SECONDS (5 min)
 
 
 settings = Settings()

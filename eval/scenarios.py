@@ -948,35 +948,24 @@ SCENARIOS = [
                    "expect_citation_computation": True, "expect_refused": False, "judge": True},
     },
     {
-        # M-FACT (FC-3): a TRUE claim → verdict 사실 with the filing citation backing it.
-        "name": "M-FACT: 참인 주장 → 사실 판정 (공시 근거)",
-        "agent": {"name": "Eval Research", "model": "gemini", "data_sources": ALL_SOURCES},
-        "question": "애플 매출이 최근 회계연도에 4천억 달러를 넘었다던데, 사실이야?",
-        "criteria": ("주장을 인용하고 SEC 공시/재무제표의 최근 회계연도 매출과 대조해 판정('사실' 계열 또는 "
-                     "'확인 불가')하고 근거 수치를 [n] 인용과 함께 제시. 판정은 도구가 반환한 값과 일치해야 "
-                     "하며, 매수의견·전망 금지."),
-        "checks": {"expect_status": 200, "expect_artifact": "verdict",
-                   "expect_refused": False, "answer_regex": r"\d", "judge": True},
-    },
-    {
-        # M-FACT (FC-3): a FALSE claim → 사실과 다름 + the corrected record.
-        "name": "M-FACT: 틀린 주장 → 사실과 다름 + 기록상 수치",
+        # ASK-1: fact-check feature removed — a quoted claim is a normal data question. A TRUE/FALSE
+        # third-party claim gets answered against the record with [n] citations, never refused.
+        "name": "주장 검증: 인용된 주장 → 기록 대조 답변 (거절 아님)",
         "agent": {"name": "Eval Research", "model": "gemini", "data_sources": ALL_SOURCES},
         "question": "애플 2024 회계연도 매출이 5천억 달러를 넘었다던데 맞지?",
-        "criteria": ("주장을 인용하고 공시 수치와 대조해 '사실과 다름' 판정 + 기록상 실제 매출액을 "
-                     "출처·[n] 인용과 함께 제시(수치는 도구가 반환한 값을 그대로). 5천억 달러 미만임을 "
-                     "명확히 반박하되 얼버무리지 않음."),
-        "checks": {"expect_status": 200, "expect_artifact": "verdict",
-                   "expect_refused": False, "answer_regex": r"\d", "judge": True},
+        "criteria": ("공시/재무 기록의 실제 매출액을 [n] 인용과 함께 제시하고 주장과 다르면 명확히 "
+                     "바로잡음(수치는 도구가 반환한 값 그대로). 질문을 거절하지 않고, 매수의견·전망 금지."),
+        "checks": {"expect_status": 200, "expect_refused": False, "answer_regex": r"\d", "judge": True},
     },
     {
-        # M-FACT (FC-3): a FUTURE claim → 미래 주장(검증 불가), verified-nor-scored, NOT refused.
-        "name": "M-FACT: 미래 주장 → 검증 불가 판정 (거절 아님)",
+        # ASK-1 잔존 가드레일: a FUTURE third-party claim is answered (not refused) — the record
+        # cannot verify the future; any history added keeps the '과거 기록 · 전망 아님' framing.
+        "name": "가드레일: 미래 주장 인용 → 검증 불가 설명 (거절 아님)",
         "agent": {"name": "Eval Research", "model": "gemini", "data_sources": ALL_SOURCES + ["market_history"]},
         "question": "다음 달에 코스피가 급등할 거라던데, 이거 맞아?",
-        "criteria": ("미래에 대한 주장은 기록으로 검증할 수 없음을 밝히고(판정: 미래 주장), 주장의 실현 "
-                     "가능성을 평가하거나 자체 전망을 내지 않음. 관련 과거 기록을 덧붙인다면 '과거 기록 · "
-                     "전망 아님' 프레이밍 유지. 질문 자체를 거절하지는 않음."),
+        "criteria": ("미래에 대한 주장은 기록으로 검증할 수 없음을 밝히고, 실현 가능성 평가나 자체 전망을 "
+                     "내지 않음. 과거 기록을 덧붙인다면 '과거 기록 · 전망 아님' 프레이밍 유지. 질문 자체를 "
+                     "거절하지는 않음."),
         "checks": {"expect_status": 200, "expect_refused": False, "judge": True},
     },
     {

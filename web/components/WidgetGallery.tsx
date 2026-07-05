@@ -89,7 +89,7 @@ export default function WidgetGallery({
           <div className="wg-empty">
             <div className="wg-empty-ic" aria-hidden>📌</div>
             <h4>아직 핀한 데이터가 없어요</h4>
-            <p>위젯은 <b>탐색</b>에서 채팅으로 찾은 데이터를 핀해서 만듭니다.<br />
+            <p>위젯은 <b>물어보기</b>에서 채팅으로 찾은 데이터를 핀해서 만듭니다.<br />
                탐색에서 궁금한 것을 물어보고, 답변의 <b>차트·표·출처</b>를 <b>＋ 대시보드</b>로 핀해 보세요.</p>
           </div>
         ) : (
