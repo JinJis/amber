@@ -288,9 +288,9 @@ class SecEdgarMetricsProvider:
         facts = await _company_facts_raw(cik10)
         gaap = facts.get("facts", {}).get("us-gaap", {})
 
-        shares = _latest(gaap, ["CommonStockSharesOutstanding", "WeightedAverageNumberOfDilutedSharesOutstanding"])
-        eps = _latest(gaap, ["EarningsPerShareDiluted", "EarningsPerShareBasic"])
-        equity = _latest(gaap, ["StockholdersEquity"])
+        shares, shares_row = _latest_row(gaap, ["CommonStockSharesOutstanding", "WeightedAverageNumberOfDilutedSharesOutstanding"])
+        eps, eps_row = _latest_row(gaap, ["EarningsPerShareDiluted", "EarningsPerShareBasic"])
+        equity, equity_row = _latest_row(gaap, ["StockholdersEquity"])
 
         snap = FinancialMetricSnapshot(ticker=ref.ticker)
         try:
@@ -304,10 +304,19 @@ class SecEdgarMetricsProvider:
             snap.price_to_earnings_ratio = round(price / eps, 4) if eps else None
         if snap.market_cap and equity:
             snap.price_to_book_ratio = round(snap.market_cap / equity, 4)
+        snap.computation = _snapshot_derivation(
+            price, shares_row, eps_row, equity_row, cik10, snap)
         return snap
 
 
 def _latest(gaap: dict, concepts: list[str]) -> float | None:
+    return _latest_row(gaap, concepts)[0]
+
+
+def _latest_row(gaap: dict, concepts: list[str]) -> tuple[float | None, dict | None]:
+    """Latest observed value + its full XBRL row (end/accn/form/concept) so a derived
+    metric's inputs can deep-link the exact filing cell they came from (M-DERIV)."""
+    best_row: dict | None = None
     best = None
     best_end = ""
     for concept in concepts:
@@ -315,7 +324,54 @@ def _latest(gaap: dict, concepts: list[str]) -> float | None:
             end = row.get("end", "")
             if end > best_end and row.get("val") is not None:
                 best, best_end = row["val"], end
-    return best
+                best_row = {**row, "concept": concept}
+    return best, best_row
+
+
+_SNAP_INPUT = {  # concept-agnostic labels + formula symbols for the snapshot derivation
+    "shares": ("발행주식수", "S"),
+    "eps": ("EPS (희석)", "EPS"),
+    "equity": ("자본총계", "E"),
+}
+
+
+def _snapshot_derivation(price, shares_row, eps_row, equity_row, cik10: str,
+                         snap: FinancialMetricSnapshot) -> dict | None:
+    """M-DERIV (DRV-1): PER/PBR/시총 are OUR arithmetic over sourced inputs — embed the
+    derivation at the computation site. Each XBRL input carries {accession, concept} so
+    the 출처 preview opens the exact filing cell in the /evidence viewer."""
+    from app.derivation import calc_row, computation, fmt
+
+    def _xbrl_row(key: str, row: dict | None):
+        if not row:
+            return None
+        label, symbol = _SNAP_INPUT[key]
+        form, end = row.get("form"), row.get("end")
+        src = "SEC EDGAR" + (f" · {form} {end}" if form and end else "")
+        ev = None
+        if row.get("accn"):
+            ev = {"market": "US", "accession": row["accn"], "concept": row.get("concept"),
+                  "value": row.get("val"), "cik": cik10}
+        return calc_row(label, fmt(row.get("val")), source=src, symbol=symbol, evidence=ev)
+
+    inputs = [r for r in (
+        calc_row("주가 P", fmt(price), source="가격 체인 (지연 시세)", symbol="P") if price else None,
+        _xbrl_row("shares", shares_row),
+        _xbrl_row("eps", eps_row),
+        _xbrl_row("equity", equity_row),
+    ) if r]
+    steps = [r for r in (
+        calc_row("시가총액", fmt(snap.market_cap)) if snap.market_cap else None,
+        calc_row("PER", f"{snap.price_to_earnings_ratio:,.2f}x") if snap.price_to_earnings_ratio else None,
+        calc_row("PBR", f"{snap.price_to_book_ratio:,.2f}x") if snap.price_to_book_ratio else None,
+    ) if r]
+    if not steps:
+        return None  # nothing was derived — no computation to show
+    return computation(
+        "시장가 × 최신 XBRL 라인아이템 (직접 계산)",
+        "시가총액 = P × S · PER = P ÷ EPS · PBR = 시가총액 ÷ E",
+        inputs=inputs, steps=steps,
+        note="주가는 지연 시세, 재무 입력은 각 최신 보고 기간 — 기간이 서로 다를 수 있음(각 행에 명시)")
 
 
 # --- XML / number helpers (insider + 13F) — `_num` = shared parse_float (RF-02) ----------

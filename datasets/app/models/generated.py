@@ -716,6 +716,10 @@ class FinancialMetricSnapshot(BaseModel):
     free_cash_flow_per_share: float | None = Field(
         None, description='Free cash flow divided by shares outstanding.'
     )
+    computation: dict[str, Any] | None = Field(
+        None,
+        description='M-DERIV: how the derived metrics (market cap / PER / PBR) were computed — formula, sourced inputs (with filing evidence), steps.',
+    )
 
 
 class InsiderTrade(BaseModel):

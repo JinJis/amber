@@ -22,6 +22,7 @@ from app.analytics.base_rates import DEFAULT_HORIZONS, base_rates as calc_base_r
 from app.analytics.drawdown import episodes_result, underwater
 from app.analytics.volatility import vol_context as calc_vol_context
 from app.deps import ApiKeyDep, MarketParam
+from app.derivation import HISTORY_FORMULA, calc_row, computation
 from app.store import history as H
 from app.symbols import Market
 
@@ -67,14 +68,41 @@ def _bars_or_404(market: str, ticker: str) -> list[tuple[date, float]]:
     return bars
 
 
+def _derivation(bars: list, method: str, params: dict, data: dict) -> dict | None:
+    """M-DERIV (DRV-1): the derivation of this statistic, embedded where it was computed.
+    Inputs = the close series (sourced, enumerated); assumptions = the caller's params;
+    steps = the aggregate sizes that came out (n, matches). Unknown method → omit."""
+    entry = HISTORY_FORMULA.get(method)
+    if not entry:
+        return None
+    m, formula = entry
+    inputs = [calc_row("종가 시계열", f"{len(bars)} bars ({bars[0][0].isoformat()} ~ {bars[-1][0].isoformat()})",
+                       source=_SOURCE)]
+    assumptions = [calc_row(k, v) for k, v in (params or {}).items() if v is not None and k != "ticker"]
+    steps = []
+    if isinstance(data.get("n"), int):
+        steps.append(calc_row("표본 수 n", data["n"]))
+    if isinstance(data.get("n_raw"), int):
+        steps.append(calc_row("군집화 전 원표본", data["n_raw"]))
+    if isinstance(data.get("matches"), list):
+        steps.append(calc_row("유사 구간 수", len(data["matches"])))
+    if isinstance(data.get("episodes"), list):
+        steps.append(calc_row("에피소드 수", len(data["episodes"])))
+    return computation(m, formula, inputs=inputs, assumptions=assumptions, steps=steps, note=LABEL)
+
+
 def _envelope(bars: list[tuple[date, float]], method: str, params: dict, data: dict) -> dict:
-    return {
+    out = {
         "source": _SOURCE, "method": method, "params": params,
         "as_of": bars[-1][0].isoformat(), "freshness": _freshness(bars[-1][0]),
         "cadence": "daily", "label": LABEL,
         "history_span": {"from": bars[0][0].isoformat(), "to": bars[-1][0].isoformat()},
         "data": data,
     }
+    deriv = _derivation(bars, method, params, data)
+    if deriv:
+        out["computation"] = deriv
+    return out
 
 
 @router.get("/drawdowns", dependencies=[ApiKeyDep],

@@ -44,6 +44,10 @@ def test_drawdowns_envelope_and_series():
     assert b["source"].startswith("derived:") and b["history_span"]["from"] == "2020-01-01"
     dd = [v for _, v in b["data"]["series"]]
     assert min(dd) == -50.0 and b["data"]["current"]["dd_pct"] == 0.0
+    # M-DERIV (DRV-1): the derivation is embedded at the computation site
+    comp = b["computation"]
+    assert "직전 역대 최고가" in comp["formula"] and comp["note"] == LABEL
+    assert comp["inputs"][0]["label"] == "종가 시계열" and "5 bars" in comp["inputs"][0]["value"]
 
 
 def test_drawdowns_404_when_no_bars():

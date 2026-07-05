@@ -150,8 +150,10 @@ def _derived_computation(tool: dict, data) -> Computation | None:
     if not isinstance(data, dict):
         return None
     try:
-        if isinstance(data.get("computation"), dict):
-            return Computation.model_validate(data["computation"])
+        snap = data.get("snapshot") if isinstance(data.get("snapshot"), dict) else {}
+        embedded = data.get("computation") or snap.get("computation")
+        if isinstance(embedded, dict):
+            return Computation.model_validate(embedded)
         name = tool.get("name") or ""
         from agentengine.artifacts import (
             _backtest_computation,

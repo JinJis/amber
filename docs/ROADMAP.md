@@ -699,6 +699,13 @@ class Citation(BaseModel):
   `expect_citation_computation`), judge criteria에 도출 설명 포함. 기존 `expect_computation`은
   아티팩트용으로 유지.
 
+**상태 (2026-07-05)**: DRV-2 ✅ (스키마+인용 전파 — 응답 동봉 computation 우선, 밸류에이션/퀀트/
+백테스트는 아티팩트와 동일 트레이스 재사용, 스냅샷 중첩도 인식) · DRV-1 ✅ 코어 (US metrics_snapshot:
+XBRL accession evidence 포함 P·S·EPS·E 입력 + 시총/PER/PBR 단계 — 라이브 검증; comparables;
+technical_indicators 공식+윈도우; /history/* envelope에 method별 도출 — dd-v1/base-rates/analogue/
+vol/regimes. KR 스냅샷은 원천값 그대로라 미동봉(정직); 밸류에이션·백테스트·퀀트는 에이전트 트레이스가
+인용까지 커버) · DRV-3/4/5 ⬜.
+
 **순서**: DRV-2 → DRV-1(생산자별 분할 커밋) → DRV-3 → DRV-5 → DRV-4(SH-2b와 함께).
 QT-1(compute 엔진)과 정합: compute의 스펙-as-계산근거는 이 카드로 렌더된다 — 같은 스키마.
 
@@ -710,8 +717,8 @@ Every task adds tests; keep this table updated in the same PR (Definition of Don
 
 | Service | Baseline (2026-07-03) | Current | Planned additions (minimum) |
 |---|---|---|---|
-| datasets | 148 | 234 (measured) | ✅ OPS-1 (+2 grouping/runner); then ≥32 HL-1/2/3, ≥12 HL-4, ≥9 HL-5, ≥22 QT-1/4, ≥7 EC-1, ≥14 FI-1/2/3, ≥8 HL-8/EC-2 |
-| agent-engine | 111 | 133 (measured, incl. skips) | ✅ DK-1 (+5: feed states, citation-drop, degrade); then ≥10 HL-6/7, ≥8 QT-2 (number audit), ≥8 EC-3, ≥6 HL-9 |
+| datasets | 148 | 239 (measured) | ✅ OPS-1 (+2 grouping/runner); then ≥32 HL-1/2/3, ≥12 HL-4, ≥9 HL-5, ≥22 QT-1/4, ≥7 EC-1, ≥14 FI-1/2/3, ≥8 HL-8/EC-2 |
+| agent-engine | 111 | 134 (measured, incl. skips) | ✅ DK-1 (+5: feed states, citation-drop, degrade); then ≥10 HL-6/7, ≥8 QT-2 (number audit), ≥8 EC-3, ≥6 HL-9 |
 | studio-api | 40 | 56 (measured) | ✅ FLAG-1 scheduler gate (+1), ✅ DK-3 (+4: cache/TTL/invalidate/since/degrade); then ≥7 HL-12/14 BFF |
 | control-plane | 13 | 13 | ≥1 QT-1 (activated-connectors header forwarding); rest manifest-derived (coverage.sh guards) |
 | mcp | 9 | 9 | ≥3 HL-4/QT-1 (new tools listed, unentitled 403) |
