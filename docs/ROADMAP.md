@@ -141,7 +141,7 @@ that completes it.**
 [done] QT-2 · M-SHARE(SH-1..3) · M-DERIV(DRV-1..5) · M-FACT(FC-1..4)
 [done] M-SHARE 전체 · M-FACT · M-DERIV · HL-5 커넥터(GDELT+NYT) · IMP-17(8-K)
 [now]  LG-1/2/3/5 ✅ · ENT-1/2/3/4/5 ✅ (관제탑 엔트리 — pulse/watch 라이브 검증; ENT-3 ghost 리스트는
-       제안 3개 인라인으로 구현, ↑↓ 키보드는 후속) → NB-1..5(리서치 노트북)
+       제안 3개 인라인으로 구현, ↑↓ 키보드는 후속) → NB-1 ✅(모델+API) · NB-2..5 ⬜(담기 UI·노트 화면·공유) → SA-1..4
 [next] NB-1..5(리서치 노트북) → SA-1..4(스탠딩 알림)   — NOTEBOOK_SPEC.md
 [then] HL-5b(레짐 도시에) · HL-8(차트 페인) · DATA-KR-1 → M2
      → HL-5(era news) · HL-8(chart panes) · DATA-KR-1 → M2(히스토리 랩 surface)
@@ -741,7 +741,7 @@ Every task adds tests; keep this table updated in the same PR (Definition of Don
 |---|---|---|---|
 | datasets | 148 | 239 (measured) | ✅ OPS-1 (+2 grouping/runner); then ≥32 HL-1/2/3, ≥12 HL-4, ≥9 HL-5, ≥22 QT-1/4, ≥7 EC-1, ≥14 FI-1/2/3, ≥8 HL-8/EC-2 |
 | agent-engine | 111 | 148 (measured, incl. skips) | ✅ DK-1 (+5: feed states, citation-drop, degrade); then ≥10 HL-6/7, ≥8 QT-2 (number audit), ≥8 EC-3, ≥6 HL-9 |
-| studio-api | 40 | 65 (measured) | ✅ FLAG-1 scheduler gate (+1), ✅ DK-3 (+4: cache/TTL/invalidate/since/degrade); then ≥7 HL-12/14 BFF |
+| studio-api | 40 | 67 (measured) | ✅ FLAG-1 scheduler gate (+1), ✅ DK-3 (+4: cache/TTL/invalidate/since/degrade); then ≥7 HL-12/14 BFF |
 | control-plane | 13 | 13 | ≥1 QT-1 (activated-connectors header forwarding); rest manifest-derived (coverage.sh guards) |
 | mcp | 9 | 9 | ≥3 HL-4/QT-1 (new tools listed, unentitled 403) |
 | rag | 20 | 20 | ≥4 HL-5 (era_news/dossier doc types), ≥2 FI-1 (section filter) |
