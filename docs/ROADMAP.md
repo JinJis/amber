@@ -776,6 +776,21 @@ clarity 4.9 · deterministic 93%. KIS(토큰 자가치유)·기술지표·컨센
 (guar2 — '과거 성과' 면책 문구), 섹터 히트맵·periodicity·RAG rele — 각 criteria 대비 응답
 구조 정렬. 궤적: 3.73 → 3.91 → 4.09/3.92(노이즈 밴드) → **4.11(투표 후)**.
 
+측정 4차 (2026-07-05, 전체 87 시나리오 · DCF 인테이크 허용 + 라우팅 힌트 10-13 + news_brief
+축소 적용): **4.31** — sourcing 4.3 · relevance 4.5 · grounding 4.9 · guardrail 5.0 · clarity 4.8 ·
+deterministic 333/350 (95%). DCF 시나리오 4/5로 회복(0/5→5/5 체크), 섹터 히트맵·차트·추이
+라우팅 손실 소멸, guardrail 5.0 달성. deterministic 실패 5건은 전부 회귀 아님: Yahoo KR .KS
+503 업스트림 플레이크 ×4 + 도구 무호출 일시 장애 ×1(parallel gather, statuses=[]).
+4.5 잔여 격차 = **sourcing 4.3**이 최저 차원으로 교대 (S each):
+- N-PORT 지수펀드 보유(2/5 rele2)·13F 거장(3/5) — 표는 맞으나 질문의 특정 관점(비중 상위
+  변화 등) 재진술이 없음 → 합성 시 질문 리프레이즈 선행 문장.
+- 매크로 원문(sour2~3: Core CPI·BLS 페이지) — 수치는 맞고 원문 링크도 있으나 judge가 기관명
+  명시를 요구 → 합성 인용 라벨에 기관명(BLS·BEA·ECOS) 포함.
+- 컨센서스 연도별 breakdown(2/5) — FMP 응답에 2030뿐인 해를 '자료에 없음'으로 명시(완결성
+  원칙 재적용 확인).
+- Yahoo KR 503 재발 시 KIS 폴백 라우팅 힌트 (M — DATA-KR-1과 겹침).
+궤적: 3.73 → 3.91 → 4.09/3.92(노이즈 밴드) → 4.11(투표 후) → **4.31**.
+
 ## 14. Non-goals (unchanged)
 
 No forecasts, price targets, momentum scores, or advice — in any milestone, including
