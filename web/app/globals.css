@@ -124,6 +124,41 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 .ctxpane .ctx-section { display: flex; flex-direction: column; }
 .ctxpane .ctx-label { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
 .ctxpane .ctx-cards { display: flex; flex-direction: column; gap: 8px; }
+
+/* ── LG: 근거 패널 v2 ─────────────────────────────────────────────── */
+/* ① 판정 */
+.ctx-trust { display: flex; flex-direction: column; gap: 3px; border: 1px solid var(--line-3);
+  border-radius: 8px; padding: 7px 10px; background: var(--panel); font-size: 11px; }
+.ctx-trust.warn { border-color: #E8C36B; background: #FBF6E9; }
+.ctx-trust.quiet { color: var(--muted); }
+.ct-verdict b { font-weight: 700; }
+.ct-warn { color: #A9791A; }
+.ct-meta { display: flex; gap: 10px; align-items: center; font-size: 10px; color: var(--muted); }
+.ct-f { display: inline-flex; align-items: center; gap: 3px; }
+/* ③ 수치 원장 */
+.ledger { display: flex; flex-direction: column; }
+.lg-row { display: flex; align-items: baseline; gap: 8px; padding: 5px 6px; font-size: 11px;
+  border-bottom: 1px dotted var(--line-3); border-radius: 5px; cursor: pointer; }
+.lg-row:last-child { border-bottom: none; }
+.lg-row:hover, .lg-row.hot { background: var(--panel-3); }
+.lg-row.unsupported { background: #FBF6E9; cursor: default; }
+.lg-val { min-width: 72px; font-weight: 700; color: var(--text); text-align: right; }
+.lg-ctx { flex: 1; color: var(--muted); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.lg-src { color: var(--text-2); font-size: 10px; white-space: nowrap; }
+.lg-warn { color: #A9791A; }
+.lg-open { color: var(--muted); }
+/* [n] ↔ 카드 */
+.ctx-card-wrap { border-radius: 8px; transition: box-shadow .12s, background .12s; }
+.ctx-card-wrap.hot { background: var(--panel-3); box-shadow: 0 0 0 2px var(--ink); }
+.ctx-card-wrap.flash { animation: cite-flash 1.6s ease-out; }
+@keyframes cite-flash { 0% { box-shadow: 0 0 0 3px var(--ink); background: var(--panel-3); }
+  100% { box-shadow: 0 0 0 0 transparent; } }
+.cite-ref { display: inline; border: none; background: none; padding: 0 1px; font-size: inherit;
+  color: var(--accent-fg, #3A5BC7); cursor: pointer; border-radius: 3px; font-variant-numeric: tabular-nums; }
+.cite-ref:hover, .cite-ref.hot { background: var(--ink); color: var(--on-ink); }
+/* 본문 수치 하이라이트 (CSS Custom Highlight API) */
+::highlight(ledger-hot) { background: #F3E3AE; color: inherit; }
 .ctxpane .artifacts { margin: 0; }
 .ctxpane .ctx-more > summary { cursor: pointer; list-style: revert; }
 .ctxpane .ctx-more > summary.ctx-label { margin-bottom: 0; }

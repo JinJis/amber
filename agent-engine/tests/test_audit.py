@@ -85,3 +85,56 @@ def test_desk_feed_drops_card_with_invented_figure(monkeypatch):
     qs = [c["question"] for c in feed["cards"]]
     assert "q1" in qs        # supported figures ship
     assert "q2" not in qs    # invented +12.9% → dropped by the audit
+
+
+# --- LG-1: the Figure Ledger — per-numeral source attribution --------------------------
+def test_ledger_attributes_each_numeral_to_its_citation():
+    from agentengine.audit import audit_ledger
+
+    answer = "매출은 391.0B [1]이고 PER은 32.8x 수준, 성장률은 8.5%였다 [2]. 목표는 999조다."
+    attributed = [
+        (1, {"revenue": 391_000_000_000}),          # [1] backs the revenue
+        (2, {"per": 32.8, "growth": 0.085}),        # [2] backs PER + growth (% ↔ fraction)
+        (None, {"chart": {"last": 12345.0}}),       # artifact pool, unindexed
+    ]
+    out = audit_ledger(answer, attributed)
+    rows = {r["raw"]: r for r in out["ledger"]}
+    assert rows["391.0B"]["citation_idx"] == 1 and rows["391.0B"]["supported"] is True
+    assert rows["32.8"]["citation_idx"] == 2
+    assert rows["8.5%"]["citation_idx"] == 2 and rows["8.5%"]["pct"] is True
+    # the fabricated figure → amber row + aggregate parity with audit_answer
+    assert rows["999조"]["supported"] is False and rows["999조"]["citation_idx"] is None
+    assert out["unsupported"] == ["999조"] and out["checked"] == 4 and out["supported"] == 3
+
+
+def test_ledger_prefers_indexed_citation_over_artifact_pool():
+    from agentengine.audit import audit_ledger
+
+    # the same value lives in an artifact (unindexed, listed FIRST) and in [3] — the ledger
+    # must point the reader at the [n] they can actually open.
+    out = audit_ledger("영업이익은 12.1조였다.", [(None, {"v": 12.1e12}), (3, {"op": 12.1e12})])
+    row = out["ledger"][0]
+    assert row["supported"] is True and row["citation_idx"] == 3
+
+
+def test_ledger_spans_index_the_original_text_despite_anchors():
+    from agentengine.audit import audit_ledger
+
+    text = "매출 [12] 391.0B 기록"
+    out = audit_ledger(text, [(1, {"r": 391e9})])
+    (s, e) = out["ledger"][0]["span"]
+    assert text[s:e].strip().startswith("391.0B")  # span still valid in the ORIGINAL string
+
+
+def test_composite_korean_numerals_merge_into_one_figure():
+    from agentengine.audit import audit_ledger, extract_numbers
+
+    # "4,161억 6,100만 달러" is ONE figure (416.161B) — must not split into a false-amber tail
+    nums = extract_numbers("매출은 4,161억 6,100만 달러였다.")
+    assert len(nums) == 1 and nums[0]["value"] == 416_161_000_000
+    assert nums[0]["raw"] == "4,161억 6,100만"
+    out = audit_ledger("매출은 4,161억 6,100만 달러였다 [1].", [(1, {"rev": 416_161_000_000})])
+    assert out["unsupported"] == [] and out["ledger"][0]["citation_idx"] == 1
+    # non-adjacent or ascending units never merge (5억 vs 3조 are separate claims)
+    two = extract_numbers("작년 5억, 올해 3조를 벌었다.")
+    assert len(two) == 2

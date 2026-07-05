@@ -14,7 +14,7 @@ import Watchlists, { Watchlist } from "./Watchlists";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { remarkCjkEmphasis } from "../lib/markdown";
-import { SourceCard } from "./SourceCard";
+import { ContextPanel, evidenceOf, uniqueTools } from "./EvidencePanel";
 import { SourceViewer } from "./SourceViewer";
 import { ArtifactCard } from "./ArtifactCard";
 import { Button, Chip, GuardrailLabel, Mascot, FreshnessDot } from "./ui";
@@ -25,17 +25,33 @@ import type {
   Artifact, Citation, Clarify, ClarifyOption, Msg, SubAgent, Think, ToolUse,
 } from "../lib/types";
 
-// Render the assistant's markdown (bold/bullets/tables/links). Links open out-of-tab.
-const mdComponents = {
-  a: (props: any) => <a {...props} target="_blank" rel="noreferrer" />,
-};
+// LG-3: bare [n] markers become links (#cite-n) — but never a [n] that is already a
+// markdown link. The renderer turns them into live refs: hover ↔ panel-card highlight,
+// click → scroll+flash that card in the 근거 패널 (the footnote becomes a remote control).
+export function linkifyCitations(md: string): string {
+  return md.replace(/\[(\d{1,3})\](?!\()/g, "[[$1]](#cite-$1)");
+}
 
-// Collapse repeated tool calls to distinct labels (one answer can hit the same
-// connector many times — show each source once, not eight identical rows).
-function uniqueTools(tools?: ToolUse[]): ToolUse[] {
-  const seen = new Map<string, ToolUse>();
-  for (const t of tools || []) seen.set(t.label || t.name, t);
-  return [...seen.values()];
+function makeMdComponents(
+  hoverCite: number | null,
+  setHoverCite: (n: number | null) => void,
+  onCiteClick: (n: number) => void,
+) {
+  return {
+    a: (props: any) => {
+      const m = String(props.href || "").match(/^#cite-(\d+)$/);
+      if (m) {
+        const n = Number(m[1]);
+        return (
+          <button type="button" className={`cite-ref mono ${hoverCite === n ? "hot" : ""}`}
+            onMouseEnter={() => setHoverCite(n)} onMouseLeave={() => setHoverCite(null)}
+            onClick={(e) => { e.stopPropagation(); onCiteClick(n); }}
+            title="근거 패널에서 이 출처 보기">[{n}]</button>
+        );
+      }
+      return <a {...props} target="_blank" rel="noreferrer" />;
+    },
+  };
 }
 
 // PH-THINK: the live reasoning stream — foldable so it doesn't stack up. COLLAPSED (default)
@@ -118,90 +134,6 @@ function SubAgentCards({ subs }: { subs: SubAgent[] }) {
   );
 }
 
-// Evidence for one message = the sources its answer actually used (else all consulted).
-function evidenceOf(m: Msg): Citation[] {
-  const cites = m.citations ?? [];
-  if (m.used && m.used.length) return cites.filter((c) => c.index != null && m.used!.includes(c.index));
-  return cites;
-}
-
-// RIGHT CONTEXT PANEL: the live "근거 패널" — as an answer streams, its charts/tables and
-// sourced evidence land here in real time (not stacked below the prose). Clicking any past
-// answer re-focuses the panel on that turn's context (`msg` = the focused message).
-function ContextPanel(
-  { msg, streaming, onEvidence, onPinArtifact, onPinCitation, onShareArtifact, onResizeStart }:
-  {
-    msg: Msg | null; streaming: boolean;
-    onEvidence: (c: Citation) => void;
-    // undefined when the 대시보드 feature is off → the cards hide the ＋대시보드 pin button.
-    onPinArtifact?: (a: Artifact) => void;
-    onShareArtifact?: (a: Artifact) => void;
-    onPinCitation?: (c: Citation) => void;
-    onResizeStart: (e: ReactMouseEvent) => void;
-  },
-) {
-  const arts = msg?.artifacts ?? [];
-  const cites = msg?.citations ?? [];
-  const used = msg ? evidenceOf(msg) : [];
-  const usedKeys = new Set(used.map((c) => `${c.source}|${c.url}`));
-  // every consulted source the answer DIDN'T directly cite — kept in its own fold so nothing
-  // "disappears" once the answer settles.
-  const others = cites.filter((c) => !usedKeys.has(`${c.source}|${c.url}`));
-  const tools = uniqueTools(msg?.tools);
-  const hasAny = arts.length || cites.length || tools.length;
-  return (
-    <aside className="ctxpane">
-      {/* drag the left edge to resize the panel */}
-      <div className="ctx-resize" onMouseDown={onResizeStart} title="드래그해서 패널 너비 조절" aria-hidden />
-      <div className="ctxpane-head">
-        <span className="ctx-title">근거 패널</span>
-        {streaming && <span className="ctx-live"><span className="tl-spin" />수집 중</span>}
-      </div>
-      {/* trust brand, always pinned: raw data + sources only, never predictions/advice */}
-      <span className="live-label">원자료와 출처만 보여줘요 — 예측·매매 의견은 제공하지 않습니다.</span>
-      {!hasAny ? (
-        <div className="ctx-empty">
-          {streaming
-            ? "답변을 작성하며 차트·표·출처를 모으고 있어요…"
-            : "답변을 누르면 그 답에 쓰인 차트·표·출처가 여기에 모여요."}
-        </div>
-      ) : (
-        <>
-          {arts.length > 0 && (
-            <div className="ctx-section">
-              <div className="ctx-label">차트·표 {arts.length}</div>
-              <div className="artifacts">
-                {arts.map((a, j) => <ArtifactCard key={`a${j}`} a={a} onPin={onPinArtifact} onShare={onShareArtifact} onEvidence={onEvidence} />)}
-              </div>
-            </div>
-          )}
-          {used.length > 0 && (
-            <div className="ctx-section">
-              <div className="ctx-label">답변에 사용된 출처 {used.length}</div>
-              <div className="ctx-cards">
-                {used.map((c, j) => <SourceCard key={`u${j}`} c={c} onExpand={onEvidence} onPin={onPinCitation} />)}
-              </div>
-            </div>
-          )}
-          {others.length > 0 && (
-            <details className="ctx-section ctx-more">
-              <summary className="ctx-label">참고한 모든 출처 {cites.length} · 답변 외 {others.length}</summary>
-              <div className="ctx-cards">
-                {others.map((c, j) => <SourceCard key={`o${j}`} c={c} onExpand={onEvidence} onPin={onPinCitation} />)}
-              </div>
-            </details>
-          )}
-          {tools.length > 0 && (
-            <details className="ctx-section ctx-more">
-              <summary className="ctx-label">훑어본 도구 {tools.length}개</summary>
-              {tools.map((t, j) => <div key={`t${j}`} className="tool">🔧 {t.label || t.name}</div>)}
-            </details>
-          )}
-        </>
-      )}
-    </aside>
-  );
-}
 
 const EXAMPLES = [
   "삼성전자 최근 실적 알려줘",
@@ -239,6 +171,10 @@ export default function Chat({ name, features }: { name: string; features: Featu
   const [pinTarget, setPinTarget] = useState<any | null>(null);  // asset awaiting a board-picker pin
   const [onboarded, setOnboarded] = useState<boolean | null>(null);  // null = checking; false = show onboarding
   const [viewer, setViewer] = useState<Citation | null>(null);  // expanded source viewer
+  // LG-3: [n] ↔ 근거 패널 two-way link. hover mirrors; click scrolls+flashes the card.
+  const [hoverCite, setHoverCite] = useState<number | null>(null);
+  const [flashCite, setFlashCite] = useState<{ n: number; ts: number } | null>(null);
+  const bubbleRefs = useRef(new Map<number, HTMLDivElement>());   // msg idx → answer bubble el
   const [factCheck, setFactCheck] = useState(false);  // FC-4: explicit 팩트체크 mode (never inferred)
   // RIGHT CONTEXT PANEL: which assistant turn's context is pinned in the panel. null = follow
   // the latest answer live (so a streaming turn's assets fill the panel as they arrive).
@@ -565,6 +501,11 @@ export default function Chat({ name, features }: { name: string; features: Featu
   }
   const panelIdx = focusIdx != null && messages[focusIdx]?.role === "assistant" ? focusIdx : lastAssistantIdx;
   const panelMsg = panelIdx >= 0 ? messages[panelIdx] : null;
+  // LG-3: an [n] click in answer i pins that answer to the panel AND flashes its card there.
+  const citeClickFor = (i: number) => (n: number) => {
+    setFocusIdx(i);
+    setFlashCite({ n, ts: Date.now() });
+  };
   const [shareArt, setShareArt] = useState<Artifact | null>(null);  // SH-2 share sheet
   const [loadError, setLoadError] = useState<string | null>(null);  // IMP-5: conv-load failure banner
   const panelStreaming = busy && panelIdx === messages.length - 1;
@@ -696,9 +637,11 @@ export default function Chat({ name, features }: { name: string; features: Featu
                       onClick={() => setFocusIdx(i)}
                       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setFocusIdx(i); } }}
                     >
-                      <div className="bubble">
+                      <div className="bubble" ref={(el) => { if (el) bubbleRefs.current.set(i, el); }}>
                         {m.content
-                          ? <div className="md"><ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkEmphasis]} components={mdComponents}>{m.content}</ReactMarkdown></div>
+                          ? <div className="md"><ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkEmphasis]}
+                              components={makeMdComponents(panelIdx === i ? hoverCite : null, setHoverCite, citeClickFor(i))}>
+                              {linkifyCitations(m.content)}</ReactMarkdown></div>
                           : (busy && !(m.thinking?.length) ? "…" : "")}
                       </div>
                       {(() => {
@@ -793,6 +736,10 @@ export default function Chat({ name, features }: { name: string; features: Featu
 
       {view === "explore" && (
         <ContextPanel
+          hoverCite={hoverCite}
+          setHoverCite={setHoverCite}
+          flashCite={flashCite}
+          bubbleEl={() => bubbleRefs.current.get(panelIdx) ?? null}
           msg={panelMsg}
           streaming={panelStreaming}
           onEvidence={setViewer}

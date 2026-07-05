@@ -428,8 +428,11 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
     # gates share-card minting on it, and the verify line makes the check visible (trust brand).
     audit = None
     if cite_ctx and final_text:
-        from agentengine.audit import audit_answer
-        audit = audit_answer(final_text, [d for _, _, d in cite_ctx] + artifacts)
+        from agentengine.audit import audit_ledger
+        # LG-1: attribute each pool to its citation's [n] so the ledger can say WHICH source
+        # backs each numeral (artifacts ride unindexed — they derive from the same tool data).
+        attributed = [(cit.get("index"), data) for cit, _tool, data in cite_ctx]             + [(None, art) for art in artifacts]
+        audit = audit_ledger(final_text, attributed)
         if audit["checked"]:
             ok = not audit["unsupported"]
             yield {"type": "thinking", "phase": "verify",

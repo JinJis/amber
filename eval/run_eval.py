@@ -101,6 +101,7 @@ def chat_messages(messages: list[dict], agent_id: str) -> dict:
     code, raw = _request("POST", f"{STUDIO}/chat/stream",
                          {"messages": messages, "agent_id": agent_id}, headers)
     tools, statuses, cites, ans, arts, cads = [], [], [], [], [], []
+    audit = {}
     confs, suggestions, subagents, cite_urls, cite_comps = [], [], {}, [], []
     clarify = None
     refused = None
@@ -144,6 +145,7 @@ def chat_messages(messages: list[dict], agent_id: str) -> dict:
             ans.append(ev.get("text", ""))
         elif t == "done":
             refused = ev.get("refused")
+            audit = ev.get("audit") or {}
             # the done list is authoritative — the verify pass enriches its citations with
             # per-source confidence (not present on the earlier streamed `citation` events).
             for c in ev.get("citations") or []:
@@ -155,7 +157,7 @@ def chat_messages(messages: list[dict], agent_id: str) -> dict:
                     cite_comps.append(c["computation"])
     return {"http": code, "tools": tools, "statuses": statuses, "citations": cites,
             "artifacts": arts, "cadences": cads, "confidences": confs, "cite_urls": cite_urls,
-            "cite_computations": cite_comps,
+            "cite_computations": cite_comps, "audit": audit,
             "clarify": clarify, "subagents": list(subagents.values()), "suggestions": suggestions,
             "answer": "".join(ans).strip(), "refused": bool(refused)}
 
@@ -309,6 +311,12 @@ def grade(checks: dict, r: dict) -> list[tuple[str, bool, str]]:
         opts = c if isinstance(c, list) else [c]  # list = any-of (price chain may fall back Yahoo→Stooq/KIS)
         ok = any(o in s for o in opts for s in r["citations"])
         out.append((f"cites {'|'.join(opts)}", ok, f"cites={r['citations']}"))
+    if checks.get("expect_ledger"):
+        # LG-5: the Figure Ledger rides the done event — every claim numeral traced to a source.
+        led = (r.get("audit") or {}).get("ledger") or []
+        ok = bool(led) and all(row.get("supported") for row in led)
+        out.append(("ledger: every numeral traced", ok,
+                    f"rows={len(led)} unsupported={[x['raw'] for x in led if not x.get('supported')][:3]}"))
     if checks.get("expect_citation_computation"):
         # M-DERIV (DRV-5): a derived figure's CITATION carries its derivation —
         # formula + at least one sourced input (the 출처 preview renders the card from this).

@@ -140,7 +140,7 @@ that completes it.**
 [done] FLAG-1 · OPS-1 · M-DESK basic · M0(HL-1..4) · M1(HL-6/7/9)
 [done] QT-2 · M-SHARE(SH-1..3) · M-DERIV(DRV-1..5) · M-FACT(FC-1..4)
 [done] M-SHARE 전체 · M-FACT · M-DERIV · HL-5 커넥터(GDELT+NYT) · IMP-17(8-K)
-[now]  LG-1..5(수치 원장+클릭 [n], UX_PROPOSALS §1) → ENT-1..5(관제탑 엔트리, §2)
+[now]  LG-1/2/3/5 ✅ (수치 원장+클릭 [n] — 라이브 검증; LG-4 스트리밍 원장은 후순위) → ENT-1..5(관제탑 엔트리)
 [next] NB-1..5(리서치 노트북) → SA-1..4(스탠딩 알림)   — NOTEBOOK_SPEC.md
 [then] HL-5b(레짐 도시에) · HL-8(차트 페인) · DATA-KR-1 → M2
      → HL-5(era news) · HL-8(chart panes) · DATA-KR-1 → M2(히스토리 랩 surface)
@@ -739,12 +739,12 @@ Every task adds tests; keep this table updated in the same PR (Definition of Don
 | Service | Baseline (2026-07-03) | Current | Planned additions (minimum) |
 |---|---|---|---|
 | datasets | 148 | 239 (measured) | ✅ OPS-1 (+2 grouping/runner); then ≥32 HL-1/2/3, ≥12 HL-4, ≥9 HL-5, ≥22 QT-1/4, ≥7 EC-1, ≥14 FI-1/2/3, ≥8 HL-8/EC-2 |
-| agent-engine | 111 | 135 (measured, incl. skips) | ✅ DK-1 (+5: feed states, citation-drop, degrade); then ≥10 HL-6/7, ≥8 QT-2 (number audit), ≥8 EC-3, ≥6 HL-9 |
+| agent-engine | 111 | 148 (measured, incl. skips) | ✅ DK-1 (+5: feed states, citation-drop, degrade); then ≥10 HL-6/7, ≥8 QT-2 (number audit), ≥8 EC-3, ≥6 HL-9 |
 | studio-api | 40 | 64 (measured) | ✅ FLAG-1 scheduler gate (+1), ✅ DK-3 (+4: cache/TTL/invalidate/since/degrade); then ≥7 HL-12/14 BFF |
 | control-plane | 13 | 13 | ≥1 QT-1 (activated-connectors header forwarding); rest manifest-derived (coverage.sh guards) |
 | mcp | 9 | 9 | ≥3 HL-4/QT-1 (new tools listed, unentitled 403) |
 | rag | 20 | 20 | ≥4 HL-5 (era_news/dossier doc types), ≥2 FI-1 (section filter) |
-| web | TS build only | 24 (vitest) | UX-4 adds a vitest runner; then component tests for DK-2 (3 states), HL-7/10/11/12/13, QT-3 (scatter/distribution/계산 근거), EC-4 |
+| web | TS build only | 34 (vitest) | UX-4 adds a vitest runner; then component tests for DK-2 (3 states), HL-7/10/11/12/13, QT-3 (scatter/distribution/계산 근거), EC-4 |
 | eval scenarios | 32 | 92 (scenarios.py — M-DERIV +2, M-FACT +3) | ✅ DK-4 (+2 desk-feed, `kind: desk_feed` runner); then +4 HL-6, +2 QT-2, +1 EC-3, +2 M2 flows, +1 FI |
 
 Eval bar: maintain ≥ current score (`eval/RUBRIC.md`); run before every push.

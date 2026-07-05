@@ -179,7 +179,12 @@ export type Msg = {
   citations?: Citation[];
   artifacts?: Artifact[];
   refused?: boolean;
-  audit?: { checked: number; supported: number; unsupported: string[] } | null;  // QT-2
+  audit?: {
+    checked: number; supported: number; unsupported: string[];
+    // LG-1: the Figure Ledger — every claim numeral, attributed to its citation [n]
+    ledger?: { raw: string; value: number; pct?: boolean; span?: [number, number];
+               citation_idx?: number | null; supported: boolean }[];
+  } | null;  // QT-2 + LG-1
   used?: number[];
   thinking?: Think[];
   clarify?: Clarify;

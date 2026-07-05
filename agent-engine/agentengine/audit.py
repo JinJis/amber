@@ -34,7 +34,9 @@ def extract_numbers(text: str) -> list[dict]:
     count-ish ordinals (3가지, 2분기, 60건, 20거래일) are structure, not figures — skipped."""
     if not text:
         return []
-    cleaned = _ANCHOR.sub(" ", text)
+    # replace [n] anchors with SAME-LENGTH whitespace so every span still indexes the
+    # ORIGINAL text — the ledger (LG-1) hands these spans to the UI for prose highlighting.
+    cleaned = _ANCHOR.sub(lambda m: " " * len(m.group(0)), text)
     out: list[dict] = []
     for m in _NUM_RE.finditer(cleaned):
         s, e = m.span()
@@ -56,7 +58,38 @@ def extract_numbers(text: str) -> list[dict]:
             continue
         pct = unit in ("%", "퍼센트")
         scaled = val * _SCALE.get(unit or "", 1.0)
-        out.append({"raw": m.group(0).strip(), "value": scaled, "pct": pct, "span": (s, e)})
+        out.append({"raw": m.group(0).strip(), "value": scaled, "pct": pct, "span": (s, e),
+                    "_unit": unit})
+    return _merge_composites(out)
+
+
+_UNIT_RANK = {"조": 3, "억": 2, "만": 1}
+
+
+def _merge_composites(nums: list[dict]) -> list[dict]:
+    """Korean composite numerals — "4,161억 6,100만" is ONE figure (416.161B), not two. Merge
+    adjacent rows whose units strictly descend (조 > 억 > 만) with ≤1 char between spans; the
+    merged row sums the values and spans the whole phrase. Without this the tail token becomes
+    a false-amber "미확인" row in the ledger."""
+    out: list[dict] = []
+    i = 0
+    while i < len(nums):
+        cur = dict(nums[i])
+        rank = _UNIT_RANK.get(cur.get("_unit") or "")
+        j = i + 1
+        while (rank and j < len(nums)):
+            nxt = nums[j]
+            nrank = _UNIT_RANK.get(nxt.get("_unit") or "")
+            if not nrank or nrank >= rank or nxt["span"][0] - cur["span"][1] > 1 or nxt["pct"]:
+                break
+            cur["value"] += nxt["value"]
+            cur["raw"] = f"{cur['raw']} {nxt['raw']}"
+            cur["span"] = (cur["span"][0], nxt["span"][1])
+            rank = nrank
+            j += 1
+        cur.pop("_unit", None)
+        out.append(cur)
+        i = j
     return out
 
 
@@ -122,3 +155,45 @@ def audit_answer(answer: str, tool_results: list) -> dict:
     unsupported = [n["raw"] for n in nums if not _matches(n["value"], pool, n["pct"])]
     return {"checked": len(nums), "supported": len(nums) - len(unsupported),
             "unsupported": unsupported[:20]}
+
+
+def audit_ledger(answer: str, attributed: list) -> dict:
+    """LG-1 — the Figure Ledger: the QT-2 audit with per-numeral SOURCE ATTRIBUTION.
+
+    ``attributed`` is an ordered list of ``(citation_index | None, data)`` pairs — the same
+    tool payloads the plain audit sees, but each tagged with the 1-based [n] of the citation
+    it backs (None for artifact payloads / unindexed sources). Every claim numeral in the
+    prose becomes a ledger row::
+
+        {raw, value, pct, span: [s, e], citation_idx: int | None, supported: bool}
+
+    Attribution is first-match in citation order (the [n] the reader would check first).
+    A numeral matched only by an unindexed pool still counts as supported (citation_idx None
+    — rendered as "차트·표 데이터"); no match at all → supported=False (the amber row).
+    The aggregate keys stay identical to ``audit_answer`` so every existing consumer
+    (done event, desk-feed gate, share gate) keeps working unchanged.
+    """
+    nums = extract_numbers(answer)
+    pools: list[tuple[int | None, set[float]]] = []
+    for idx, data in attributed or []:
+        pool: set[float] = set()
+        _walk_numbers(data, pool)
+        if pool:
+            pools.append((idx if isinstance(idx, int) else None, pool))
+    ledger: list[dict] = []
+    unsupported: list[str] = []
+    for n in nums:
+        cit: int | None = None
+        supported = False
+        for idx, pool in pools:
+            if _matches(n["value"], pool, n["pct"]):
+                supported = True
+                cit = idx
+                if idx is not None:   # prefer a REAL [n]; keep scanning only while unindexed
+                    break
+        if not supported:
+            unsupported.append(n["raw"])
+        ledger.append({"raw": n["raw"], "value": n["value"], "pct": n["pct"],
+                       "span": list(n["span"]), "citation_idx": cit, "supported": supported})
+    return {"checked": len(nums), "supported": len(nums) - len(unsupported),
+            "unsupported": unsupported[:20], "ledger": ledger[:60]}

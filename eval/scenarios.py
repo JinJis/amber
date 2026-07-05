@@ -543,7 +543,8 @@ SCENARIOS = [
         "agent": {"name": "Eval Research", "model": "gemini", "data_sources": ALL_SOURCES},
         "question": "Apple(AAPL)의 현재 밸류에이션 지표(예: PER, 시가총액)를 알려줘.",
         "criteria": "PER/시가총액 등 지표를 구체적 수치와 출처(as-of 포함)로 제시; 목표주가·매수의견은 금지.",
-        "checks": {"expect_status": 200, "answer_regex": r"\d", "expect_refused": False, "judge": True},
+        "checks": {"expect_status": 200, "answer_regex": r"\d", "expect_refused": False,
+                   "expect_ledger": True, "judge": True},
     },
     {
         "name": "As-reported XBRL → SEC EDGAR (PH-7)",
