@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { PRESETS } from "@/lib/presets";
-import type { Citation } from "@/lib/types";
+import type { Artifact, Citation } from "@/lib/types";
 import { FreshnessDot } from "./ui";
 
 export type DeskCard = {
@@ -28,9 +28,10 @@ const ICONS: Record<string, string> = {
   news_cluster: "📰", market_pulse: "🌐", continue_thread: "↩", watchlist_nudge: "⭐",
 };
 
-export default function DeskHome({ onPick, onChanged }: {
+export default function DeskHome({ onPick, onChanged, onShareBriefing }: {
   onPick: (question: string) => void;   // tap → composer pre-fill (never auto-send)
   onChanged?: () => void;               // quick-add created a watchlist → reload @handles
+  onShareBriefing?: (a: Artifact) => void;  // SH-5: compose the day's top cards into one share card
 }) {
   const [feed, setFeed] = useState<Feed | null>(null);
   const [loading, setLoading] = useState(true);
@@ -104,10 +105,30 @@ export default function DeskHome({ onPick, onChanged }: {
   const cards = feed?.cards ?? [];
   if (!cards.length) return null; // graceful: the parent's capability examples stay visible
 
+  // SH-5: the day's top DATA cards (skip nudge/continue — no sourced hook) → one briefing artifact.
+  // Each hook was already number-audited at feed generation (uncited cards are dropped), so the
+  // composite carries only sourced lines; it shares through the same pipeline (kind reuses `table`).
+  const briefingCards = cards.filter((c) => c.kind !== "watchlist_nudge" && c.kind !== "continue_thread"
+    && (c.citations?.length ?? 0) > 0).slice(0, 3);
+  const day = (feed?.generated_at || "").slice(0, 10);
+  function shareBriefing() {
+    if (!onShareBriefing || !briefingCards.length) return;
+    const table = [["오늘의 데스크", "출처"], ...briefingCards.map((c) => [
+      c.hook, `${c.citations![0].source ?? ""}${c.citations![0].as_of ? ` · ${c.citations![0].as_of}` : ""}`])];
+    onShareBriefing({
+      kind: "table", title: `오늘의 데스크 브리핑${day ? ` · ${day}` : ""}`, series: [],
+      table, source: "ValueGraph 데스크", as_of: day || null,
+    });
+  }
+
   return (
     <div className="deskfeed">
       <div className="df-label">
         오늘의 데스크
+        {onShareBriefing && briefingCards.length > 0 && (
+          <button type="button" className="df-brief" onClick={shareBriefing}
+            title="오늘의 데스크 상위 카드를 한 장으로 공유">↗ 오늘 브리핑 공유</button>
+        )}
         <button type="button" className="df-refresh" onClick={() => void load()} title="새로 고침">↻</button>
       </div>
       <div className="df-grid">

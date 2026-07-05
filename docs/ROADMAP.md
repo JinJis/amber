@@ -117,7 +117,7 @@ Gaps that block the killer feature (verified in code, 2026-07-03):
 | **M0** | Deep History Data Plane | max-history prices + VIX + regime/episode store + analytics engine + `/history/*` API through the gateway | — | 🚧 HL-1..4 ✅ · HL-5(era news) ⬜ |
 | **M1** | History Lab in Chat | agent answers "지금 낙폭 닷컴버블이랑 비교해줘" with analogue + base-rate artifacts, guardrail framing, new chart panes | M0 | 🚧 HL-6/7/9 ✅ · HL-8(chart panes) ⬜ |
 | **QT-2*** | Number audit (pulled forward) | every numeral in prose/cards matches a tool value — the trust floor for anything that leaves the app | — | ✅ done (audit module + done-event ride-along + desk-feed card drop; share gating lands with SH-2) |
-| **M-SHARE** | 공유 파이프라인 (PUBLISH_SPEC §3) | share tap → provenance-baked card image (aspect presets) + public read-only page (`/s/{token}`, OG) + evidence quote cards + 데스크 브리핑 카드 | QT-2 | 🚧 SH-1/2/3/2b/4+IMP-13 ✅ (라이브 검증) · SH-5(브리핑) ⬜ |
+| **M-SHARE** | 공유 파이프라인 (PUBLISH_SPEC §3) | share tap → provenance-baked card image (aspect presets) + public read-only page (`/s/{token}`, OG) + evidence quote cards + 데스크 브리핑 카드 | QT-2 | ✅ done — SH-1/2/2b/3/4/5 + IMP-13 (라이브 검증) |
 | **M-FACT** | 근거 기반 팩트체크 (PUBLISH_SPEC §4) | paste a claim → cited verdict artifact (사실/사실과 다름/미래 주장) with findings for/against; the receipt for 정보방 | M-SHARE | ✅ FC-1..4 (라이브 검증: 3 시나리오 10/10 · judge 4.33 · verdict 카드 방출) |
 | **M-NOTE** | 인사이트 노트 (PUBLISH_SPEC §6) | conversation → structured, cited note → A4 report-grade image/PDF + share | M-SHARE, M2 | ⬜ planned |
 | **DATA-KR-1** | KR macro expansion | ECOS beyond rates (CPI·실업률·성장) — KR fact-check needs official KR macro | — | ⬜ planned |
@@ -137,8 +137,8 @@ that completes it.**
 ```
 [done] FLAG-1 · OPS-1 · M-DESK basic · M0(HL-1..4) · M1(HL-6/7/9)
 [done] QT-2 · M-SHARE(SH-1..3) · M-DERIV(DRV-1..5) · M-FACT(FC-1..4)
-[done] SH-2b(공유 카드 이미지) · SH-4(원문 인용 카드)
-[next] SH-5(브리핑 카드) · HL-5(시대 뉴스) · HL-8(차트 페인)
+[done] M-SHARE 전체(SH-1..5·2b) · M-FACT · M-DERIV
+[next] HL-5(시대 뉴스) · HL-8(차트 페인) · DATA-KR-1(KR 매크로) → M2(히스토리 랩 화면)
      → HL-5(era news) · HL-8(chart panes) · DATA-KR-1 → M2(히스토리 랩 surface)
      → M-NOTE → M3(어닝) → M4(공시 인텔리전스) → M-QUANT(QT-1/3/4) → M5(UX) → M6(호라이즌)
 ```
@@ -732,7 +732,7 @@ Every task adds tests; keep this table updated in the same PR (Definition of Don
 | control-plane | 13 | 13 | ≥1 QT-1 (activated-connectors header forwarding); rest manifest-derived (coverage.sh guards) |
 | mcp | 9 | 9 | ≥3 HL-4/QT-1 (new tools listed, unentitled 403) |
 | rag | 20 | 20 | ≥4 HL-5 (era_news/dossier doc types), ≥2 FI-1 (section filter) |
-| web | TS build only | 23 (vitest) | UX-4 adds a vitest runner; then component tests for DK-2 (3 states), HL-7/10/11/12/13, QT-3 (scatter/distribution/계산 근거), EC-4 |
+| web | TS build only | 24 (vitest) | UX-4 adds a vitest runner; then component tests for DK-2 (3 states), HL-7/10/11/12/13, QT-3 (scatter/distribution/계산 근거), EC-4 |
 | eval scenarios | 32 | 92 (scenarios.py — M-DERIV +2, M-FACT +3) | ✅ DK-4 (+2 desk-feed, `kind: desk_feed` runner); then +4 HL-6, +2 QT-2, +1 EC-3, +2 M2 flows, +1 FI |
 
 Eval bar: maintain ≥ current score (`eval/RUBRIC.md`); run before every push.

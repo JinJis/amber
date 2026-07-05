@@ -648,6 +648,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
                   <DeskHome
                     onPick={(q) => { setInput(q); inputRef.current?.focus(); }}
                     onChanged={loadHandles}
+                    onShareBriefing={(a) => setShareArt(a)}
                   />
                   {libPrompts.length > 0 ? (
                     // prompt-library examples rising in an infinite loop; hover pauses; click

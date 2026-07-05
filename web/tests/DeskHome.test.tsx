@@ -22,6 +22,29 @@ describe("DeskHome", () => {
     expect(onPick).toHaveBeenCalledWith("AAPL 오늘 가격 흐름 보여줘");  // pre-fill, never auto-send
   });
 
+  it("SH-5: composes the top sourced cards into one briefing share artifact", async () => {
+    const onShareBriefing = vi.fn();
+    stubFeed({ generated_at: "2026-07-05T08:00:00", cards: [
+      { kind: "price_move", question: "q1", hook: "AAPL −3.2%",
+        citations: [{ source: "Yahoo Finance", as_of: "2026-07-05" }] },
+      { kind: "watchlist_nudge", question: "", hook: "관심그룹을 만들면…" },  // skipped (no source)
+      { kind: "filing_new", question: "q2", hook: "TSLA 8-K 접수",
+        citations: [{ source: "SEC EDGAR", as_of: "2026-07-05" }] },
+    ] });
+    render(<DeskHome onPick={() => {}} onShareBriefing={onShareBriefing} />);
+    const btn = await screen.findByText(/오늘 브리핑 공유/);
+    btn.click();
+    expect(onShareBriefing).toHaveBeenCalledTimes(1);
+    const a = onShareBriefing.mock.calls[0][0];
+    expect(a.kind).toBe("table");
+    expect(a.title).toContain("2026-07-05");
+    // header row + the two SOURCED cards (the nudge is excluded)
+    expect(a.table).toHaveLength(3);
+    expect(a.table[1][0]).toBe("AAPL −3.2%");
+    expect(a.table[1][1]).toContain("Yahoo Finance");
+    expect(a.table.some((r: string[]) => r[0] === "관심그룹을 만들면…")).toBe(false);
+  });
+
   it("leads with the watchlist nudge (preset quick-add) for a user without groups", async () => {
     stubFeed({ cards: [{ kind: "watchlist_nudge", question: "관심그룹 만들기",
       hook: "관심그룹을 만들면 데스크가 채워둡니다", citations: [] }] });

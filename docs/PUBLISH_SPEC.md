@@ -117,7 +117,11 @@ on the image must have passed the number audit (§5). 텍스트 최소 12px(모�
   highlighted passage (text, not screenshot) into a quote-card artifact {passage, doc title,
   filing date, url} → same share pipeline. The 원문 인증짤. Tests: quote fidelity (verbatim),
   source fields mandatory.
-- **SH-5 · 데스크 브리핑 카드** — "오늘의 데스크" 상단에 "오늘 브리핑 공유": composes the day's
+- **SH-5 · 데스크 브리핑 카드** — ✅ done. "오늘의 데스크" 헤더에 "↗ 오늘 브리핑 공유": composes the
+  day's top 3 SOURCED cards (nudge/continue excluded) into one artifact (kind reuses `table`: hooks +
+  source column) → the share pipeline + the 1:1 card image. Each hook was already number-audited at
+  feed generation (uncited cards dropped), so the composite carries only sourced lines.
+  ORIGINAL: "오늘의 데스크" 상단에 "오늘 브리핑 공유": composes the day's
   top 3 cards into one 1:1 card. (Small; reuses SH-1/2.)
 
 ## 4. M-FACT — 근거 기반 팩트체크

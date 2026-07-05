@@ -655,6 +655,10 @@ select.input { appearance: none; }
   letter-spacing: .06em; color: var(--muted); text-transform: uppercase; margin-bottom: 10px; }
 .df-refresh { margin-left: auto; border: 1px solid var(--line-2); background: var(--panel); color: var(--muted);
   border-radius: 7px; width: 24px; height: 24px; cursor: pointer; font-family: inherit; }
+.df-brief { margin-left: auto; font-size: 10.5px; padding: 2px 8px; border: 1px solid var(--line-2);
+  border-radius: 6px; background: var(--panel); color: var(--text-2); cursor: pointer; }
+.df-brief:hover { background: var(--panel-3); }
+.df-brief + .df-refresh { margin-left: 6px; }
 .df-refresh:hover { color: var(--text); border-color: var(--ink); }
 .df-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .df-card { display: flex; flex-direction: column; gap: 7px; text-align: left; background: var(--panel);
