@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from agentengine.evidence import _evidence_url, rag_evidence_url
+from agentengine.evidence import _evidence_url, filing_evidence_url, rag_evidence_url
 from agentengine.freshness import compute_freshness
 from agentengine.models import Citation, Computation
 from agentengine.provenance import (
@@ -45,6 +45,23 @@ from agentengine.anchors import (  # noqa: F401
 _FILING_HINTS = ("10-k", "10-q", "8-k", "20-f", "6-k", "s-1", "filing", "annual", "quarterly")
 # datasets tools whose citation renders as a "metric computation" card, not raw data.
 _METRIC_HINTS = ("price", "metric", "snapshot", "financ", "ratio", "screener", "earnings")
+
+
+def _cik_from_url(url: str | None) -> str | None:
+    """Pull the CIK from a canonical SEC url (/edgar/data/{cik}/…) so a listing citation can
+    build its filing-HTML evidence URL even when the row omits an explicit cik."""
+    import re as _re
+    m = _re.search(r"edgar/data/(\d+)", url or "")
+    return m.group(1) if m else None
+
+
+def _first_item_header(items: str | None) -> str | None:
+    """The first 8-K item code → the literal header the SEC document uses ('Item 5.02'), a
+    reliable highlight target that appears verbatim in the 8-K HTML."""
+    if not items:
+        return None
+    first = str(items).split(",")[0].strip()
+    return f"Item {first}" if first else None
 
 
 def _rag_type(prov: dict) -> str:
@@ -205,10 +222,21 @@ def _build_citations(tool: dict, result: dict) -> list[Citation]:
             seen.add(u)
             fa = f.get("filed") or f.get("report_period") or f.get("as_of")
             fa = str(fa)[:10] if fa else None
+            form = f.get("form") or f.get("filing_type")
+            # 8-K fix: a real summary (8-K event labels / doc description), not a bare form label —
+            # so the card shows WHAT the filing reports and the viewer has a text target.
+            desc = f.get("description") or f.get("title")
+            snippet = desc or form or None
+            # give the listing citation a filing-HTML evidence URL so the viewer renders the REAL
+            # document in-app (not just the form). Highlight the first 8-K item header when known.
+            accn = f.get("accession_number")
+            cik = f.get("cik") or _cik_from_url(u)
+            hl = _first_item_header(f.get("items"))
+            ev = filing_evidence_url(market, accn, cik, hl) if accn else None
             out.append(Citation(
                 tool=tool["name"], source=src, url=u, kind="filing", as_of=fa,
-                freshness=compute_freshness(fa), page=f.get("accession_number"),
-                snippet=(f.get("title") or f.get("form") or f.get("filing_type") or None)))
+                freshness=compute_freshness(fa), page=accn, doc_type=form,
+                snippet=snippet, evidence_image_url=ev))
         if out:
             return out
     # Derived figures (financials / metrics / prices): show the SPECIFIC figures used +

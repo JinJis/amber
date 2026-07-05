@@ -141,3 +141,52 @@ def test_nyt_connector_key_gated_in_catalog():
     assert c is not None and c.upstream.requires_key is True and c.upstream.key_env == "NYT_API_KEY"
     assert {r.name for r in c.resources} == {"era_news"}
     assert all(r.category == "history" for r in c.resources)
+
+
+# --- 8-K fix: filings listing carries item summary + events reach RAG refs ------------
+def test_filing_summary_labels_8k_items():
+    from app.providers.us.sec_edgar import _filing_summary
+
+    assert _filing_summary("8-K", "5.02,9.01", "8-K") == "항목 5.02 임원·이사 변동 · 항목 9.01 재무제표·첨부자료"
+    # unknown code → keeps the bare item, never dropped
+    assert "항목 3.99" in _filing_summary("8-K", "3.99", "")
+    # non-8-K → the primary-document description when it's not just the form
+    assert _filing_summary("10-K", "", "Annual report") == "Annual report"
+    # nothing descriptive → None (caller falls back to the form)
+    assert _filing_summary("10-K", "", "10-K") is None
+
+
+async def test_filing_refs_includes_recent_8k_events(monkeypatch):
+    import app.store.filing_refs as FR
+
+    async def fake_cik(_ref):
+        return "0000320193"
+
+    async def fake_docmap(_cik):
+        return {"0000320193-24-000100": "https://sec/aapl-8k.htm",
+                "0000320193-24-000055": "https://sec/aapl-10k.htm"}
+
+    submissions = {"filings": {"recent": {
+        "form": ["8-K", "10-K"],
+        "accessionNumber": ["0000320193-24-000100", "0000320193-24-000055"]}}}
+
+    async def fake_sub(_cik):
+        return submissions
+
+    # statements provider returns no accessions → without the event path, out would be empty
+    class _Prov:
+        async def income_statements(self, *a):
+            return []
+        balance_sheets = cash_flow_statements = income_statements
+
+    monkeypatch.setattr(FR, "_resolve_cik", fake_cik)
+    monkeypatch.setattr(FR, "_primary_doc_map", fake_docmap)
+    monkeypatch.setattr(FR, "_submissions", fake_sub)
+    monkeypatch.setattr(FR, "get_financials_provider", lambda _m: _Prov())
+
+    refs = await FR.filing_refs("US", "AAPL", 4)
+    assert "0000320193-24-000100" in refs  # the 8-K is now indexable
+    assert refs["0000320193-24-000100"]["fetch_url"] == "https://sec/aapl-8k.htm"
+    # include_events=False keeps the old statements-only behavior
+    refs_off = await FR.filing_refs("US", "AAPL", 4, include_events=False)
+    assert "0000320193-24-000100" not in refs_off

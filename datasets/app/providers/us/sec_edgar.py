@@ -249,6 +249,8 @@ class SecEdgarProvider:
         fdates = recent.get("filingDate") or []
         rdates = recent.get("reportDate") or []
         prim = recent.get("primaryDocument") or []
+        items = recent.get("items") or []                     # 8-K item codes, e.g. "5.02,9.01"
+        descs = recent.get("primaryDocDescription") or []
         wanted = {t.upper() for t in filing_types} if filing_types else None
         out: list[Filing] = []
         for i in range(len(forms)):
@@ -258,6 +260,8 @@ class SecEdgarProvider:
             nodash = accn.replace("-", "")
             doc = prim[i] if i < len(prim) and prim[i] else ""
             url = f"https://www.sec.gov/Archives/edgar/data/{int(cik10)}/{nodash}/{doc}"
+            item_codes = items[i] if i < len(items) else ""
+            pdesc = descs[i] if i < len(descs) else ""
             out.append(
                 Filing(
                     cik=int(cik10),
@@ -267,6 +271,8 @@ class SecEdgarProvider:
                     filing_date=fdates[i] if i < len(fdates) else None,
                     ticker=ref.ticker,
                     url=url,
+                    items=item_codes or None,
+                    description=_filing_summary(forms[i], item_codes, pdesc),
                 )
             )
             if len(out) >= limit:
@@ -307,6 +313,37 @@ class SecEdgarMetricsProvider:
         snap.computation = _snapshot_derivation(
             price, shares_row, eps_row, equity_row, cik10, snap)
         return snap
+
+
+# 8-K Item codes → short human labels (the events an 8-K reports). Covers the common ones;
+# unknown codes fall back to the bare "Item X.XX" so nothing is dropped.
+_EIGHTK_ITEMS = {
+    "1.01": "중요 계약 체결", "1.02": "중요 계약 종료", "1.03": "파산·법정관리",
+    "2.01": "자산 인수·매각 완료", "2.02": "실적 발표(잠정)", "2.03": "채무·의무 발생",
+    "2.04": "채무 조기상환 사유", "2.05": "구조조정 비용", "2.06": "자산 손상",
+    "3.01": "상장폐지·상장규정 미준수", "3.02": "미등록 지분 매각", "3.03": "주주 권리 변경",
+    "4.01": "회계법인 변경", "4.02": "과거 재무제표 신뢰불가",
+    "5.01": "지배구조 변경", "5.02": "임원·이사 변동", "5.03": "정관 변경",
+    "5.07": "주주총회 표결 결과", "7.01": "Reg FD 공시", "8.01": "기타 중요 사항",
+    "9.01": "재무제표·첨부자료",
+}
+
+
+def _filing_summary(form: str, item_codes: str, primary_desc: str) -> str | None:
+    """A human one-liner for a filing citation — 8-K event labels (so it's not a bare '8-K'),
+    else the SEC primary-document description. None when nothing descriptive exists."""
+    form_u = (form or "").upper()
+    if form_u.startswith("8-K") and item_codes:
+        labels = []
+        for code in [c.strip() for c in item_codes.split(",") if c.strip()]:
+            lbl = _EIGHTK_ITEMS.get(code)
+            labels.append(f"항목 {code} {lbl}" if lbl else f"항목 {code}")
+        if labels:
+            return " · ".join(labels)
+    pd = (primary_desc or "").strip()
+    if pd and pd.upper() not in (form_u, ""):
+        return pd
+    return None
 
 
 def _latest(gaap: dict, concepts: list[str]) -> float | None:

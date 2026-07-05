@@ -1369,6 +1369,10 @@ class Filing(BaseModel):
     )
     ticker: str | None = Field(None, description='The ticker symbol.')
     url: AnyUrl | None = Field(None, description='The URL of the SEC filing.')
+    items: str | None = Field(
+        None, description="8-K item codes for this filing (e.g. '5.02,9.01') — the events it reports.")
+    description: str | None = Field(
+        None, description='A human summary of the filing (8-K events / primary-document description).')
 
 
 class Exhibit(BaseModel):

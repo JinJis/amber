@@ -1993,3 +1993,31 @@ def test_citations_and_artifacts_carry_cadence_and_category():
              "cadence": "one_shot", "category": "fundamentals"}
     c2 = A._citations(tool2, {"data": {"ticker": "AAPL", "name": "Apple"}})
     assert c2 and all(x.cadence == "one_shot" for x in c2)
+
+
+def test_8k_filing_listing_gets_evidence_url_and_event_snippet():
+    # 8-K fix: a filing from a LISTING must carry (a) a descriptive snippet (event labels, not the
+    # bare form) and (b) an evidence_image_url so the viewer renders the REAL 8-K HTML in-app with a
+    # highlight target — the previous bug showed only "8-K".
+    tool = {"name": "sec_edgar__filings", "source": "SEC EDGAR", "connector": "sec_edgar"}
+    data = {"filings": [{
+        "accession_number": "0000320193-24-000100", "cik": 320193, "form": "8-K",
+        "filing_type": "8-K", "filed": "2024-05-01", "items": "5.02,9.01",
+        "description": "항목 5.02 임원·이사 변동 · 항목 9.01 재무제표·첨부자료",
+        "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019324000100/aapl-8k.htm"}]}
+    c = A._citations(tool, {"data": data})[0]
+    assert c.snippet and "임원" in c.snippet and c.snippet != "8-K"   # event summary, not the form
+    assert c.doc_type == "8-K"
+    assert c.evidence_image_url and "/evidence?" in c.evidence_image_url
+    assert "accession=0000320193-24-000100" in c.evidence_image_url
+    assert "cik=320193" in c.evidence_image_url             # cik from the row (or the SEC url)
+    assert "Item+5.02" in c.evidence_image_url or "Item%205.02" in c.evidence_image_url  # highlight target
+
+
+def test_8k_filing_listing_derives_cik_from_url_when_absent():
+    tool = {"name": "sec_edgar__filings", "source": "SEC EDGAR", "connector": "sec_edgar"}
+    data = {"filings": [{
+        "accession_number": "0000320193-24-000101", "form": "8-K",
+        "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019324000101/x.htm"}]}
+    c = A._citations(tool, {"data": data})[0]
+    assert c.evidence_image_url and "cik=320193" in c.evidence_image_url  # pulled from the url
