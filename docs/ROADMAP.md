@@ -122,7 +122,7 @@ Gaps that block the killer feature (verified in code, 2026-07-03):
 | **M-NB** | 리서치 노트북 ([NOTEBOOK_SPEC](./NOTEBOOK_SPEC.md) §A) | 대시보드 개편: 근거 패널에서 📌 담기 → 세로 블록 노트(왜 담았는지 메모) → kind=note 공유·A4. 알림 UI 제거 | LG(원장), M-SHARE | 🚧 NB-1..4 ✅ · NB-5 ⬜ |
 | **M-SA** | 스탠딩 알림 ([NOTEBOOK_SPEC](./NOTEBOOK_SPEC.md) §B) | 답변 근거의 cadence 기반 "🔔 이 질문 계속 지켜보기" 칩 → 서명 비교 → 데스크 `standing_update` 카드 (푸시 채널 없음, 챗-퍼스트) | M-DESK | ✅ SA-1..4 (라이브 검증) |
 | **M-NOTE** | 인사이트 노트 (PUBLISH_SPEC §6) | conversation → structured, cited note → A4 report-grade image/PDF + share | M-SHARE, M2 | ➡ **M-NB로 흡수** (노트북 공유 = NT-3/4) |
-| **DATA-KR-1** | KR macro expansion | ECOS beyond rates (CPI·실업률·성장) — KR fact-check needs official KR macro | — | ⬜ planned |
+| **DATA-KR-1** | KR macro expansion | ECOS beyond rates (CPI·실업률·성장·PPI·환율) — KR fact-check needs official KR macro | — | ✅ done (ECOS 5종, macro panel/indicators KR, 라이브 검증) |
 | **M2** | History Lab Surface | dedicated 히스토리 랩 view: century ribbon, THEN\|NOW split, day scrubber, era news + point-in-time macro | M1 | ⬜ planned |
 | **M-DESK** | Proactive Desk (턴 제로) | the empty chat becomes a live, sourced briefing: what to ask today — news/filings/calendar/price-move suggestion cards, watchlist nudge & pulse | basic: FLAG-1 · history hooks: M0 | ✅ basic done (DK-1..4) · DK-3b after M0 |
 | **M-QUANT** | Analysis→Artifact engine | declarative, deterministic multi-series computation (`/compute/series`) + numeric-integrity verify + scatter/distribution artifacts — the general "여러 데이터 → 통계 분석 → 차트/표" pipeline | — (M0 shares the analytics module) | ⬜ planned |
@@ -143,7 +143,7 @@ that completes it.**
 [now]  LG-1/2/3/5 ✅ · ENT-1/2/3/4/5 ✅ (관제탑 엔트리 — pulse/watch 라이브 검증; ENT-3 ghost 리스트는
        제안 3개 인라인으로 구현, ↑↓ 키보드는 후속) → NB-1/2/3/4 ✅(노트북: 담기 시트·노트 화면·kind=note 공유 — 라이브 검증) · SA-1/2/3/4 ✅(스탠딩 알림 — offer/구독/서명 체크/관리 UI 라이브 검증) · NB-5(e2e)·SA eval ⬜
 [next] NB-1..5(리서치 노트북) → SA-1..4(스탠딩 알림)   — NOTEBOOK_SPEC.md
-[then] HL-5b(레짐 도시에) · HL-8(차트 페인) · DATA-KR-1 → M2
+[then] DATA-KR-1 ✅ · HL-5b(레짐 도시에) · HL-8(차트 페인) → M2
      → HL-5(era news) · HL-8(chart panes) · DATA-KR-1 → M2(히스토리 랩 surface)
      → M-NOTE → M3(어닝) → M4(공시 인텔리전스) → M-QUANT(QT-1/3/4) → M5(UX) → M6(호라이즌)
 ```
@@ -746,7 +746,7 @@ Every task adds tests; keep this table updated in the same PR (Definition of Don
 | mcp | 9 | 9 | ≥3 HL-4/QT-1 (new tools listed, unentitled 403) |
 | rag | 20 | 20 | ≥4 HL-5 (era_news/dossier doc types), ≥2 FI-1 (section filter) |
 | web | TS build only | 42 (vitest) | UX-4 adds a vitest runner; then component tests for DK-2 (3 states), HL-7/10/11/12/13, QT-3 (scatter/distribution/계산 근거), EC-4 |
-| eval scenarios | 32 | 92 (scenarios.py — M-DERIV +2, M-FACT +3) | ✅ DK-4 (+2 desk-feed, `kind: desk_feed` runner); then +4 HL-6, +2 QT-2, +1 EC-3, +2 M2 flows, +1 FI |
+| eval scenarios | 32 | 93 (scenarios.py — M-DERIV +2, M-FACT +3, DATA-KR-1 +1) | ✅ DK-4 (+2 desk-feed, `kind: desk_feed` runner); then +4 HL-6, +2 QT-2, +1 EC-3, +2 M2 flows, +1 FI |
 
 Eval bar: maintain ≥ current score (`eval/RUBRIC.md`); run before every push.
 

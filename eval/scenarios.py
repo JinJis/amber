@@ -114,6 +114,17 @@ SCENARIOS = [
                    "answer_regex": r"\d", "expect_cite_url": "bls.gov", "expect_refused": False, "judge": True},
     },
     {
+        # DATA-KR-1: KR macro beyond the base rate — CPI/실업률/GDP via ECOS (fact-check needs it).
+        "name": "KR macro → 한국 물가·고용 (ECOS)",
+        "agent": {"name": "Eval Macro", "model": "gemini", "data_sources": ["ecos", "fred"]},
+        "question": "한국 소비자물가지수(CPI)랑 실업률 최근 수치 알려줘. 기준 시점도.",
+        "criteria": ("한국 CPI와 실업률의 최신값을 한국은행 ECOS 출처로 구체적 수치와 기준 시점(연-월)과 함께 "
+                     "제시. 전망·예측 없이 현황만; 값은 도구가 반환한 그대로."),
+        "checks": {"expect_connector": "fred__economic_indicators", "expect_status": 200,
+                   "expect_cite": ["ECOS", "Bank of Korea"], "answer_regex": r"\d",
+                   "expect_refused": False, "judge": True},
+    },
+    {
         "name": "Macro → Bank of Korea ECOS",
         "agent": {"name": "Eval Macro", "model": "gemini", "data_sources": ["ecos", "fred"]},
         "question": "한국은행 기준금리는 지금 몇 퍼센트야?",

@@ -53,7 +53,34 @@ INDICATORS: dict[str, dict] = {
                      "unit": "%", "region": "US", "group": "금리"},
     "treasury_3m": {"name": "US 3M Treasury Yield", "series": "FED/H15/RIFLGFCM03_N.M",
                     "unit": "%", "region": "US", "group": "금리"},
+    # 한국 (DATA-KR-1) — native Bank of Korea ECOS ("ecos:{stat}/{cycle}/{item}"). Authoritative
+    # KR macro so the KR fact-check / macro panel isn't limited to the base rate. Verified live.
+    "kr_cpi": {"name": "한국 소비자물가지수 (CPI, 2020=100)", "series": "ecos:901Y009/M/0",
+               "unit": "index", "region": "KR", "group": "물가"},
+    "kr_ppi": {"name": "한국 생산자물가지수 (PPI, 2020=100)", "series": "ecos:404Y014/M/*AA",
+               "unit": "index", "region": "KR", "group": "물가"},
+    "kr_unemployment": {"name": "한국 실업률 (원계열)", "series": "ecos:901Y027/M/I61BC",
+                        "unit": "%", "region": "KR", "group": "고용"},
+    "kr_gdp": {"name": "한국 실질 국내총생산 (계절조정, 십억원)", "series": "ecos:200Y108/Q/10601",
+               "unit": "십억원", "region": "KR", "group": "성장"},
+    "kr_usdkrw": {"name": "원/미국달러 환율 (매매기준율)", "series": "ecos:731Y001/D/0000001",
+                  "unit": "원", "region": "KR", "group": "금리"},
 }
+
+
+def _is_ecos(series: str) -> bool:
+    return series.startswith("ecos:")
+
+
+def _ecos_spec(series: str) -> tuple[str, str, str]:
+    """"ecos:901Y009/M/0" → (stat, cycle, item)."""
+    stat, cycle, item = series[len("ecos:"):].split("/", 2)
+    return stat, cycle, item
+
+
+def _ecos_page(series: str) -> str:
+    stat, _c, _i = _ecos_spec(series)
+    return f"https://ecos.bok.or.kr/#/SearchStat?statCode={stat}"
 
 
 def _source_url(series: str) -> str:
@@ -103,9 +130,11 @@ def _row(slug: str, obs: list[dict]) -> dict | None:
         "change": (latest["value"] - prior["value"]) if prior else None,
         "days_old": days_old,
         "stale": days_old is not None and days_old > _STALE_AFTER_DAYS,
-        "source": "BLS" if _is_bls(meta["series"]) else "DBnomics",
-        "source_url": bls_api.series_page(_bls_id(meta["series"])) if _is_bls(meta["series"])
-        else _source_url(meta["series"]),
+        "source": ("BLS" if _is_bls(meta["series"]) else
+                   "Bank of Korea ECOS" if _is_ecos(meta["series"]) else "DBnomics"),
+        "source_url": (bls_api.series_page(_bls_id(meta["series"])) if _is_bls(meta["series"]) else
+                       _ecos_page(meta["series"]) if _is_ecos(meta["series"]) else
+                       _source_url(meta["series"])),
     }
 
 
@@ -134,7 +163,8 @@ async def region_panel(region: str = "US", limit: int = 2) -> dict:
     region = (region or "US").upper()
     slugs = [k for k, v in INDICATORS.items() if v["region"] == region]
     bls_slugs = [s for s in slugs if _is_bls(INDICATORS[s]["series"])]
-    dbn_slugs = [s for s in slugs if not _is_bls(INDICATORS[s]["series"])]
+    ecos_slugs = [s for s in slugs if _is_ecos(INDICATORS[s]["series"])]
+    dbn_slugs = [s for s in slugs if not _is_bls(INDICATORS[s]["series"]) and not _is_ecos(INDICATORS[s]["series"])]
 
     async def _bls_obs() -> dict[str, list[dict]]:
         if not bls_slugs:
@@ -145,13 +175,68 @@ async def region_panel(region: str = "US", limit: int = 2) -> dict:
             return {}
         return {s: raw.get(_bls_id(INDICATORS[s]["series"]), []) for s in bls_slugs}
 
-    bls_map, dbn_fetched = await asyncio.gather(
+    bls_map, dbn_fetched, ecos_fetched = await asyncio.gather(
         _bls_obs(),
         asyncio.gather(*[_dbnomics_obs(s, limit=max(2, limit)) for s in dbn_slugs]),
+        asyncio.gather(*[_ecos_obs(s, limit=max(2, limit)) for s in ecos_slugs]),
     )
-    obs_by_slug = {**bls_map, **dict(zip(dbn_slugs, dbn_fetched))}
+    obs_by_slug = {**bls_map, **dict(zip(dbn_slugs, dbn_fetched)), **dict(zip(ecos_slugs, ecos_fetched))}
     rows = [r for s in slugs if (r := _row(s, obs_by_slug.get(s) or []))]
-    return {"region": region, "source": "BLS · DBnomics", "indicators": rows}
+    src = "BLS · DBnomics" if region == "US" else ("Bank of Korea ECOS" if region == "KR" else "DBnomics")
+    return {"region": region, "source": src, "indicators": rows}
+
+
+async def _ecos_obs(slug: str, limit: int = 24) -> list[dict]:
+    """Ascending observations for an ECOS-backed KR slug ([] on failure/no key)."""
+    from datetime import date
+
+    from app.config import settings
+    if not settings.ecos_api_key:
+        return []
+    stat, cycle, item = _ecos_spec(INDICATORS[slug]["series"])
+    end = date.today()
+    span = {"D": 400, "M": 3600, "Q": 3600, "A": 12000}.get(cycle, 3600)
+    start = date(end.year - (2 if cycle == "D" else 12), 1, 1)
+
+    def _fmt(d):
+        if cycle == "D":
+            return d.strftime("%Y%m%d")
+        if cycle == "M":
+            return d.strftime("%Y%m")
+        if cycle == "Q":
+            return f"{d.year}Q{(d.month - 1) // 3 + 1}"
+        return d.strftime("%Y")
+
+    def _iso(t):
+        if cycle == "D" and len(t) == 8:
+            return f"{t[:4]}-{t[4:6]}-{t[6:8]}"
+        if cycle == "M" and len(t) == 6:
+            return f"{t[:4]}-{t[4:6]}-01"
+        if cycle == "Q" and "Q" in t:
+            y, q = t.split("Q")
+            return f"{y}-{(int(q) - 1) * 3 + 1:02d}-01"
+        return f"{t[:4]}-01-01"
+
+    url = (f"https://ecos.bok.or.kr/api/StatisticSearch/{settings.ecos_api_key}/json/kr/1/{span}/"
+           f"{stat}/{cycle}/{_fmt(start)}/{_fmt(end)}/{item}")
+    try:
+        data = await fetch_json("ecos", url)
+    except Exception:  # noqa: BLE001 — graceful
+        return []
+    if not isinstance(data, dict) or "RESULT" in data:
+        return []
+    rows = (data.get("StatisticSearch") or {}).get("row") or []
+    obs: list[dict] = []
+    for r in rows:
+        v = r.get("DATA_VALUE")
+        if v in (None, "", "-"):
+            continue
+        try:
+            obs.append({"date": _iso(r.get("TIME", "")), "value": float(v)})
+        except (TypeError, ValueError):
+            continue
+    obs.sort(key=lambda o: o["date"])
+    return obs[-limit:]
 
 
 async def _dbnomics_obs(slug: str, limit: int = 24) -> list[dict]:
@@ -193,6 +278,9 @@ async def fetch_indicator(slug: str, limit: int = 24) -> dict | None:
             return None
         obs = (raw.get(_bls_id(series)) or [])[-limit:]
         source, source_url = "BLS", bls_api.series_page(_bls_id(series))
+    elif _is_ecos(series):
+        obs = await _ecos_obs(slug, limit=limit)
+        source, source_url = "Bank of Korea ECOS", _ecos_page(series)
     else:
         obs = await _dbnomics_obs(slug, limit=limit)
         source, source_url = "DBnomics", _source_url(series)
