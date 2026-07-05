@@ -22,7 +22,10 @@ section "bring up backend stack with REAL semantic RAG (Gemini embeddings)"
 # RAG embeddings are Gemini-only now; the semantic checks need GOOGLE_API_KEY (read from .env).
 envval() { [ -f .env ] && grep -E "^$1=" .env | tail -1 | cut -d= -f2- | tr -d '"'"'"' ' || true; }
 GKEY="${GOOGLE_API_KEY:-${GEMINI_API_KEY:-}}"; [ -z "$GKEY" ] && GKEY="$(envval GOOGLE_API_KEY)"
-docker compose down -v >/dev/null 2>&1 || true
+# NEVER `down -v` here: this tears down the USER'S LIVE STACK — `-v` would destroy
+# the Postgres volume (price backfills, RAG index, conversations, tenants). Data must
+# survive a harness run; the stack is recreated below with volumes intact.
+docker compose down >/dev/null 2>&1 || true
 docker compose up --build -d datasets rag control-plane agent-engine studio-api \
   || { echo "compose up failed"; exit 1; }
 for _ in $(seq 1 60); do
@@ -132,7 +135,7 @@ RG2=$(curl -s -H "X-API-KEY: $KEY" "${J[@]}" -X POST "$CP/rag/search" -d '{"quer
 has "RAG via gateway returns the right doc for an entitled key" "$RG2" 'https://x/policy'
 
 section "teardown"
-docker compose down -v >/dev/null 2>&1
+docker compose down >/dev/null 2>&1
 
 result "FUNCTIONAL E2E"
 exit "$FAILS"

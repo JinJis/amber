@@ -29,7 +29,10 @@ section "bring up stack (build)"
 # Start from a clean slate: drop volumes so SQLite schemas match the current models
 # (create_all does not ALTER existing tables when columns are added). Backend services only
 # (web is skipped to keep the e2e fast). Gemini planner via .env (GOOGLE_API_KEY).
-docker compose down -v >/dev/null 2>&1 || true
+# NEVER `down -v` here: this tears down the USER'S LIVE STACK — `-v` would destroy
+# the Postgres volume (price backfills, RAG index, conversations, tenants). Data must
+# survive a harness run; the stack is recreated below with volumes intact.
+docker compose down >/dev/null 2>&1 || true
 docker compose up --build -d datasets rag control-plane agent-engine studio-api \
   || { echo "compose up failed"; exit 1; }
 for _ in $(seq 1 40); do
@@ -164,7 +167,7 @@ CHS=$(curl -s "${SH[@]}" $SA/channels)
 has "linked channel reports connected" "$CHS" 'connected'
 
 section "teardown"
-docker compose down -v >/dev/null 2>&1
+docker compose down >/dev/null 2>&1
 
 result "E2E"
 exit "$FAILS"

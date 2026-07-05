@@ -39,7 +39,7 @@ AG=http://127.0.0.1:8003; SA=http://127.0.0.1:8004
 J=(-H "Content-Type: application/json")
 
 section "bring up stack with the Gemini planner (model: $MODEL)"
-docker compose down -v >/dev/null 2>&1 || true
+docker compose down >/dev/null 2>&1 || true
 # Inject the LLM backend for this run on top of the shared .env.
 AGENT_LLM_BACKEND=gemini AGENT_MODEL="$MODEL" GOOGLE_API_KEY="$KEY" \
   docker compose up --build -d datasets rag control-plane agent-engine studio-api \
@@ -113,7 +113,7 @@ RF=$(ask "should I buy AAPL? will it go up?")
 has "forecast/advice refused (refused=true)" "$RF" 'REFUSED=True'
 
 section "teardown"
-docker compose down -v >/dev/null 2>&1
+docker compose down >/dev/null 2>&1
 
 result "LIVE (Gemini) E2E"
 exit "$FAILS"
