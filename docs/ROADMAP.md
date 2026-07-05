@@ -119,7 +119,9 @@ Gaps that block the killer feature (verified in code, 2026-07-03):
 | **QT-2*** | Number audit (pulled forward) | every numeral in prose/cards matches a tool value — the trust floor for anything that leaves the app | — | ✅ done (audit module + done-event ride-along + desk-feed card drop; share gating lands with SH-2) |
 | **M-SHARE** | 공유 파이프라인 (PUBLISH_SPEC §3) | share tap → provenance-baked card image (aspect presets) + public read-only page (`/s/{token}`, OG) + evidence quote cards + 데스크 브리핑 카드 | QT-2 | ✅ done — SH-1/2/2b/3/4/5 + IMP-13 (라이브 검증) |
 | **M-FACT** | 근거 기반 팩트체크 (PUBLISH_SPEC §4) | paste a claim → cited verdict artifact (사실/사실과 다름/미래 주장) with findings for/against; the receipt for 정보방 | M-SHARE | ✅ FC-1..4 (라이브 검증: 3 시나리오 10/10 · judge 4.33 · verdict 카드 방출) |
-| **M-NOTE** | 인사이트 노트 (PUBLISH_SPEC §6) | conversation → structured, cited note → A4 report-grade image/PDF + share | M-SHARE, M2 | ⬜ planned |
+| **M-NB** | 리서치 노트북 ([NOTEBOOK_SPEC](./NOTEBOOK_SPEC.md) §A) | 대시보드 개편: 근거 패널에서 📌 담기 → 세로 블록 노트(왜 담았는지 메모) → kind=note 공유·A4. 알림 UI 제거 | LG(원장), M-SHARE | ⬜ NB-1..5 |
+| **M-SA** | 스탠딩 알림 ([NOTEBOOK_SPEC](./NOTEBOOK_SPEC.md) §B) | 답변 근거의 cadence 기반 "🔔 이 질문 계속 지켜보기" 칩 → 서명 비교 → 데스크 `standing_update` 카드 (푸시 채널 없음, 챗-퍼스트) | M-DESK | ⬜ SA-1..4 |
+| **M-NOTE** | 인사이트 노트 (PUBLISH_SPEC §6) | conversation → structured, cited note → A4 report-grade image/PDF + share | M-SHARE, M2 | ➡ **M-NB로 흡수** (노트북 공유 = NT-3/4) |
 | **DATA-KR-1** | KR macro expansion | ECOS beyond rates (CPI·실업률·성장) — KR fact-check needs official KR macro | — | ⬜ planned |
 | **M2** | History Lab Surface | dedicated 히스토리 랩 view: century ribbon, THEN\|NOW split, day scrubber, era news + point-in-time macro | M1 | ⬜ planned |
 | **M-DESK** | Proactive Desk (턴 제로) | the empty chat becomes a live, sourced briefing: what to ask today — news/filings/calendar/price-move suggestion cards, watchlist nudge & pulse | basic: FLAG-1 · history hooks: M0 | ✅ basic done (DK-1..4) · DK-3b after M0 |
@@ -137,8 +139,10 @@ that completes it.**
 ```
 [done] FLAG-1 · OPS-1 · M-DESK basic · M0(HL-1..4) · M1(HL-6/7/9)
 [done] QT-2 · M-SHARE(SH-1..3) · M-DERIV(DRV-1..5) · M-FACT(FC-1..4)
-[done] M-SHARE 전체 · M-FACT · M-DERIV · HL-5 커넥터(GDELT+NYT)
-[next] HL-5b(레짐 도시에·시대뉴스 인제스트) · HL-8(차트 페인) · DATA-KR-1 → M2
+[done] M-SHARE 전체 · M-FACT · M-DERIV · HL-5 커넥터(GDELT+NYT) · IMP-17(8-K)
+[now]  LG-1..5(수치 원장+클릭 [n], UX_PROPOSALS §1) → ENT-1..5(관제탑 엔트리, §2)
+[next] NB-1..5(리서치 노트북) → SA-1..4(스탠딩 알림)   — NOTEBOOK_SPEC.md
+[then] HL-5b(레짐 도시에) · HL-8(차트 페인) · DATA-KR-1 → M2
      → HL-5(era news) · HL-8(chart panes) · DATA-KR-1 → M2(히스토리 랩 surface)
      → M-NOTE → M3(어닝) → M4(공시 인텔리전스) → M-QUANT(QT-1/3/4) → M5(UX) → M6(호라이즌)
 ```
@@ -717,6 +721,14 @@ eval ALL_SOURCES에 market_history 부재→시나리오에 명시 추가).
 
 **순서**: DRV-2 → DRV-1(생산자별 분할 커밋) → DRV-3 → DRV-5 → DRV-4(SH-2b와 함께).
 QT-1(compute 엔진)과 정합: compute의 스펙-as-계산근거는 이 카드로 렌더된다 — 같은 스키마.
+
+## 12d. LG/ENT/NB/SA — 승인된 UX 재설계 (2026-07-05)
+
+상세 스펙은 별도 문서에 있고 여기는 인덱스만 둔다 (one task per PR 동일):
+- **LG-1..5 수치 원장** + **클릭 가능한 [n]**(본문 각주 → 근거 패널 리모컨): [`UX_PROPOSALS.md`](./UX_PROPOSALS.md) §1
+- **ENT-1..5 관제탑 엔트리**(중앙 컴포저·시장 스트립·포커스 제안·티커→능력 칩): [`UX_PROPOSALS.md`](./UX_PROPOSALS.md) §2
+- **NB-1..5 리서치 노트북**(대시보드 개편, M-NOTE 흡수): [`NOTEBOOK_SPEC.md`](./NOTEBOOK_SPEC.md) §A
+- **SA-1..4 스탠딩 알림**(질문 구독 → 데스크 카드): [`NOTEBOOK_SPEC.md`](./NOTEBOOK_SPEC.md) §B
 
 ## 13. Test & eval accounting
 
