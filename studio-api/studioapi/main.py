@@ -20,6 +20,7 @@ from studioapi.db import SessionLocal, init_db
 from studioapi.deps import current_user, require_service
 from studioapi.models import Conversation, Message, User
 from studioapi.orm_helpers import get_owned
+from studioapi.market import router as market_router
 from studioapi.prompts import router as prompts_router
 from studioapi.prompts import seed_community_prompts
 from studioapi.search import router as search_router
@@ -152,3 +153,4 @@ app.include_router(evidence_router)
 app.include_router(prices_router)
 app.include_router(financials_router)
 app.include_router(search_router)
+app.include_router(market_router)

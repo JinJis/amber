@@ -656,6 +656,45 @@ select.input { appearance: none; }
 .empty { margin: auto; text-align: center; color: var(--muted); max-width: 560px; }
 .empty h2 { color: var(--text); margin-bottom: 6px; }
 .examples { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 18px; }
+
+/* ── ENT: 관제탑 엔트리 ─────────────────────────────────────────── */
+.cockpit { margin: auto; width: 100%; max-width: 640px; text-align: left; display: flex;
+  flex-direction: column; gap: 18px; }
+.ck-h { color: var(--text); font-size: 19px; margin: 0; text-align: center; }
+.ck-strip { display: flex; flex-wrap: wrap; gap: 4px 14px; justify-content: center; font-size: 11px; }
+.ck-tickeritem { display: inline-flex; gap: 6px; align-items: baseline; background: none; border: none;
+  cursor: pointer; padding: 3px 6px; border-radius: 6px; color: var(--text-2); }
+.ck-tickeritem:hover { background: var(--panel-3); }
+.ck-lbl { color: var(--muted); }
+.ck-px { color: var(--text); font-weight: 600; }
+.ck-chg.up { color: #1E6B3C; }
+.ck-chg.down { color: #A33B3B; }
+.ck-sec-h { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
+  margin-bottom: 6px; }
+.ck-suggest { display: flex; flex-direction: column; gap: 6px; }
+.ck-sg { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 9px 12px;
+  border: 1px solid var(--line-3); border-radius: 9px; background: var(--panel); cursor: pointer; }
+.ck-sg:hover { border-color: var(--ink); }
+.ck-sg-hook { font-size: 11px; color: var(--muted); }
+.ck-sg-q { font-size: 13px; color: var(--text); }
+.ck-sg-src { font-size: 9.5px; color: var(--muted); }
+.ck-watch { }
+.ck-ticks { display: flex; flex-wrap: wrap; gap: 6px; }
+.ck-tick { padding: 5px 11px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--panel);
+  color: var(--text-2); font-size: 12px; cursor: pointer; }
+.ck-tick:hover { border-color: var(--ink); }
+.ck-tick.on { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
+.ck-tick.on .ck-chg { color: var(--on-ink); }
+.ck-caps { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ck-cap { padding: 5px 11px; border: 1px dashed var(--line-2); border-radius: 999px; background: var(--panel-2);
+  color: var(--text-2); font-size: 11.5px; cursor: pointer; }
+.ck-cap:hover { border-color: var(--ink); color: var(--text); border-style: solid; }
+.ck-desk-toggle { font-size: 11.5px; color: var(--muted); background: none; border: none; cursor: pointer;
+  padding: 4px 0; }
+.ck-desk-toggle:hover { color: var(--text-2); }
+/* ENT-1: 빈 상태에서 컴포저 승격 (같은 컴포저, 시각만 크게) */
+.composer form.hero { max-width: 640px; margin: 0 auto; width: 100%; }
+.composer form.hero .input { font-size: 15px; padding: 14px 16px; border-width: 1.5px; }
 .chip { background: var(--panel); border: 1px solid var(--line-2); color: var(--text); padding: 8px 12px;
   border-radius: 999px; cursor: pointer; font-size: 13px; font-family: inherit; }
 .chip:hover { border-color: var(--ink); }

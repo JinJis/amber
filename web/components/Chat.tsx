@@ -4,12 +4,11 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 
 import AgentBuilder, { Agent, Category } from "./AgentBuilder";
 import BoardCanvas from "./BoardCanvas";
 import BotHome from "./BotHome";
-import DeskHome from "./DeskHome";
 import { ShareSheet } from "./ShareSheet";
 import Onboarding from "./Onboarding";
 import PinPicker from "./PinPicker";
 import PromptLibrary from "./PromptLibrary";
-import PromptWaterfall, { WaterfallPrompt } from "./PromptWaterfall";
+import CockpitEntry from "./CockpitEntry";
 import Watchlists, { Watchlist } from "./Watchlists";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -135,13 +134,6 @@ function SubAgentCards({ subs }: { subs: SubAgent[] }) {
 }
 
 
-const EXAMPLES = [
-  "삼성전자 최근 실적 알려줘",
-  "AAPL 최근 주가 흐름",
-  "Fed 기준금리 추이",
-  "엔비디아 공급망·리스크 공시 요약",
-];
-
 export default function Chat({ name, features }: { name: string; features: Features }) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -156,7 +148,6 @@ export default function Chat({ name, features }: { name: string; features: Featu
   // agents
   const [agents, setAgents] = useState<Agent[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [libPrompts, setLibPrompts] = useState<WaterfallPrompt[]>([]);
   const [agentId, setAgentId] = useState<string>(""); // "" = default agent
   const [builder, setBuilder] = useState<{ open: boolean; base: Agent | null }>({ open: false, base: null });
   const [library, setLibrary] = useState(false);
@@ -176,6 +167,14 @@ export default function Chat({ name, features }: { name: string; features: Featu
   const [flashCite, setFlashCite] = useState<{ n: number; ts: number } | null>(null);
   const bubbleRefs = useRef(new Map<number, HTMLDivElement>());   // msg idx → answer bubble el
   const [factCheck, setFactCheck] = useState(false);  // FC-4: explicit 팩트체크 mode (never inferred)
+  // ENT-1: the empty-state composer placeholder rotates today's REAL questions (from the desk feed).
+  const [todayQs, setTodayQs] = useState<string[]>([]);
+  const [phIdx, setPhIdx] = useState(0);
+  useEffect(() => {
+    if (todayQs.length < 2) return;
+    const t = setInterval(() => setPhIdx((i) => (i + 1) % todayQs.length), 4000);
+    return () => clearInterval(t);
+  }, [todayQs]);
   // RIGHT CONTEXT PANEL: which assistant turn's context is pinned in the panel. null = follow
   // the latest answer live (so a streaming turn's assets fill the panel as they arrive).
   const [focusIdx, setFocusIdx] = useState<number | null>(null);
@@ -278,12 +277,6 @@ export default function Chat({ name, features }: { name: string; features: Featu
       try {
         const r = await fetch("/api/connectors");
         if (r.ok) setCategories((await r.json()).categories ?? []);
-      } catch {}
-    })();
-    (async () => {
-      try {
-        const r = await fetch("/api/prompts/community");
-        if (r.ok) setLibPrompts((await r.json()).prompts ?? []);
       } catch {}
     })();
   }, []);
@@ -584,27 +577,14 @@ export default function Chat({ name, features }: { name: string; features: Featu
             <main className="chat" ref={scrollRef}>
               {messages.length === 0 && (
                 <div className="empty">
-                  <h2>무엇이든 물어보세요</h2>
-                  <p>보유 종목, 뉴스, 시황, 경제 — 우리 데이터로 답하고 출처를 보여줍니다.</p>
-                  <DeskHome
+                  {/* ENT: 관제탑 — 시장 스트립·오늘의 제안·내 종목→능력 칩·데스크 접이.
+                      모든 탭은 컴포저를 채운다 (auto-send 금지); 워터폴은 제거. */}
+                  <CockpitEntry
                     onPick={(q) => { setInput(q); inputRef.current?.focus(); }}
+                    onQuestions={setTodayQs}
                     onChanged={loadHandles}
                     onShareBriefing={(a) => setShareArt(a)}
                   />
-                  {libPrompts.length > 0 ? (
-                    // prompt-library examples rising in an infinite loop; hover pauses; click
-                    // drops the FULL prompt into the composer to fill {TICKER} and send.
-                    <PromptWaterfall
-                      prompts={libPrompts}
-                      onPick={(body) => { setInput(body); inputRef.current?.focus(); }}
-                    />
-                  ) : (
-                    <div className="examples">
-                      {EXAMPLES.map((e) => (
-                        <button key={e} className="chip" onClick={() => send(e)}>{e}</button>
-                      ))}
-                    </div>
-                  )}
                 </div>
               )}
 
@@ -711,14 +691,17 @@ export default function Chat({ name, features }: { name: string; features: Featu
                   ))}
                 </div>
               )}
-              <form onSubmit={(e) => { e.preventDefault(); if (mention.length) { pickHandle(mention[0]); return; } send(input, { factCheck }); }}>
+              <form className={messages.length === 0 ? "hero" : undefined}
+                onSubmit={(e) => { e.preventDefault(); if (mention.length) { pickHandle(mention[0]); return; } send(input, { factCheck }); }}>
                 <button type="button" className={`fc-toggle ${factCheck ? "on" : ""}`}
                   aria-pressed={factCheck} title="주장을 1차 기록으로 팩트체크"
                   onClick={() => setFactCheck((v) => !v)}>✓ 팩트체크</button>
                 <input ref={inputRef} className="input" value={input} onChange={(e) => onInput(e.target.value)}
                   onBlur={() => setTimeout(() => setMention([]), 120)}
                   placeholder={factCheck ? "검증할 주장을 붙여넣으세요 — 예: 삼성전자 영업이익 15조 넘었대"
-                    : "무엇이든 물어보거나 — /프롬프트 · @그룹 호출…"} disabled={busy} />
+                    : (messages.length === 0 && todayQs.length
+                        ? `오늘: “${todayQs[phIdx % todayQs.length]}”`
+                        : "무엇이든 물어보거나 — /프롬프트 · @그룹 호출…")} disabled={busy} />
                 <Button disabled={busy || !input.trim()}>{factCheck ? "검증" : "보내기"}</Button>
               </form>
               {(input.match(/@([^\s@]+)/g) ?? []).length > 0 && (
