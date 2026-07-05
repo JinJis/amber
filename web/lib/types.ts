@@ -39,7 +39,10 @@ export type ChartOverlay = {
 };
 // PH-DATA-6: the auditable derivation of a self-computed figure (valuation/backtest/screener) —
 // what was queried, what was assumed, the formula, and the intermediate steps. Shown as a panel.
-export type CalcRow = { label: string; value: string; source?: string | null };
+// M-DERIV (DRV-2): symbol binds the row to a variable in Computation.formula (symbol chips);
+// evidence deep-links a sourced input into the /evidence cell-highlight viewer.
+export type CalcEvidence = { market?: string; accession?: string; concept?: string; value?: number | string; cik?: string };
+export type CalcRow = { label: string; value: string; source?: string | null; symbol?: string | null; evidence?: CalcEvidence | null };
 // PH-DEMO widget item shapes.
 export type StatItem = {
   label: string; value: number; unit?: string | null; delta?: number | null;  // delta in %
@@ -142,6 +145,9 @@ export type Citation = {
   evidence_image_url?: string;  // /evidence?… params (market/accession/concept/value/text/cik) → in-app filing viewer
   confidence?: string;  // PH-THINK verify pass: high | medium | low (evidentiary support)
   confidence_why?: string;
+  // M-DERIV (DRV-2): a derived figure's derivation rides its citation, so the 출처
+  // preview (SourceViewer data shape) can render the Derivation Card (DRV-3).
+  computation?: Computation | null;
 };
 
 // --- chat / SSE stream events (rendered into a Msg) -------------------------------------------

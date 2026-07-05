@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 from agentengine.evidence import _evidence_url, rag_evidence_url
 from agentengine.freshness import compute_freshness
-from agentengine.models import Citation
+from agentengine.models import Citation, Computation
 from agentengine.provenance import (
     _canonical_provenance,
     _filing_link,
@@ -142,6 +142,33 @@ def _citations(tool: dict, result: dict) -> list[Citation]:
     return cites
 
 
+def _derived_computation(tool: dict, data) -> Computation | None:
+    """M-DERIV (DRV-2): a derived figure's citation carries its derivation. Prefer a
+    computation the DATA PLANE embedded in the response (DRV-1 — computed at the
+    computation site, single truth); else build it for the agent-side derived tools
+    exactly like the artifact does. Never let a malformed trace break the citation."""
+    if not isinstance(data, dict):
+        return None
+    try:
+        if isinstance(data.get("computation"), dict):
+            return Computation.model_validate(data["computation"])
+        name = tool.get("name") or ""
+        from agentengine.artifacts import (
+            _backtest_computation,
+            _quant_computation,
+            _valuation_computation,
+        )
+        if name.endswith("__valuation"):
+            return _valuation_computation(data)
+        if name.endswith("__quant_screen"):
+            return _quant_computation(data)
+        if name.endswith("__backtest"):
+            return _backtest_computation(data)
+    except Exception:  # noqa: BLE001 — derivation is enrichment, never a failure mode
+        return None
+    return None
+
+
 def _build_citations(tool: dict, result: dict) -> list[Citation]:
     data = result.get("data")
     if "search" in tool["name"] or tool.get("connector") == "rag":
@@ -191,7 +218,8 @@ def _build_citations(tool: dict, result: dict) -> list[Citation]:
     snippet, table = _evidence(tool, data)              # the real figures + extracted table
     return [Citation(tool=tool["name"], source=src, url=url, kind=ctype, as_of=as_of,
                      freshness=compute_freshness(as_of), snippet=snippet, table=table, page=accn,
-                     evidence_image_url=_evidence_url(data, accn, cik, market))]
+                     evidence_image_url=_evidence_url(data, accn, cik, market),
+                     computation=_derived_computation(tool, data))]
 
 
 def dedup_citations(cites: list[Citation]) -> list[Citation]:

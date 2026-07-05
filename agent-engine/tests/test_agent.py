@@ -267,6 +267,33 @@ def test_citations_prefer_response_declared_source_over_catalog_label():
     assert c3.source == "Yahoo Finance (폴백: …)"
 
 
+def test_derived_citation_carries_computation_drv2():
+    # M-DERIV (DRV-2): a valuation citation carries the same derivation the artifact shows —
+    # the 출처 preview can render formula + inputs, not just a snippet.
+    tool = {"name": "datasets__valuation", "source": "재무제표 기반 모델", "connector": "datasets"}
+    data = {"model": "ddm", "ticker": "KO", "value_per_share": 62.1,
+            "inputs": {"dividend_per_share": 1.94}, "assumptions": {"growth_rate": 0.04, "discount_rate": 0.08},
+            "breakdown": {"d1": 2.0176}, "source": "SEC EDGAR", "note": "가정 기반 계산 · 예측·목표가 아님"}
+    c = A._citations(tool, {"data": data})[0]
+    assert c.computation is not None and c.computation.method == "배당할인 (DDM)"
+    assert c.computation.formula and c.computation.assumptions
+    # DRV-1 forward-compat: a data-plane-embedded computation block wins as-is
+    tool2 = {"name": "sec_edgar__metrics_snapshot", "source": "SEC EDGAR", "connector": "sec_edgar"}
+    data2 = {"ticker": "AAPL", "computation": {
+        "method": "PER (직접 계산)", "formula": "PER = P ÷ EPS",
+        "inputs": [{"label": "주가 P", "value": "210.50", "symbol": "P"},
+                   {"label": "EPS", "value": "6.42", "symbol": "EPS",
+                    "evidence": {"market": "US", "accession": "0000320193-24-000123", "concept": "EPS", "value": 6.42}}],
+        "steps": [{"label": "PER", "value": "32.8x"}]}}
+    c2 = A._citations(tool2, {"data": data2})[0]
+    assert c2.computation is not None and c2.computation.formula == "PER = P ÷ EPS"
+    assert c2.computation.inputs[1].symbol == "EPS" and c2.computation.inputs[1].evidence["accession"]
+    # back-compat: a non-derived tool citation carries no computation
+    tool3 = {"name": "yahoo__prices", "source": "Yahoo Finance", "connector": "yahoo"}
+    data3 = {"ticker": "AAPL", "prices": [{"time": "2026-07-01T00:00:00", "close": 210.5}]}
+    assert A._citations(tool3, {"data": data3})[0].computation is None
+
+
 def test_evidence_url_attached_for_us_as_reported_filing():
     # an as-reported (US) result → the citation carries an /evidence URL for the headline
     # figure (PH-PROV2); the frontend fetches the highlighted screenshot lazily.

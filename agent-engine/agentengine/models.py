@@ -43,6 +43,18 @@ class ArtifactRefreshRequest(BaseModel):
     title: str | None = None  # pick the matching artifact when a tool yields several
 
 
+class CalcRow(BaseModel):
+    """One labelled line in a computation trace — an input, an assumption, or a step result."""
+    label: str
+    value: str
+    source: str | None = None    # where this input came from (e.g. "SEC EDGAR · FY2024")
+    # --- M-DERIV (DRV-2) ------------------------------------------------------
+    symbol: str | None = None    # the variable this row binds in `formula` (e.g. "P", "EPS", "FCF₀")
+    # deep-link into the /evidence cell-highlight viewer for a sourced input —
+    # {market, accession, concept, value(, cik)}. Inputs have a source PAGE; open it.
+    evidence: dict | None = None
+
+
 class Citation(BaseModel):
     tool: str
     source: str | None = None          # institution / publisher (e.g. 'SEC EDGAR', 'Reuters')
@@ -79,6 +91,10 @@ class Citation(BaseModel):
     # never a forecast. None when the verify pass didn't run (no key / LLM unavailable).
     confidence: str | None = None
     confidence_why: str | None = None
+    # M-DERIV (DRV-2): a DERIVED figure's trust envelope is its math — formula, sourced
+    # inputs, assumptions, steps. Rides the citation so the 출처 preview (SourceViewer
+    # data shape) can render the Derivation Card, not just a bare snippet.
+    computation: "Computation | None" = None
 
 
 class ArtifactPoint(BaseModel):
@@ -204,13 +220,6 @@ class NarrativeSection(BaseModel):
     body: str
 
 
-class CalcRow(BaseModel):
-    """One labelled line in a computation trace — an input, an assumption, or a step result."""
-    label: str
-    value: str
-    source: str | None = None    # where this input came from (e.g. "SEC EDGAR · FY2024")
-
-
 class Computation(BaseModel):
     """How a self-computed figure was derived. Our figures are either a single sourced datum OR the
     OUTPUT of a formula over sourced inputs; for the latter there is no source *page* to open, so the
@@ -223,6 +232,9 @@ class Computation(BaseModel):
     assumptions: list[CalcRow] = []      # the tunable assumptions (growth, discount rate, …)
     steps: list[CalcRow] = []            # intermediate results leading to the figure
     note: str | None = None              # disclaimer / caveat
+
+
+Citation.model_rebuild()  # resolve the Citation.computation forward ref (DRV-2)
 
 
 class Artifact(BaseModel):
