@@ -915,6 +915,27 @@ SCENARIOS = [
         "checks": {"expect_min_cards": 2, "cards_all_cited": True, "expect_status": 200, "judge": True},
     },
     {
+        # M-DERIV (DRV-5): a DERIVED metric's citation carries its derivation — the 출처
+        # preview can show formula + sourced inputs, not just a snippet.
+        "name": "M-DERIV: PER 도출 근거 → 인용에 computation 동봉",
+        "agent": {"name": "Eval Research", "model": "gemini", "data_sources": ALL_SOURCES},
+        "question": "Apple(AAPL)의 PER이 지금 얼마고, 그 값이 정확히 어떻게 계산된 건지 입력값까지 보여줘.",
+        "criteria": ("PER 수치와 함께 도출 방식(주가 ÷ EPS)과 입력값(주가·EPS의 값과 출처)을 설명; "
+                     "재무 입력은 SEC 보고서 기준임을 밝힘; 목표주가·매수의견 금지."),
+        "checks": {"expect_status": 200, "expect_citation_computation": True,
+                   "answer_regex": r"\d", "expect_refused": False, "judge": True},
+    },
+    {
+        # M-DERIV (DRV-5): a History Lab statistic's citation carries method + params + n.
+        "name": "M-DERIV: 낙폭 통계 도출 근거 → 인용에 computation 동봉",
+        "agent": {"name": "Eval Research", "model": "gemini", "data_sources": ALL_SOURCES + ["market_history"]},
+        "question": "S&P500 현재 낙폭이 고점 대비 몇 %인지, 그 낙폭이 어떤 방식으로 계산되는지 알려줘.",
+        "criteria": ("현재 낙폭 수치(고점 대비 %)와 계산 방식(직전 역대 최고가 대비)을 설명하고 "
+                     "'과거 기록 · 전망 아님' 프레이밍 유지; 반등 전망·확률 주장 금지."),
+        "checks": {"expect_connector": "market_history__", "expect_status": 200,
+                   "expect_citation_computation": True, "expect_refused": False, "judge": True},
+    },
+    {
         # M-DESK (DK-4): a user WITHOUT watchlists gets a nudge-led feed — helpful, not pushy.
         "name": "M-DESK: 관심그룹 없는 유저 → 넛지 피드",
         "kind": "desk_feed",

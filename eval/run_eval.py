@@ -101,7 +101,7 @@ def chat_messages(messages: list[dict], agent_id: str) -> dict:
     code, raw = _request("POST", f"{STUDIO}/chat/stream",
                          {"messages": messages, "agent_id": agent_id}, headers)
     tools, statuses, cites, ans, arts, cads = [], [], [], [], [], []
-    confs, suggestions, subagents, cite_urls = [], [], {}, []
+    confs, suggestions, subagents, cite_urls, cite_comps = [], [], {}, [], []
     clarify = None
     refused = None
     for line in raw.decode("utf-8", "replace").splitlines():
@@ -120,6 +120,8 @@ def chat_messages(messages: list[dict], agent_id: str) -> dict:
         elif t == "citation":
             if ev.get("source"):
                 cites.append(ev["source"])
+            if isinstance(ev.get("computation"), dict):   # M-DERIV: derivation rides the citation
+                cite_comps.append(ev["computation"])
             if ev.get("url"):                # the external source page the in-app viewer renders
                 cite_urls.append(ev["url"])
             if ev.get("cadence"):
@@ -149,8 +151,11 @@ def chat_messages(messages: list[dict], agent_id: str) -> dict:
                     confs.append(c["confidence"])
                 if isinstance(c, dict) and c.get("url"):
                     cite_urls.append(c["url"])
+                if isinstance(c, dict) and isinstance(c.get("computation"), dict):
+                    cite_comps.append(c["computation"])
     return {"http": code, "tools": tools, "statuses": statuses, "citations": cites,
             "artifacts": arts, "cadences": cads, "confidences": confs, "cite_urls": cite_urls,
+            "cite_computations": cite_comps,
             "clarify": clarify, "subagents": list(subagents.values()), "suggestions": suggestions,
             "answer": "".join(ans).strip(), "refused": bool(refused)}
 
@@ -304,6 +309,13 @@ def grade(checks: dict, r: dict) -> list[tuple[str, bool, str]]:
         opts = c if isinstance(c, list) else [c]  # list = any-of (price chain may fall back Yahoo→Stooq/KIS)
         ok = any(o in s for o in opts for s in r["citations"])
         out.append((f"cites {'|'.join(opts)}", ok, f"cites={r['citations']}"))
+    if checks.get("expect_citation_computation"):
+        # M-DERIV (DRV-5): a derived figure's CITATION carries its derivation —
+        # formula + at least one sourced input (the 출처 preview renders the card from this).
+        comps = r.get("cite_computations") or []
+        ok = any(c.get("formula") and (c.get("inputs") or c.get("steps")) for c in comps)
+        out.append(("citation carries computation (formula+inputs)", ok,
+                    f"computations={[(c.get('method'), bool(c.get('formula'))) for c in comps]}"))
     if "expect_artifact" in checks:
         kind = checks["expect_artifact"]
         arts = r.get("artifacts") or []

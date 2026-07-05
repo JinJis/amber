@@ -404,6 +404,39 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 .cp-src { color: var(--muted); font-size: 10px; }
 .cp-note { font-size: 10px; color: var(--muted); line-height: 1.5; font-style: italic; }
 
+/* --- M-DERIV (DRV-3): Derivation Card — formula symbol chips ↔ input rows, numbered steps --- */
+.dc { display: flex; flex-direction: column; gap: 10px; }
+.dc-formula { font-size: 11px; color: var(--text-2); background: var(--panel); border: 1px solid var(--line-3);
+  border-radius: 6px; padding: 7px 9px; line-height: 1.8; }
+.dc-sym.chip { display: inline-block; padding: 0 4px; margin: 0 1px; border: 1px solid var(--line-2);
+  border-radius: 4px; background: var(--panel-2); color: var(--text); cursor: default; }
+.dc-sym.chip.hot, .dc-sym.hot { background: var(--ink, #1a1a1a); color: var(--panel, #fff); border-color: var(--ink, #1a1a1a); }
+.dc-sec-h { font-size: 9px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.dc-row { display: flex; gap: 8px; align-items: baseline; padding: 3px 4px; font-size: 11px;
+  border-bottom: 1px dotted var(--line-3); border-radius: 4px; }
+.dc-row:last-child { border-bottom: none; }
+.dc-row.hot { background: var(--panel-3); }
+.dc-row .dc-sym { min-width: 34px; color: var(--text-2); }
+.dc-label { color: var(--text-2); flex: 1; }
+.dc-val { color: var(--text); text-align: right; }
+.dc-src { color: var(--muted); font-size: 10px; }
+.dc-assumption .dc-label, .dc-assumption .dc-val { color: var(--muted); }  /* 가정 = 조정값, 데이터 아님 */
+.dc-stepno { color: var(--muted); min-width: 16px; }
+.dc-step-wrap { display: flex; align-items: baseline; gap: 8px; }
+.dc-step-wrap > .dc-row { flex: 1; }
+.dc-step-wrap.final .dc-val { font-weight: 700; font-size: 12px; }
+.dc-final-mark { font-size: 9px; color: var(--text); white-space: nowrap; }
+.dc-ev { font-size: 9px; padding: 1px 6px; border: 1px solid var(--line-2); border-radius: 4px;
+  background: var(--panel); color: var(--text-2); cursor: pointer; }
+.dc-ev:hover { background: var(--panel-3); }
+.dc-note { font-size: 10px; color: var(--muted); line-height: 1.5; font-style: italic; }
+.dc-actions { display: flex; justify-content: flex-end; }
+.dc-copy { font-size: 9px; padding: 2px 8px; border: 1px solid var(--line-2); border-radius: 4px;
+  background: var(--panel); color: var(--text-2); cursor: pointer; }
+.dc-copy:hover { background: var(--panel-3); }
+.sv-ev-input { display: flex; flex-direction: column; gap: 6px; height: 100%; }
+.sv-ev-input .sv-act { align-self: flex-start; }
+
 /* ───────── PH-DEMO: high-impact dashboard widgets (stat · heatmap · feed · calendar) ───────── */
 .dw-wrap { height: 100%; width: 100%; overflow: auto; }
 .dw-livechip, .dw-live { display: inline-flex; align-items: center; gap: 5px; font-size: 9px; font-weight: 700;

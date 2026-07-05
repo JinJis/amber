@@ -704,7 +704,14 @@ class Citation(BaseModel):
 XBRL accession evidence 포함 P·S·EPS·E 입력 + 시총/PER/PBR 단계 — 라이브 검증; comparables;
 technical_indicators 공식+윈도우; /history/* envelope에 method별 도출 — dd-v1/base-rates/analogue/
 vol/regimes. KR 스냅샷은 원천값 그대로라 미동봉(정직); 밸류에이션·백테스트·퀀트는 에이전트 트레이스가
-인용까지 커버) · DRV-3/4/5 ⬜.
+인용까지 커버) · DRV-3 ✅ (DerivationCard: 공식 심볼 칩↔행 양방향 하이라이트(최장 심볼 우선 매칭),
+①②③ 단계+최종값 강조, 입력 [원문↗]→/evidence 셀 하이라이트(SourceViewer 내 스테이지 스왑, ←복귀),
+도출 과정 복사; ComputationPanel v2가 이걸 렌더; **SourceViewer data 셰이프의 본문**으로 삽입 —
+vitest 6종) · DRV-4 ✅ 공개 페이지 (ShareView→ArtifactCard→ComputationPanel 합성으로 스냅샷의
+computation이 그대로 렌더; A4 프리셋 섹션은 SH-2b에서) · DRV-5 ✅ (+2 시나리오
+`expect_citation_computation` — PER 도출·낙폭 통계 둘 다 라이브 4/4, judge 5/5. 낙폭 시나리오가
+실제 라우팅 갭 2개를 잡음: 플래너 규칙1이 낙폭을 가격 질문으로 삼킴→규칙1 예외+규칙9 강화,
+eval ALL_SOURCES에 market_history 부재→시나리오에 명시 추가).
 
 **순서**: DRV-2 → DRV-1(생산자별 분할 커밋) → DRV-3 → DRV-5 → DRV-4(SH-2b와 함께).
 QT-1(compute 엔진)과 정합: compute의 스펙-as-계산근거는 이 카드로 렌더된다 — 같은 스키마.
@@ -724,7 +731,7 @@ Every task adds tests; keep this table updated in the same PR (Definition of Don
 | mcp | 9 | 9 | ≥3 HL-4/QT-1 (new tools listed, unentitled 403) |
 | rag | 20 | 20 | ≥4 HL-5 (era_news/dossier doc types), ≥2 FI-1 (section filter) |
 | web | TS build only | TS build only | UX-4 adds a vitest runner; then component tests for DK-2 (3 states), HL-7/10/11/12/13, QT-3 (scatter/distribution/계산 근거), EC-4 |
-| eval scenarios | 32 | 34 (measured) | ✅ DK-4 (+2 desk-feed, `kind: desk_feed` runner); then +4 HL-6, +2 QT-2, +1 EC-3, +2 M2 flows, +1 FI |
+| eval scenarios | 32 | 89 (scenarios.py — M-DERIV +2) | ✅ DK-4 (+2 desk-feed, `kind: desk_feed` runner); then +4 HL-6, +2 QT-2, +1 EC-3, +2 M2 flows, +1 FI |
 
 Eval bar: maintain ≥ current score (`eval/RUBRIC.md`); run before every push.
 

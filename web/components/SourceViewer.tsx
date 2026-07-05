@@ -10,6 +10,7 @@ import { useState } from "react";
 import { Citation, sourceShape, hostOf, SrcTable } from "./SourceCard";
 import { FilingViewer, viewerSrc } from "./FilingViewer";
 import { DeckViewer, deckSrc } from "./DeckViewer";
+import { DerivationCard } from "./DerivationCard";
 import { FreshnessDot, FRESH_LABEL } from "./ui";
 
 const TABS: { key: "filing" | "web" | "data"; label: string }[] = [
@@ -21,6 +22,9 @@ const TABS: { key: "filing" | "web" | "data"; label: string }[] = [
 export function SourceViewer({ c, onClose }: { c: Citation; onClose: () => void }) {
   const shape = sourceShape(c);
   const [copied, setCopied] = useState(false);
+  // DRV-3: an input row's [원문↗] swaps the stage to the /evidence viewer for THAT input —
+  // the derived figure's source preview can open each ingredient's own filing cell.
+  const [evInput, setEvInput] = useState<Citation | null>(null);
   const fresh = c.freshness ? FRESH_LABEL[c.freshness] || c.freshness : null;
   // Render the REAL source in-app whenever we can: a filing-backed citation (공시 본문 or 재무제표
   // 수치) OR any citation carrying an external source page (macro series page, news article). The
@@ -70,9 +74,24 @@ export function SourceViewer({ c, onClose }: { c: Citation; onClose: () => void 
                   <p className="sv-skel-l" style={{ width: "82%" }} />
                 </div>
               </article>
+            ) : shape === "data" && evInput ? (
+              // an INPUT's own source page (filing cell highlighted) — back returns to the derivation
+              <div className="sv-ev-input">
+                <button className="sv-act mono" onClick={() => setEvInput(null)}>← 도출 과정으로</button>
+                <FilingViewer c={evInput} />
+              </div>
             ) : shape === "data" ? (
               <article className="sv-page">
                 <div className="sv-page-hd mono">{c.source || "추출 데이터"}{c.ticker ? ` · ${c.ticker}` : ""}</div>
+                {c.computation ? (
+                  // DRV-3: the derivation IS the body of a derived figure's preview —
+                  // formula + sourced inputs + steps; the snippet/table become secondary.
+                  <DerivationCard comp={c.computation}
+                    onEvidence={(url, row) => setEvInput({
+                      evidence_image_url: url, source: row.source || c.source,
+                      kind: "filing", snippet: `${row.label} = ${row.value}`,
+                    })} />
+                ) : null}
                 {c.table ? <SrcTable table={c.table} /> : null}
                 {c.snippet ? (
                   <div className="sv-data mono"><span className="sv-pin mono">{c.index ?? "1"}</span>{c.snippet}</div>
