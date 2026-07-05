@@ -730,7 +730,7 @@ Every task adds tests; keep this table updated in the same PR (Definition of Don
 | control-plane | 13 | 13 | ≥1 QT-1 (activated-connectors header forwarding); rest manifest-derived (coverage.sh guards) |
 | mcp | 9 | 9 | ≥3 HL-4/QT-1 (new tools listed, unentitled 403) |
 | rag | 20 | 20 | ≥4 HL-5 (era_news/dossier doc types), ≥2 FI-1 (section filter) |
-| web | TS build only | TS build only | UX-4 adds a vitest runner; then component tests for DK-2 (3 states), HL-7/10/11/12/13, QT-3 (scatter/distribution/계산 근거), EC-4 |
+| web | TS build only | 12 (vitest) | UX-4 adds a vitest runner; then component tests for DK-2 (3 states), HL-7/10/11/12/13, QT-3 (scatter/distribution/계산 근거), EC-4 |
 | eval scenarios | 32 | 89 (scenarios.py — M-DERIV +2) | ✅ DK-4 (+2 desk-feed, `kind: desk_feed` runner); then +4 HL-6, +2 QT-2, +1 EC-3, +2 M2 flows, +1 FI |
 
 Eval bar: maintain ≥ current score (`eval/RUBRIC.md`); run before every push.
@@ -750,7 +750,7 @@ touches the same files; overlaps with already-planned tasks are marked "=".
 | IMP-5 | conversation-history load fails silently | S | ✅ banner + 다시 시도 |
 | IMP-6 | shares cap counted via fetch-all + races | S | ✅ fixed (COUNT + soft-cap note); token entropy 16→24 bytes |
 | IMP-7 | macro_panel/backtest/quant/market_history absent from planner hints | S | ✅ routing hints 6–9 added |
-| IMP-8 | web has zero unit tests (vitest absent) | M | ⬜ **NEXT** (= UX-4 runner; deliberately deferred over 3am npm risk) |
+| IMP-8 | web has zero unit tests (vitest absent) | M | ✅ vitest runner + 12 tests (DeskHome 4states · HistoryArtifacts · DerivationCard 6종) |
 | IMP-9 | transcript archive capped at 4Q | M | = **EC-1** (already planned) |
 | IMP-10 | desk-feed timeout + mid-generation race | S | ✅ 45s cap + context nonce (stale write skipped) |
 | IMP-11 | news is rolling-only — era news absent | L | = **HL-5** (already planned) |
