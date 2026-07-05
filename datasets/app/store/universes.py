@@ -109,8 +109,23 @@ async def _fetch_kr(market: str, n: int | None):
     return await _kr_opendart_tickers(n)
 
 
+# eval/test/e2e FIXED tiny universes (memory: eval-test-fresh-tiny-universe). Static ticker
+# lists — reproducible, tiny, no big backfill. US 3 large caps + KR 3 KOSPI large caps.
+EVAL_US = ["AAPL", "MSFT", "NVDA"]
+EVAL_KR = ["005930", "000660", "035420"]   # 삼성전자 · SK하이닉스 · NAVER
+
+
+def _static(tickers: list[str]):
+    async def _f() -> list[str]:
+        return list(tickers)
+    return _f
+
+
 # id -> {label, market, approx, fetch}
 SOURCES: dict[str, dict] = {
+    # tiny fixed universes for eval/test/e2e — ingest ONLY these, never the full boards
+    "eval_us": {"label": "EVAL US (고정 3종목)", "market": "US", "approx": len(EVAL_US), "fetch": _static(EVAL_US)},
+    "eval_kr": {"label": "EVAL KR (고정 3종목)", "market": "KR", "approx": len(EVAL_KR), "fetch": _static(EVAL_KR)},
     "us_sp500": {"label": "S&P 500 (동적)", "market": "US", "approx": 503, "fetch": _fetch_sp500},
     "us_all": {"label": "US 전체 (SEC, 수천)", "market": "US", "approx": 10000, "fetch": _fetch_us_all},
     "kr_kospi200": {"label": "코스피 200 (동적·시총)", "market": "KR", "approx": 200,
