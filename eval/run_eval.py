@@ -301,7 +301,9 @@ def grade(checks: dict, r: dict) -> list[tuple[str, bool, str]]:
         out.append((f"tool status {s}", s in r["statuses"], f"statuses={r['statuses']}"))
     if "expect_cite" in checks:
         c = checks["expect_cite"]
-        out.append((f"cites {c}", any(c in s for s in r["citations"]), f"cites={r['citations']}"))
+        opts = c if isinstance(c, list) else [c]  # list = any-of (price chain may fall back Yahoo→Stooq/KIS)
+        ok = any(o in s for o in opts for s in r["citations"])
+        out.append((f"cites {'|'.join(opts)}", ok, f"cites={r['citations']}"))
     if "expect_artifact" in checks:
         kind = checks["expect_artifact"]
         arts = r.get("artifacts") or []

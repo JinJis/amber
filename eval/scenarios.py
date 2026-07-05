@@ -61,7 +61,7 @@ SCENARIOS = [
         "name": "Prices → Yahoo (market agent)",
         "agent": {"name": "Eval Market", "model": "gemini", "data_sources": ["yahoo", "google_news"]},
         "question": "AAPL의 최근 종가 흐름을 알려줘.",
-        "checks": {"expect_connector": "yahoo__", "expect_status": 200, "expect_cite": "Yahoo Finance",
+        "checks": {"expect_connector": "yahoo__", "expect_status": 200, "expect_cite": ["Yahoo Finance", "한국투자증권", "Stooq"],
                    "answer_regex": r"\d", "expect_refused": False, "judge": True},
     },
     {
@@ -71,7 +71,7 @@ SCENARIOS = [
         "agent": {"name": "Eval Market", "model": "gemini", "data_sources": ["yahoo", "google_news"]},
         "question": "AAPL 최근 주가 흐름을 차트로 보여줘.",
         "criteria": "AAPL 최근 종가 추이를 Yahoo Finance 출처로 제시하고, 가격 시계열(주기성 데이터)을 근거로 삼을 것.",
-        "checks": {"expect_connector": "yahoo__", "expect_cite": "Yahoo Finance",
+        "checks": {"expect_connector": "yahoo__", "expect_cite": ["Yahoo Finance", "한국투자증권", "Stooq"],
                    "expect_cadence": "daily", "expect_refused": False, "judge": True},
     },
     {
@@ -460,7 +460,7 @@ SCENARIOS = [
         "name": "KR prices → Yahoo (.KS resolution)",
         "agent": {"name": "Eval Market", "model": "gemini", "data_sources": ["yahoo", "google_news"]},
         "question": "삼성전자(005930)의 최근 종가를 알려줘.",
-        "checks": {"expect_connector": "yahoo__", "expect_status": 200, "expect_cite": "Yahoo Finance",
+        "checks": {"expect_connector": "yahoo__", "expect_status": 200, "expect_cite": ["Yahoo Finance", "한국투자증권", "Stooq"],
                    "answer_regex": r"\d", "expect_refused": False, "judge": True},
     },
     {
@@ -525,7 +525,7 @@ SCENARIOS = [
             "삼성전자(005930)의 가장 최근 연간 매출액은?",
             "그럼 그 회사의 최근 종가(주가)는 얼마야?",
         ],
-        "checks": {"expect_connector": "yahoo__", "expect_status": 200, "expect_cite": "Yahoo Finance",
+        "checks": {"expect_connector": "yahoo__", "expect_status": 200, "expect_cite": ["Yahoo Finance", "한국투자증권", "Stooq"],
                    "answer_regex": r"\d", "expect_refused": False, "judge": True},
     },
     {
@@ -559,7 +559,7 @@ SCENARIOS = [
         "question": "AAPL의 최근 종가 흐름을 차트로 보여줘.",
         "criteria": "최근 종가 추이를 수치와 함께 설명하고 Yahoo Finance 출처를 밝힘; 전망·매수의견 금지.",
         "checks": {"expect_connector": "yahoo__", "expect_status": 200, "expect_artifact": "timeseries",
-                   "expect_cite": "Yahoo Finance", "answer_regex": r"\d", "expect_refused": False, "judge": True},
+                   "expect_cite": ["Yahoo Finance", "한국투자증권", "Stooq"], "answer_regex": r"\d", "expect_refused": False, "judge": True},
     },
     {
         "name": "Historical metrics → margin/return trend (PH-6, store-backed)",

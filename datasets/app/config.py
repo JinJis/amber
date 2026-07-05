@@ -54,8 +54,11 @@ class Settings(BaseSettings):
     krx_api_key: str = ""
 
     # --- per-domain provider selection (override the free defaults) --------
-    prices_provider_us: str = "yahoo"  # yahoo | stooq | polygon | tiingo | fmp
-    prices_provider_kr: str = "yahoo"  # yahoo | pykrx | krx | kis
+    # IMP-15: "auto" = fallback chain with honest source labels — Yahoo primary,
+    # then Stooq (US, keyless) / KIS (KR, only when the broker keys are set). A
+    # transient Yahoo 503 no longer takes prices down.
+    prices_provider_us: str = "auto"  # auto | yahoo | stooq
+    prices_provider_kr: str = "auto"  # auto | yahoo | pykrx | kis
     # macro: FRED's api.stlouisfred.org serves a JS bot-wall to datacenter IPs, so
     # US macro breaks in the cloud. "auto" tries FRED when FRED_API_KEY is set and
     # falls back to keyless, cloud-safe DBnomics (BIS policy rates); "dbnomics"

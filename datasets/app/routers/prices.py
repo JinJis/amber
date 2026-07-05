@@ -14,6 +14,7 @@ from app.models.generated import (
     PricesResponse,
     TickersResponse,
 )
+from app.providers.chain import ChainPricesProvider
 from app.providers.registry import get_prices_provider
 from app.routers._common import gather_best_effort, tickers_response, validate_interval
 from app.store.screener import store_tickers
@@ -32,7 +33,11 @@ async def get_prices(
 ) -> PricesResponse:
     validate_interval(interval)
     ref = build_ref(market, ticker)
-    prices = await get_prices_provider(market).prices(ref, interval, start_date, end_date)
+    provider = get_prices_provider(market)
+    if isinstance(provider, ChainPricesProvider):
+        member, prices = await provider.prices_labeled(ref, interval, start_date, end_date)
+        return PricesResponse(ticker=ref.ticker, prices=prices, source=member.label)
+    prices = await provider.prices(ref, interval, start_date, end_date)
     return PricesResponse(ticker=ref.ticker, prices=prices)
 
 

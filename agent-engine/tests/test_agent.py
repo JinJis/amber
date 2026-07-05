@@ -248,6 +248,25 @@ def test_citations_prices_and_generic_show_real_values():
     assert c2.table is not None and c2.url == "https://x"
 
 
+def test_citations_prefer_response_declared_source_over_catalog_label():
+    # IMP-15: the price chain may fall back (Yahoo → Stooq/KIS). When the response names
+    # the upstream that actually served, the citation uses THAT, not the static label.
+    tool = {"name": "yahoo__prices", "source": "Yahoo Finance (폴백: …)", "connector": "yahoo"}
+    data = {"ticker": "005930", "source": "한국투자증권 (KIS)",
+            "prices": [{"time": "2026-07-01T00:00:00", "close": 74300.0}]}
+    c = A._citations(tool, {"data": data})[0]
+    assert c.source == "한국투자증권 (KIS)"
+    # snapshot shape: the source rides inside `snapshot`
+    tool2 = {"name": "yahoo__price_snapshot", "source": "Yahoo Finance (폴백: …)", "connector": "yahoo"}
+    data2 = {"snapshot": {"ticker": "AAPL", "price": 210.5, "source": "Stooq"}}
+    c2 = A._citations(tool2, {"data": data2})[0]
+    assert c2.source == "Stooq"
+    # no response-declared source → the catalog label still applies
+    data3 = {"ticker": "AAPL", "prices": [{"time": "2026-07-01T00:00:00", "close": 210.5}]}
+    c3 = A._citations(tool, {"data": data3})[0]
+    assert c3.source == "Yahoo Finance (폴백: …)"
+
+
 def test_evidence_url_attached_for_us_as_reported_filing():
     # an as-reported (US) result → the citation carries an /evidence URL for the headline
     # figure (PH-PROV2); the frontend fetches the highlighted screenshot lazily.

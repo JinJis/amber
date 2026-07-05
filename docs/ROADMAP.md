@@ -710,8 +710,8 @@ Every task adds tests; keep this table updated in the same PR (Definition of Don
 
 | Service | Baseline (2026-07-03) | Current | Planned additions (minimum) |
 |---|---|---|---|
-| datasets | 148 | 193 (measured) | ✅ OPS-1 (+2 grouping/runner); then ≥32 HL-1/2/3, ≥12 HL-4, ≥9 HL-5, ≥22 QT-1/4, ≥7 EC-1, ≥14 FI-1/2/3, ≥8 HL-8/EC-2 |
-| agent-engine | 111 | 119 (measured, incl. skips) | ✅ DK-1 (+5: feed states, citation-drop, degrade); then ≥10 HL-6/7, ≥8 QT-2 (number audit), ≥8 EC-3, ≥6 HL-9 |
+| datasets | 148 | 234 (measured) | ✅ OPS-1 (+2 grouping/runner); then ≥32 HL-1/2/3, ≥12 HL-4, ≥9 HL-5, ≥22 QT-1/4, ≥7 EC-1, ≥14 FI-1/2/3, ≥8 HL-8/EC-2 |
+| agent-engine | 111 | 133 (measured, incl. skips) | ✅ DK-1 (+5: feed states, citation-drop, degrade); then ≥10 HL-6/7, ≥8 QT-2 (number audit), ≥8 EC-3, ≥6 HL-9 |
 | studio-api | 40 | 56 (measured) | ✅ FLAG-1 scheduler gate (+1), ✅ DK-3 (+4: cache/TTL/invalidate/since/degrade); then ≥7 HL-12/14 BFF |
 | control-plane | 13 | 13 | ≥1 QT-1 (activated-connectors header forwarding); rest manifest-derived (coverage.sh guards) |
 | mcp | 9 | 9 | ≥3 HL-4/QT-1 (new tools listed, unentitled 403) |
@@ -743,6 +743,7 @@ touches the same files; overlaps with already-planned tasks are marked "=".
 | IMP-12 | Form 4 / deck citations lack evidence URL·page | S | 🚧 Form 4 filing_url/accession ✅ · deck page-jump ⬜ |
 | IMP-13 | shares never expire | S | ✅ expires_at +90d, 410 on expiry |
 | IMP-14 | KR macro beyond rates absent | M | = **DATA-KR-1** (already planned) |
+| IMP-15 | Yahoo 503 flake kills prices (eval 4건) | M | ✅ price-provider fallback chain (`PRICES_PROVIDER_*=auto`): Yahoo → Stooq(US)/KIS(KR, 키 있을 때) — 부적격 심볼은 스킵(지수→KIS 금지 등), 빈 결과도 폴스루, 전원 실패 시 primary 에러. 응답 `source` 필드 + PriceBar.source가 실제 제공자를 명시(정직한 인용 — 인용은 응답 선언 source 우선). 완전 대체는 불가: 지수·테마 ETF·배당/분할 폭은 Yahoo만 커버 |
 
 Sequencing: **SH-2/SH-3 (with IMP-13) → IMP-3/5/10 (S-batch) → IMP-7/12 (answer-quality
 S-batch) → IMP-2 → IMP-1 → IMP-8(=UX-4 runner pulled forward)** — then resume the v3 order
@@ -788,7 +789,7 @@ deterministic 333/350 (95%). DCF 시나리오 4/5로 회복(0/5→5/5 체크), �
   명시를 요구 → 합성 인용 라벨에 기관명(BLS·BEA·ECOS) 포함.
 - 컨센서스 연도별 breakdown(2/5) — FMP 응답에 2030뿐인 해를 '자료에 없음'으로 명시(완결성
   원칙 재적용 확인).
-- Yahoo KR 503 재발 시 KIS 폴백 라우팅 힌트 (M — DATA-KR-1과 겹침).
+- ~~Yahoo KR 503 재발 시 KIS 폴백~~ → ✅ IMP-15로 데이터 플레인에서 해결 (라우팅 힌트보다 확실).
 궤적: 3.73 → 3.91 → 4.09/3.92(노이즈 밴드) → 4.11(투표 후) → **4.31**.
 
 ## 14. Non-goals (unchanged)

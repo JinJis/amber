@@ -148,7 +148,9 @@ and what the agent engine resolves tools from — so REST, MCP, and the agent al
 A financial datasets API covering the US and Korean markets. Market chosen with `market=US|KR`.
 
 - **Connectors (provider adapters + registry):** SEC EDGAR (US fundamentals/filings/earnings/insider/13F),
-  Yahoo Finance (US+KR prices), FRED (US macro), OpenDART (KR fundamentals/filings/earnings/insider),
+  Yahoo Finance (US+KR prices — IMP-15: `PRICES_PROVIDER_*=auto` runs a fallback chain, Yahoo →
+  Stooq(US)/KIS(KR); the response `source` field names the upstream that actually served),
+  FRED (US macro), OpenDART (KR fundamentals/filings/earnings/insider),
   BOK ECOS (KR macro), Google News (US+KR). Free/open defaults; paid adapters behind env keys.
 - **Endpoints (real):** company facts, prices + snapshot, 3 financial statements (+ combined), filings,
   macro interest rates, financial-metrics snapshot, news, earnings, insider-trades, 13F (filer_cik),

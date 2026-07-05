@@ -23,7 +23,7 @@ unit() {
   docker run --rm \
     -v "$PWD/$1:/app" -v "vg_uvcache:/root/.cache/uv" -v "vg_venv_${1//[^a-zA-Z0-9]/_}:/app/.venv" \
     -w /app -e UV_COMPILE_BYTECODE=0 -e UV_LINK_MODE=copy -e AUTH_DISABLED=true "$UVIMG" \
-    sh -lc "rm -f studio.db; uv run --extra dev ${2:-} pytest -q"
+    sh -lc "rm -f studio.db datasets.db; uv run --extra dev ${2:-} pytest -q"
 }
 
 step "Unit tests (in docker — uv image, no host uv)"

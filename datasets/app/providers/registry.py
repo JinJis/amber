@@ -53,6 +53,10 @@ def get_company_provider(market: Market) -> CompanyProvider:
 def get_prices_provider(market: Market) -> PricesProvider:
     if market is Market.US:
         choice = settings.prices_provider_us
+        if choice == "auto":  # IMP-15: Yahoo primary → Stooq fallback, honest source label
+            from app.providers.chain import build_chain
+
+            return build_chain(market)
         if choice == "yahoo":
             from app.providers.us.yahoo import YahooProvider
 
@@ -64,6 +68,10 @@ def get_prices_provider(market: Market) -> PricesProvider:
         _unbuilt(f"prices(provider={choice})", market)
     if market is Market.KR:
         choice = settings.prices_provider_kr
+        if choice == "auto":  # IMP-15: Yahoo primary → KIS fallback (when keys configured)
+            from app.providers.chain import build_chain
+
+            return build_chain(market)
         if choice == "kis":  # CE-12 KIS-PRICES: realtime KR prices via the broker API
             from app.providers.kr.kis import KisPricesProvider
 

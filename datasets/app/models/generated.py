@@ -1397,6 +1397,10 @@ class PriceSnapshot(BaseModel):
         None,
         description='The timestamp of the price snapshot in milliseconds since epoch.',
     )
+    source: str | None = Field(
+        None,
+        description='The upstream that actually served this snapshot (the price chain may fall back, e.g. Yahoo Finance → Stooq/KIS).',
+    )
 
 
 class News(BaseModel):
@@ -1872,6 +1876,10 @@ class InterestRatesResponse(BaseModel):
 class PricesResponse(BaseModel):
     ticker: str | None = Field(None, description='The ticker symbol.')
     prices: list[Price] | None = None
+    source: str | None = Field(
+        None,
+        description='The upstream that actually served these bars (the price chain may fall back, e.g. Yahoo Finance → Stooq/KIS).',
+    )
 
 
 class InstitutionalHolding(BaseModel):

@@ -45,6 +45,7 @@ from app.connectors.catalog_policies import (
     PROV_SEC,
     PROV_SEC_FILINGS,
     PROV_TECHNICAL,
+    PROV_PRICES,
     PROV_YAHOO,
 )
 
@@ -126,13 +127,15 @@ CONNECTORS: list[ConnectorManifest] = [
         upstream=UpstreamCredential(requires_key=False),
         license=LIC_YAHOO,
         resources=[
-            Resource(name="prices", description="Historical EOD OHLCV.", path="/prices", output_model="PricesResponse",
+            Resource(name="prices", description="Historical EOD OHLCV. (자동 폴백: Yahoo 장애 시 US=Stooq, KR=KIS — 응답 source 필드가 실제 제공자.)",
+                     path="/prices", output_model="PricesResponse",
                      cost_tier=CostTier.free, params=[
                          P_TICKER_REQ, ResourceParam(name="interval", required=True, enum=["day", "week", "month", "year"]),
                          ResourceParam(name="start_date", required=True, type="date"),
-                         ResourceParam(name="end_date", required=True, type="date"), P_MARKET], provenance=PROV_YAHOO),
-            Resource(name="price_snapshot", description="Latest price snapshot.", path="/prices/snapshot",
-                     output_model="PriceSnapshotResponse", cost_tier=CostTier.free, params=[P_TICKER_REQ, P_MARKET], provenance=PROV_YAHOO),
+                         ResourceParam(name="end_date", required=True, type="date"), P_MARKET], provenance=PROV_PRICES),
+            Resource(name="price_snapshot", description="Latest price snapshot. (자동 폴백: Yahoo 장애 시 US=Stooq, KR=KIS — 응답 source 필드가 실제 제공자.)",
+                     path="/prices/snapshot",
+                     output_model="PriceSnapshotResponse", cost_tier=CostTier.free, params=[P_TICKER_REQ, P_MARKET], provenance=PROV_PRICES),
             Resource(name="corporate_actions", description="Dividends + stock splits history.", path="/corporate-actions",
                      output_model="CorporateActionsResponse", cost_tier=CostTier.free,
                      params=[P_TICKER_REQ, ResourceParam(name="years", type="integer", description="Look-back years."), P_MARKET],

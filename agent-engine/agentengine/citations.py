@@ -153,6 +153,13 @@ def _build_citations(tool: dict, result: dict) -> list[Citation]:
         if news is not None:
             return news
     src = tool.get("source")
+    # IMP-15: the price chain may fall back (Yahoo → Stooq/KIS); when the response itself
+    # names the upstream that actually served, cite THAT — never the static catalog label.
+    if isinstance(data, dict):
+        snap = data.get("snapshot")
+        served = data.get("source") or (snap.get("source") if isinstance(snap, dict) else None)
+        if isinstance(served, str) and served.strip():
+            src = served
     ctype = _datasets_type(tool)
     market = _market_hint(tool, data)
     # A filings *listing* → one evidence card per distinct filing document (each its

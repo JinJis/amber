@@ -48,6 +48,10 @@ LIC_DERIVED = License(id="derived-public", redistribution=True, attribution_requ
 PROV_SEC = Provenance(source="SEC EDGAR", as_of_field="report_period", source_link_field="filing_url", freshness=Freshness.periodic)
 PROV_SEC_FILINGS = Provenance(source="SEC EDGAR", as_of_field="filing_date", source_link_field="url", freshness=Freshness.periodic)
 PROV_YAHOO = Provenance(source="Yahoo Finance", as_of_field="time", freshness=Freshness.eod)
+# IMP-15: prices/snapshot ride a fallback chain (Yahoo → Stooq/KIS); the response's own
+# `source` field names the upstream that actually served, so citations stay honest.
+PROV_PRICES = Provenance(source="Yahoo Finance (폴백: US Stooq · KR KIS — 응답 source 필드가 실제 제공자)",
+                         as_of_field="time", freshness=Freshness.eod)
 PROV_FRED = Provenance(source="BIS / FRED (central-bank policy rates)", as_of_field="date", freshness=Freshness.periodic)
 PROV_DART = Provenance(source="OpenDART (FSS)", as_of_field="report_period", source_link_field="filing_url", freshness=Freshness.periodic)
 PROV_ECOS = Provenance(source="Bank of Korea ECOS", as_of_field="date", freshness=Freshness.periodic)

@@ -14,6 +14,7 @@ from datetime import date
 
 from sqlalchemy import func, select
 
+from app.providers.chain import ChainPricesProvider
 from app.providers.registry import get_prices_provider
 from app.store._ingest_helpers import _incremental_start, _num, _retry, _to_date
 from app.store.db import SessionLocal, init_db
@@ -35,7 +36,12 @@ def _last_bar_date(market: str, ticker: str) -> date | None:
 async def ingest_prices_ticker(market: Market, ticker: str, start: date, end: date, retries: int = 1) -> int:
     ref = build_ref(market, ticker)
     provider = get_prices_provider(market)
-    bars = await _retry(lambda: provider.prices(ref, _INTERVAL, start, end), retries)
+    if isinstance(provider, ChainPricesProvider):
+        member, bars = await _retry(lambda: provider.prices_labeled(ref, _INTERVAL, start, end), retries)
+        source = member.key
+    else:
+        bars = await _retry(lambda: provider.prices(ref, _INTERVAL, start, end), retries)
+        source = "yahoo"
     rows = []
     for p in bars:
         d = p.model_dump() if hasattr(p, "model_dump") else dict(p)
@@ -45,7 +51,7 @@ async def ingest_prices_ticker(market: Market, ticker: str, start: date, end: da
         rows.append({
             "market": market.value, "ticker": ref.ticker, "interval": _INTERVAL, "bar_date": bd,
             "open": _num(d.get("open")), "high": _num(d.get("high")), "low": _num(d.get("low")),
-            "close": _num(d.get("close")), "volume": _num(d.get("volume")), "source": "yahoo",
+            "close": _num(d.get("close")), "volume": _num(d.get("volume")), "source": source,
         })
 
     def _write() -> int:
