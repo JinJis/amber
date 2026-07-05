@@ -96,7 +96,7 @@ describe("CockpitEntry (ASK-5)", () => {
     const onPick = vi.fn();
     render(<CockpitEntry onPick={onPick} />);
     const mine = await screen.findByTestId("ck-mine");
-    fireEvent.click(screen.getByRole("button", { name: /^삼성전자/ }));
+    fireEvent.click(screen.getByTestId("tkr-005930"));           // 티커 필터 칩
     const caps = await screen.findByTestId("ck-caps");
     expect(caps.textContent).toContain("수급(외인·기관)");   // KR 분기
     expect(caps.textContent).not.toContain("13F");

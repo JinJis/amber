@@ -533,7 +533,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
     {shareArt && (
       <ShareSheet a={shareArt} audit={panelMsg?.audit ?? null} onClose={() => setShareArt(null)} />
     )}
-    <div className={`shell ${view === "explore" ? "with-ctx" : "no-right"}`}
+    <div className={`shell ${view === "explore" && messages.length > 0 ? "with-ctx" : "no-right"}`}
       style={view === "explore" && messages.length > 0 ? { gridTemplateColumns: `210px minmax(0,1fr) ${ctxWidth}px` } : undefined}>
       <nav className="rail">
         <div className="rail-brand"><span className="mascot" aria-hidden /><span className="wordmark">ValueGraph</span></div>
