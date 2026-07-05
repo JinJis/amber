@@ -239,6 +239,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
   const [pinTarget, setPinTarget] = useState<any | null>(null);  // asset awaiting a board-picker pin
   const [onboarded, setOnboarded] = useState<boolean | null>(null);  // null = checking; false = show onboarding
   const [viewer, setViewer] = useState<Citation | null>(null);  // expanded source viewer
+  const [factCheck, setFactCheck] = useState(false);  // FC-4: explicit 팩트체크 mode (never inferred)
   // RIGHT CONTEXT PANEL: which assistant turn's context is pinned in the panel. null = follow
   // the latest answer live (so a streaming turn's assets fill the panel as they arrive).
   const [focusIdx, setFocusIdx] = useState<number | null>(null);
@@ -498,12 +499,16 @@ export default function Chat({ name, features }: { name: string; features: Featu
     }
   }
 
-  async function send(text: string) {
+  async function send(text: string, opts?: { factCheck?: boolean }) {
     if (!text.trim() || busy) return;
+    // FC-4: the 팩트체크 chip is an EXPLICIT signal (not a heuristic) — frame the turn as a claim
+    // to verify so the LLM intake classifies fact_check and composes the verdict card.
+    if (opts?.factCheck) text = `다음 주장이 사실인지 1차 기록으로 팩트체크해줘: “${text.trim()}”`;
     const history: Msg[] = [...messages, { role: "user", content: text }];
     const startConv = conversationId;  // may be null → a new conversation
     setMessages([...history, { role: "assistant", content: "", tools: [], citations: [] }]);
     setInput("");
+    setFactCheck(false);
     setBusy(true);
     setFocusIdx(null);  // panel follows the new answer as its assets stream in
     try {
@@ -762,11 +767,15 @@ export default function Chat({ name, features }: { name: string; features: Featu
                   ))}
                 </div>
               )}
-              <form onSubmit={(e) => { e.preventDefault(); if (mention.length) { pickHandle(mention[0]); return; } send(input); }}>
+              <form onSubmit={(e) => { e.preventDefault(); if (mention.length) { pickHandle(mention[0]); return; } send(input, { factCheck }); }}>
+                <button type="button" className={`fc-toggle ${factCheck ? "on" : ""}`}
+                  aria-pressed={factCheck} title="주장을 1차 기록으로 팩트체크"
+                  onClick={() => setFactCheck((v) => !v)}>✓ 팩트체크</button>
                 <input ref={inputRef} className="input" value={input} onChange={(e) => onInput(e.target.value)}
                   onBlur={() => setTimeout(() => setMention([]), 120)}
-                  placeholder="무엇이든 물어보거나 — /프롬프트 · @그룹 호출…" disabled={busy} />
-                <Button disabled={busy || !input.trim()}>보내기</Button>
+                  placeholder={factCheck ? "검증할 주장을 붙여넣으세요 — 예: 삼성전자 영업이익 15조 넘었대"
+                    : "무엇이든 물어보거나 — /프롬프트 · @그룹 호출…"} disabled={busy} />
+                <Button disabled={busy || !input.trim()}>{factCheck ? "검증" : "보내기"}</Button>
               </form>
               {(input.match(/@([^\s@]+)/g) ?? []).length > 0 && (
                 <div className="composer-meta">

@@ -437,6 +437,38 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 .sv-ev-input { display: flex; flex-direction: column; gap: 6px; height: 100%; }
 .sv-ev-input .sv-act { align-self: flex-start; }
 
+/* --- M-FACT (FC-2): fact-check verdict card — grayscale receipt, never advice colors --- */
+.vd { display: flex; flex-direction: column; gap: 10px; padding: 2px 0; }
+.vd-chip { display: inline-flex; align-items: baseline; gap: 6px; align-self: flex-start;
+  font-size: 13px; font-weight: 700; color: var(--text); border: 1.5px solid var(--ink, #1a1a1a);
+  border-radius: 6px; padding: 4px 10px; background: var(--panel); }
+.vd-glyph { font-size: 14px; }
+.vd-conf { font-weight: 400; font-size: 10px; color: var(--muted); }
+.vd-claim { margin: 0; padding: 6px 10px; border-left: 3px solid var(--line-2);
+  color: var(--text-2); font-size: 12px; line-height: 1.6; background: var(--panel-2); }
+.vd-future { margin: 0; font-size: 11px; color: var(--muted); line-height: 1.6; }
+.vd-findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.vd-finding { display: flex; gap: 8px; align-items: baseline; font-size: 11px;
+  padding: 3px 4px; border-bottom: 1px dotted var(--line-3); }
+.vd-finding:last-child { border-bottom: none; }
+.vd-fmark { font-size: 9px; min-width: 26px; padding: 1px 5px; border-radius: 4px; text-align: center;
+  border: 1px solid var(--line-2); color: var(--text-2); background: var(--panel); }
+.vd-finding.against .vd-fmark { background: var(--ink, #1a1a1a); color: var(--panel, #fff);
+  border-color: var(--ink, #1a1a1a); }
+.vd-fpoint { flex: 1; color: var(--text-2); line-height: 1.5; }
+.vd-fn { color: var(--muted); font-size: 10px; }
+.vd-corrected { font-size: 11px; color: var(--text); line-height: 1.6; padding: 6px 8px;
+  border: 1px solid var(--line-3); border-radius: 6px; background: var(--panel-2); }
+.vd-corr-h { font-size: 9px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
+  margin-right: 6px; }
+.vd-method { font-size: 10px; color: var(--muted); }
+
+/* --- M-FACT (FC-4): explicit 팩트체크 composer toggle --- */
+.fc-toggle { flex-shrink: 0; font-size: 11px; padding: 0 10px; border: 1px solid var(--line-2);
+  border-radius: 6px; background: var(--panel); color: var(--muted); cursor: pointer; white-space: nowrap; }
+.fc-toggle:hover { background: var(--panel-3); color: var(--text-2); }
+.fc-toggle.on { background: var(--ink, #1a1a1a); color: var(--panel, #fff); border-color: var(--ink, #1a1a1a); }
+
 /* ───────── PH-DEMO: high-impact dashboard widgets (stat · heatmap · feed · calendar) ───────── */
 .dw-wrap { height: 100%; width: 100%; overflow: auto; }
 .dw-livechip, .dw-live { display: inline-flex; align-items: center; gap: 5px; font-size: 9px; font-weight: 700;

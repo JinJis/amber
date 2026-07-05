@@ -54,6 +54,11 @@ class TaskIntake:
     # CE-14 VALUE CHAIN: the user asks about a company's 밸류체인/공급망 구조 (공급사·고객·경쟁사) →
     # extract upstream/downstream/competitors from filings+news, labelled derived.
     value_chain: bool = False
+    # FC-1 FACT CHECK (M-FACT): the user pastes a CLAIM to verify ("~라던데 맞아?", "~했대") →
+    # gather evidence for/against and compose a cited verdict artifact. Verifying a THIRD-PARTY
+    # claim is allowed even when the claim itself is about the future — the verdict then becomes
+    # '미래 주장(검증 불가)' instead of a refusal (we never score the future claim itself).
+    fact_check: bool = False
 
 
 _INTAKE_PROMPT = (
@@ -84,6 +89,10 @@ _INTAKE_PROMPT = (
     "ALLOWED (answer with the historical record + the 과거 기록 label). But if the user insists on a FUTURE "
     "claim as the output ('그래서 내일 반등 확률은?', 'will it bounce?') that is a forecast → restricted; the "
     "refusal may OFFER the descriptive historical record instead.\n"
+    "FACT-CHECKING a third-party claim is ALLOWED and never restricted: when the user quotes or reports "
+    "something SOMEONE ELSE said and asks whether it is true ('~라던데 맞아?', '~넘었대', '이거 사실이야?'), "
+    "we VERIFY it against the record — even a claim about the future is allowed to fact-check (the verdict "
+    "simply states it is a future claim that cannot be verified; we do not score it).\n"
     "If the user EXCLUDES or NEGATES restricted output it is ALLOWED — they want facts. ALLOWED examples: "
     "'애플 컨센서스 매출·EPS 추정치', '회사 가이던스 알려줘', '목표가는 제시하지 말고 가격 흐름만', "
     "'전망·매수의견은 넣지 말고 사실 위주로', 'do NOT give a forecast, just what happened'. Descriptive "
@@ -122,7 +131,12 @@ _INTAKE_PROMPT = (
     "(→공시 검색). news_brief is for a headline SUMMARY, not a specific datum with its own tool.\n"
     "VALUE CHAIN — set value_chain=true when the user asks about a company's 밸류체인 / 공급망 구조 / "
     "공급사·고객사 / value chain / supply chain (who it buys from, sells to, competes with). Then gather "
-    "its filings + news and do NOT clarify.\n\n"
+    "its filings + news and do NOT clarify.\n"
+    "FACT CHECK — set fact_check=true when the user presents a specific CLAIM to VERIFY: quoted/heard "
+    "information ('삼성전자 이번 분기 영업이익 15조 넘었대', 'S&P 지금 낙폭이 역대 3위래', '~라던데 맞아?', "
+    "'이거 팩트야?'). Then plan to look up the PRIMARY records that confirm or refute it (filings, "
+    "financials, prices, history, news) and do NOT clarify. A plain data QUESTION ('삼성전자 영업이익 "
+    "알려줘') is NOT a fact check — only a checkable assertion the user wants verified.\n\n"
     "Reply JSON ONLY:\n"
     '{{"restricted": <bool — true ONLY if the user truly wants restricted output>, '
     '"category": "forecast|advice|price_target|none", '
@@ -136,6 +150,7 @@ _INTAKE_PROMPT = (
     '"narrative": <bool — true for a holistic company story / 관전 포인트 request>, '
     '"news_brief": <bool — true for a news briefing / 시황 / 뉴스 정리 request>, '
     '"value_chain": <bool — true for a 밸류체인 / 공급망 구조 request>, '
+    '"fact_check": <bool — true when a specific third-party claim needs verification>, '
     '"reason": "<one short line, SAME LANGUAGE as the question>", '
     '"steps": <int tool-call budget: one fact about one company ≈ 2-3, a comparison or multi-source '
     'ask ≈ 8-12>, '
@@ -167,6 +182,7 @@ _INTAKE_SCHEMA = {
         "narrative": {"type": "boolean"},
         "news_brief": {"type": "boolean"},
         "value_chain": {"type": "boolean"},
+        "fact_check": {"type": "boolean"},
         "steps": {"type": "integer"},
         "plan": {"type": "string"},
     },
@@ -234,8 +250,9 @@ async def analyze_task(task: str, backend: str | None = None, conversation: list
         narrative = bool(d.get("narrative")) and needs_data and not restricted
         news_brief = bool(d.get("news_brief")) and needs_data and not restricted
         value_chain = bool(d.get("value_chain")) and needs_data and not restricted
+        fact_check = bool(d.get("fact_check")) and needs_data and not restricted
         clarify = (bool(d.get("clarify")) and not restricted and not narrative
-                   and not news_brief and not value_chain and len(opts) >= 2)
+                   and not news_brief and not value_chain and not fact_check and len(opts) >= 2)
         # decompose only for a clear, complex request (not restricted/clarify/conceptual) with ≥2 facets.
         subs = []
         for s in (d.get("subtasks") or []):
@@ -256,6 +273,7 @@ async def analyze_task(task: str, backend: str | None = None, conversation: list
             narrative=narrative,
             news_brief=news_brief,
             value_chain=value_chain,
+            fact_check=fact_check,
         )
     except Exception as exc:  # noqa: BLE001 — degrade to allow + default budget, never block
         logger.warning("task intake failed (%s); allowing with default budget", exc)

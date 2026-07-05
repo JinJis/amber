@@ -237,6 +237,25 @@ class Computation(BaseModel):
 Citation.model_rebuild()  # resolve the Citation.computation forward ref (DRV-2)
 
 
+class VerdictFinding(BaseModel):
+    """One piece of evidence for/against a fact-checked claim — always cited ([n])."""
+    point: str                     # the finding, stated as a record fact
+    supports: bool                 # True = supports the claim, False = contradicts it
+    citation_idx: int              # 1-based [n] of the citation backing this finding
+
+
+class VerdictData(BaseModel):
+    """M-FACT (FC-2): a fact-check verdict — the receipt. Verification of PAST/CURRENT facts
+    only; a future claim gets verdict '미래 주장(검증 불가)' and is never scored. `confidence`
+    is evidentiary support (how solid the record is), NEVER a probability about the future."""
+    claim: str                     # the user's claim, verbatim (quoted in the card)
+    verdict: str                   # 사실 | 대체로 사실 | 사실과 다름 | 확인 불가 | 미래 주장(검증 불가)
+    confidence: str | None = None  # high | medium | low — evidentiary support
+    findings: list[VerdictFinding] = []
+    corrected: str | None = None   # what the record actually says (sourced), when the claim is off
+    method: str | None = None      # how it was checked (which kinds of records)
+
+
 class Artifact(BaseModel):
     """A typed, connector-backed figure emitted alongside prose (U3). The web renders
     it as an interactive card (TradingView Lightweight Charts); gaps are drawn, never hidden."""
@@ -266,6 +285,8 @@ class Artifact(BaseModel):
     table: list[list[str]] | None = None
     # for kind=narrative (CE-4): the structured 종목 내러티브 sections (heading + sourced body).
     sections: list[NarrativeSection] = []
+    # for kind=verdict (M-FACT FC-2): the fact-check verdict + cited findings for/against.
+    verdict: VerdictData | None = None
     # for self-computed figures (valuation/backtest/screener): the auditable derivation — what was
     # queried, assumed, and the formula → the figure. Rendered as a '계산 근거' panel. (PH-DATA-6)
     computation: Computation | None = None
