@@ -7,6 +7,8 @@ import BotHome from "./BotHome";
 import { ShareSheet } from "./ShareSheet";
 import Onboarding from "./Onboarding";
 import PinPicker from "./PinPicker";
+import NotebookView from "./NotebookView";
+import { NotebookPicker, type PinPayload } from "./NotebookPicker";
 import PromptLibrary from "./PromptLibrary";
 import CockpitEntry from "./CockpitEntry";
 import Watchlists, { Watchlist } from "./Watchlists";
@@ -155,8 +157,9 @@ export default function Chat({ name, features }: { name: string; features: Featu
 
   // shell view + watchlists / @groups. Dashboard is home (when enabled); 탐색(explore) is the chat
   // surface and the fallback when a feature-flagged surface is off.
-  const [view, setView] = useState<"dashboard" | "explore" | "watch" | "bot">(
+  const [view, setView] = useState<"dashboard" | "explore" | "watch" | "bot" | "notes">(
     features.dashboard ? "dashboard" : "explore");
+  const [nbPin, setNbPin] = useState<PinPayload | null>(null);   // NB-2: asset awaiting 노트 담기
   const [handles, setHandles] = useState<string[]>([]);
   const [mention, setMention] = useState<string[]>([]); // open @-autocomplete suggestions
   const [pinTarget, setPinTarget] = useState<any | null>(null);  // asset awaiting a board-picker pin
@@ -240,10 +243,20 @@ export default function Chat({ name, features }: { name: string; features: Featu
   }
 
   // Pin anything (chart/table artifact, source card) → open the board picker (choose board[s]).
-  function pinArtifact(a: Artifact) { setPinTarget(a); }
+  // NB-2: 담기 — snapshots go to the research notebook (the board pin is legacy, flag-gated).
+  function pinArtifact(a: Artifact) {
+    if (features.dashboard) { setPinTarget(a); return; }
+    setNbPin({ kind: "pin_artifact", payload: a as unknown as Record<string, unknown>,
+               title: a.title || "차트·표" });
+  }
   function pinCitation(c: Citation) {
-    // a source/evidence/provenance card pinned as a board asset (kind="source").
-    setPinTarget({ kind: "source", title: c.source || c.ticker || "출처", ...c });
+    if (features.dashboard) { setPinTarget({ kind: "source", title: c.source || c.ticker || "출처", ...c }); return; }
+    setNbPin({ kind: "pin_citation", payload: c as unknown as Record<string, unknown>,
+               title: c.source || "출처" });
+  }
+  function pinLedger(row: Record<string, unknown>, c: Citation | null) {
+    setNbPin({ kind: "pin_ledger", title: `수치 ${row.raw}`,
+               payload: { ...row, source: c?.source ?? null, as_of: c?.as_of ?? null, url: c?.url ?? null } });
   }
 
   async function loadAgents() {
@@ -526,6 +539,9 @@ export default function Chat({ name, features }: { name: string; features: Featu
         <button className={`rail-item ${view === "explore" ? "on" : ""}`} onClick={() => setView("explore")}>
           <span className="ic">🔍</span><span className="lbl">탐색</span>
         </button>
+        <button className={`rail-item ${view === "notes" ? "on" : ""}`} onClick={() => setView("notes")}>
+          <span className="ic">📓</span><span className="lbl">노트</span>
+        </button>
         <button className={`rail-item ${view === "watch" ? "on" : ""}`} onClick={() => setView("watch")}>
           <span className="ic">⭐</span><span className="lbl">관심</span>
         </button>
@@ -557,6 +573,8 @@ export default function Chat({ name, features }: { name: string; features: Featu
       <div className="main">
         {view === "watch" ? (
           <Watchlists embedded onChanged={loadHandles} />
+        ) : view === "notes" ? (
+          <NotebookView onShare={(n) => setShareArt(n as unknown as Artifact)} />
         ) : view === "dashboard" && features.dashboard ? (
           <BoardCanvas onEvidence={setViewer} />
         ) : view === "bot" && features.alerts ? (
@@ -726,9 +744,10 @@ export default function Chat({ name, features }: { name: string; features: Featu
           msg={panelMsg}
           streaming={panelStreaming}
           onEvidence={setViewer}
-          onPinArtifact={features.dashboard ? pinArtifact : undefined}
+          onPinArtifact={pinArtifact}
           onShareArtifact={(a) => setShareArt(a)}
-          onPinCitation={features.dashboard ? pinCitation : undefined}
+          onPinCitation={pinCitation}
+          onPinLedger={pinLedger}
           onResizeStart={startCtxResize}
         />
       )}
@@ -755,6 +774,9 @@ export default function Chat({ name, features }: { name: string; features: Featu
 
       {viewer && <SourceViewer c={viewer} onClose={() => setViewer(null)}
         onQuote={(q) => { setViewer(null); setShareArt(q); }} />}
+      {nbPin && (
+        <NotebookPicker pin={nbPin} onClose={() => setNbPin(null)} />
+      )}
       {pinTarget && (
         <PinPicker spec={pinTarget} onClose={() => setPinTarget(null)} onPinned={() => setPinTarget(null)} />
       )}

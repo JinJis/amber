@@ -34,7 +34,11 @@ export function ShareSheet({ a, audit, onClose }: {
         const r = await fetch("/api/shares", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify(
-            a.kind === "quote"
+            a.kind === "note"
+              ? { kind: "note", title: a.title || "리서치 노트",
+                  payload: { blocks: (a as unknown as { blocks: unknown[] }).blocks },
+                  audit: null }  // pins carry provenance; user text is ATTRIBUTED, not audited
+              : a.kind === "quote"
               ? { kind: "quote", title: a.title || "원문 인용",
                   payload: { passage: a.passage, source: a.source, doc_title: a.doc_title, url: a.url, as_of: a.as_of },
                   audit: null }  // a verbatim quote has no computed numbers to audit

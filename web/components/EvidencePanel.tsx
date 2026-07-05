@@ -51,9 +51,10 @@ export function TrustStrip({ s }: { s: TrustSummary }) {
 }
 
 // ── ③ 수치 원장 ──────────────────────────────────────────────────────────────────
-function LedgerSection({ msg, rows, onEvidence, hoverCite, setHoverCite, bubbleEl }: {
+function LedgerSection({ msg, rows, onEvidence, onPinLedger, hoverCite, setHoverCite, bubbleEl }: {
   msg: Msg; rows: LedgerRow[];
   onEvidence: (c: Citation) => void;
+  onPinLedger?: (row: Record<string, unknown>, c: Citation | null) => void;   // NB-2: 📌 노트에 담기
   hoverCite: number | null; setHoverCite: (n: number | null) => void;
   bubbleEl?: () => HTMLElement | null;   // the focused answer's bubble, for prose highlight
 }) {
@@ -90,6 +91,10 @@ function LedgerSection({ msg, rows, onEvidence, hoverCite, setHoverCite, bubbleE
                 <span className="lg-src lg-warn mono">⚠ 미확인</span>
               )}
               {cit?.freshness ? <FreshnessDot f={cit.freshness} /> : null}
+              {r.supported && onPinLedger ? (
+                <button type="button" className="lg-pin" data-testid={`lg-pin-${i}`} title="노트에 담기"
+                  onClick={(e) => { e.stopPropagation(); onPinLedger(r as unknown as Record<string, unknown>, cit); }}>📌</button>
+              ) : null}
               {cit ? <span className="lg-open mono">↗</span> : null}
             </div>
           );
@@ -101,7 +106,7 @@ function LedgerSection({ msg, rows, onEvidence, hoverCite, setHoverCite, bubbleE
 
 // ── the panel ────────────────────────────────────────────────────────────────────
 export function ContextPanel(
-  { msg, streaming, onEvidence, onPinArtifact, onPinCitation, onShareArtifact, onResizeStart,
+  { msg, streaming, onEvidence, onPinArtifact, onPinCitation, onPinLedger, onShareArtifact, onResizeStart,
     hoverCite, setHoverCite, flashCite, bubbleEl }:
   {
     msg: Msg | null; streaming: boolean;
@@ -109,6 +114,7 @@ export function ContextPanel(
     onPinArtifact?: (a: Artifact) => void;
     onShareArtifact?: (a: Artifact) => void;
     onPinCitation?: (c: Citation) => void;
+    onPinLedger?: (row: Record<string, unknown>, c: Citation | null) => void;
     onResizeStart: (e: ReactMouseEvent) => void;
     hoverCite: number | null;
     setHoverCite: (n: number | null) => void;
@@ -180,7 +186,7 @@ export function ContextPanel(
             </div>
           )}
           {msg && ledger.length > 0 && (
-            <LedgerSection msg={msg} rows={ledger} onEvidence={onEvidence}
+            <LedgerSection msg={msg} rows={ledger} onEvidence={onEvidence} onPinLedger={onPinLedger}
               hoverCite={hoverCite} setHoverCite={setHoverCite} bubbleEl={bubbleEl} />
           )}
           {used.length > 0 && (

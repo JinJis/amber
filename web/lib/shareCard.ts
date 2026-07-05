@@ -33,6 +33,17 @@ export function shareCardLines(a: Artifact, max = 8): string[] {
   const out: string[] = [];
   const push = (s: string | null | undefined) => { if (s && out.length < max) out.push(String(s)); };
 
+  if (a.kind === "note" && Array.isArray(a.blocks)) {
+    for (const b of a.blocks as { kind?: string; note?: string | null; payload?: Record<string, unknown> }[]) {
+      if (b.kind === "text") push(String((b.payload?.md ?? "")).split("\n")[0]);
+      else {
+        const p = b.payload ?? {};
+        const head = String(p.title ?? p.raw ?? p.source ?? "근거");
+        push(`· ${head}${b.note ? ` — ${b.note}` : ""}`);
+      }
+    }
+    return out.slice(0, max);
+  }
   if (a.kind === "quote" && a.passage) {
     push(`“${a.passage}”`);
     if (a.doc_title) push(`— ${a.doc_title}`);
