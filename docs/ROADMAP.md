@@ -137,8 +137,8 @@ that completes it.**
 ```
 [done] FLAG-1 · OPS-1 · M-DESK basic · M0(HL-1..4) · M1(HL-6/7/9)
 [done] QT-2 · M-SHARE(SH-1..3) · M-DERIV(DRV-1..5) · M-FACT(FC-1..4)
-[done] M-SHARE 전체(SH-1..5·2b) · M-FACT · M-DERIV
-[next] HL-5(시대 뉴스) · HL-8(차트 페인) · DATA-KR-1(KR 매크로) → M2(히스토리 랩 화면)
+[done] M-SHARE 전체 · M-FACT · M-DERIV · HL-5 커넥터(GDELT+NYT)
+[next] HL-5b(레짐 도시에·시대뉴스 인제스트) · HL-8(차트 페인) · DATA-KR-1 → M2
      → HL-5(era news) · HL-8(chart panes) · DATA-KR-1 → M2(히스토리 랩 surface)
      → M-NOTE → M3(어닝) → M4(공시 인텔리전스) → M-QUANT(QT-1/3/4) → M5(UX) → M6(호라이즌)
 ```
@@ -258,7 +258,7 @@ catalog tools through the gateway like every other datum. Full detail:
   `source`(=`derived: yahoo prices via market_history`)+`as_of`+`freshness`+`label`;
   unentitled project gets 403.
 
-### HL-5 · Era news connectors (US) + regime dossiers — ⬜
+### HL-5 · Era news connectors (US) + regime dossiers — 🚧 GDELT+NYT ✅ · dossiers ⬜(HL-5b)
 - **What**: (a) connector **`nyt_archive`** — NYT Archive API (free key, headlines+abstracts
   by month, back to 1851; respect ~500 req/day, 5 req/min): resource
   `era_news(from, to, query?)`. One-shot pipeline ingests each seeded regime's window into

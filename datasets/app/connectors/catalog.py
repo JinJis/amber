@@ -457,6 +457,53 @@ CONNECTORS: list[ConnectorManifest] = [
                                            as_of_field="as_of", freshness=Freshness.eod)),
         ],
     ),
+    ConnectorManifest(
+        id="gdelt", name="Era News (GDELT)", domain="news",
+        description="시대 뉴스 커버리지 — 특정 구간의 일별 기사량·평균 톤 시계열과 기사 목록(제목·매체·날짜). "
+                    "GDELT DOC 2.0(키 불필요, 2017년~). 과거 기록의 서술적 커버리지이며 전망이 아님. "
+                    "2017년 이전 구간은 시대 뉴스(NYT Archive) 대상.",
+        markets=["US", "KR"],
+        upstream=UpstreamCredential(requires_key=False),
+        license=LIC_DERIVED,
+        resources=[
+            Resource(name="news_timeline",
+                     description="시대 뉴스 커버리지 시계열 — 검색어의 일별 기사량과 평균 톤(구간 지정). 과거 기록.",
+                     path="/era-news/timeline", markets=["US", "KR"], cost_tier=CostTier.low,
+                     params=[ResourceParam(name="query", required=True, description="검색어."),
+                             ResourceParam(name="from", required=True, type="date", description="시작일."),
+                             ResourceParam(name="to", required=True, type="date", description="종료일.")],
+                     provenance=Provenance(source="GDELT DOC 2.0", as_of_field="to", freshness=Freshness.periodic)),
+            Resource(name="news_search",
+                     description="시대 뉴스 기사 목록 — 검색어·구간에 해당하는 기사(제목·매체·날짜·톤). 과거 기록.",
+                     path="/era-news/search", markets=["US", "KR"], cost_tier=CostTier.low,
+                     params=[ResourceParam(name="query", required=True, description="검색어."),
+                             ResourceParam(name="from", required=True, type="date", description="시작일."),
+                             ResourceParam(name="to", required=True, type="date", description="종료일."),
+                             ResourceParam(name="limit", type="integer", description="최대 기사 수(기본 20, 최대 75).")],
+                     provenance=Provenance(source="GDELT DOC 2.0", as_of_field="date",
+                                           source_link_field="url", freshness=Freshness.periodic)),
+        ],
+    ),
+    ConnectorManifest(
+        id="nyt_archive", name="Era News (NYT Archive)", domain="news",
+        description="시대 뉴스 — 뉴욕타임스 아카이브 헤드라인·초록(1851년~). 2017년 이전 국면(닷컴버블·GFC 등)의 "
+                    "'그날의 신문'. 과거 기록이며 전망이 아님. NYT_API_KEY 필요(무료).",
+        markets=["US"],
+        upstream=UpstreamCredential(requires_key=True, key_env="NYT_API_KEY",
+                                    signup_url="https://developer.nytimes.com/"),
+        license=LIC_DERIVED,
+        resources=[
+            Resource(name="era_news",
+                     description="시대 뉴스 헤드라인/초록 — 구간·검색어로 필터한 NYT 기사(제목·초록·날짜·URL). 과거 기록.",
+                     path="/era-news/archive", markets=["US"], cost_tier=CostTier.low,
+                     params=[ResourceParam(name="query", description="필터 검색어(비우면 그 달 전체)."),
+                             ResourceParam(name="from", required=True, type="date", description="시작일."),
+                             ResourceParam(name="to", required=True, type="date", description="종료일."),
+                             ResourceParam(name="limit", type="integer", description="최대 기사 수(기본 40).")],
+                     provenance=Provenance(source="The New York Times Archive", as_of_field="date",
+                                           source_link_field="url", freshness=Freshness.periodic)),
+        ],
+    ),
 ]
 
 
@@ -530,6 +577,10 @@ _RESOURCE_META: dict[tuple[str, str], tuple[Category, Cadence]] = {
     ("market_history", "analogues"): (Category.history, Cadence.daily),
     ("market_history", "regimes"): (Category.history, Cadence.event),
     ("market_history", "regime_compare"): (Category.history, Cadence.daily),
+    # gdelt (era news — HL-5; descriptive coverage of the record, streaming class for freshness)
+    ("gdelt", "news_timeline"): (Category.history, Cadence.streaming),
+    ("gdelt", "news_search"): (Category.history, Cadence.streaming),
+    ("nyt_archive", "era_news"): (Category.history, Cadence.streaming),
     # kis
     ("kis", "volume_rank"): (Category.market, Cadence.intraday),
     ("kis", "investor_flow"): (Category.gurus, Cadence.daily),
