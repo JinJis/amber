@@ -757,6 +757,7 @@ touches the same files; overlaps with already-planned tasks are marked "=".
 | IMP-12 | Form 4 / deck citations lack evidence URL·page | S | 🚧 Form 4 filing_url/accession ✅ · deck page-jump ⬜ |
 | IMP-13 | shares never expire | S | ✅ expires_at +90d, 410 on expiry |
 | IMP-14 | KR macro beyond rates absent | M | = **DATA-KR-1** (already planned) |
+| IMP-16 | RAG /health가 인제스트 부하 중 5s 타임아웃 → compose가 web 기동을 막음 (2026-07-05 복구 중 관찰) | S | ⬜ 원인: 인제스트의 동기 임베딩 호출이 이벤트 루프를 점유하는 것으로 추정 — 임베딩 호출 to_thread 격리 or 헬스체크 타임아웃 상향; `--no-deps`로 우회 가능 |
 | IMP-15 | Yahoo 503 flake kills prices (eval 4건) | M | ✅ price-provider fallback chain (`PRICES_PROVIDER_*=auto`): Yahoo → Stooq(US)/KIS(KR, 키 있을 때) — 부적격 심볼은 스킵(지수→KIS 금지 등), 빈 결과도 폴스루, 전원 실패 시 primary 에러. 응답 `source` 필드 + PriceBar.source가 실제 제공자를 명시(정직한 인용 — 인용은 응답 선언 source 우선). 완전 대체는 불가: 지수·테마 ETF·배당/분할 폭은 Yahoo만 커버 |
 
 Sequencing: **SH-2/SH-3 (with IMP-13) → IMP-3/5/10 (S-batch) → IMP-7/12 (answer-quality
