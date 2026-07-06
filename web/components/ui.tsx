@@ -72,7 +72,7 @@ export function CadenceTag({ c }: { c?: string | null }) {
   const label = cadenceLabel(c);
   return (
     <span className={`cad-tag ${periodic ? "periodic" : "oneshot"}`}
-      title={periodic ? `주기성 데이터 (${label}) — 대시보드에 고정하면 알림봇 설정 가능` : "단발성 데이터 — 고정 시 값으로 표시 (알림 없음)"}>
+      title={periodic ? `주기성 데이터 (${label}) — 새 값이 나오면 갱신되는 출처` : "단발성 데이터 — 이 시점의 값"}>
       {periodic ? `↻ ${label}` : "단발성"}
     </span>
   );

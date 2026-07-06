@@ -123,7 +123,25 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 .ctxpane .ctx-empty { color: var(--muted); font-size: 13px; line-height: 1.55; padding: 10px 2px; }
 .ctxpane .ctx-section { display: flex; flex-direction: column; }
 .ctxpane .ctx-label { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+/* v3: 섹션 한 줄 설명 + 스트리밍 안내 — "뭘 어떻게 봐야 하는지"를 패널이 직접 말한다 */
+.ctxpane .ctx-desc { font-size: 10.5px; line-height: 1.55; color: var(--faint); margin: -3px 0 7px; }
+.ctxpane .ctx-note { font-size: 10.5px; line-height: 1.55; color: var(--muted); background: var(--panel-3);
+  border: 1px dashed var(--line-2); border-radius: 8px; padding: 7px 9px; margin-bottom: 8px; }
+.ctxpane .ctx-note b { color: var(--text-2); font-weight: 600; }
+/* v3: 리서치 과정 타임라인 (수집 중 live · 완료 후 접힘 보존) */
+.ctx-proc { display: flex; flex-direction: column; gap: 2px; }
+.ctx-proc-row { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text-2);
+  padding: 3px 2px; }
+.ctx-proc-row.active { color: var(--text); }
+.ctx-proc-ic { width: 14px; display: inline-flex; justify-content: center; color: var(--fresh); font-size: 10px; }
+.ctx-proc-lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* v3: 참고만 한 출처 — 버리지 않고 흐리게 보관 */
+.ctxpane .ctx-dim { opacity: .62; }
+.ctxpane .ctx-dim:hover { opacity: 1; }
 .ctxpane .ctx-cards { display: flex; flex-direction: column; gap: 8px; }
+/* v3: 새 카드 도착 애니메이션 — 수집 중 출처가 실시간으로 쌓이는 게 보인다 */
+.ctxpane .ctx-card-wrap { animation: ctx-card-in .22s ease; }
+@keyframes ctx-card-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 /* ── LG: 근거 패널 v2 ─────────────────────────────────────────────── */
 /* ① 판정 */
@@ -376,7 +394,7 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 
 /* pin source button on a source card */
 .srcprev { position: relative; }
-/* "＋ 대시보드" — unified add-to-dashboard action in the source card's foot (matches the artifact
+/* "＋ 노트북" — unified add-to-notebook action in the source card's foot (matches the artifact
    card's button; replaces the old 📌 pin icon). Sits at the right of the foot, wraps if narrow. */
 .sp-add { margin-left: auto; flex: none; white-space: nowrap; background: var(--panel-2);
   border: 1px solid var(--line-2); border-radius: 999px; color: var(--muted); cursor: pointer;
@@ -652,7 +670,7 @@ select.input { appearance: none; }
 .empty h2 { color: var(--text); margin-bottom: 6px; }
 .examples { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 18px; }
 
-/* ── ASK: 탐구 엔트리 (v3 — 전문적·친근·와이드 2단) ─────────────────────── */
+/* ── ASK: 탐구 엔트리 (v4 — 종목 탭 → 온디맨드 · 뉴스 질문 피드) ─────────────────────── */
 .ask { margin: auto; width: 100%; max-width: 1020px; text-align: left;
   display: flex; flex-direction: column; gap: 20px; padding: 6px 4px 4px; }
 
@@ -665,22 +683,20 @@ select.input { appearance: none; }
 .ask-trust b { color: var(--text); font-weight: 600; }
 .ask-noforecast { color: var(--accent-fg); font-weight: 600; }
 
-/* 티커 테이프 — 증권거래소처럼 오른쪽→왼쪽 무한 흐름 */
-.tape { position: relative; overflow: hidden; border: 1px solid var(--line-2); border-radius: 10px;
-  background: var(--ink); padding: 8px 0; -webkit-mask-image: linear-gradient(90deg, transparent, #000 5%, #000 95%, transparent);
-          mask-image: linear-gradient(90deg, transparent, #000 5%, #000 95%, transparent); }
-.tape-track { display: inline-flex; white-space: nowrap; will-change: transform;
-  animation: tape-scroll 48s linear infinite; }
-.tape:hover .tape-track { animation-play-state: paused; }
-@keyframes tape-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
-.tape-item { display: inline-flex; align-items: baseline; gap: 8px; padding: 2px 20px; background: none;
-  border: none; border-right: 1px solid rgba(255,255,255,.08); cursor: pointer; }
-.tape-lbl { font-size: 12px; color: rgba(255,255,255,.62); }
-.tape-px { font-size: 12px; color: rgba(255,255,255,.92); }
-.tape-chg { font-size: 12px; font-weight: 600; }
-.tape-chg.up { color: #46D08A; }
-.tape-chg.down { color: #FF6B6B; }
-.tape-chg.flat { color: rgba(255,255,255,.5); }
+/* 종목 칩 — 누르면 그 종목의 분석거리 3개를 그 자리에서 준비 (ASK-6) */
+.tk-row { display: flex; flex-wrap: wrap; gap: 7px; }
+.tk-chip { display: inline-flex; align-items: center; gap: 7px; padding: 7px 12px; cursor: pointer;
+  border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel); transition: all .12s; }
+.tk-chip:hover { border-color: var(--ink); }
+.tk-chip.on { border-color: var(--ink); background: var(--panel-2); box-shadow: 0 0 0 1px var(--ink); }
+.tk-name { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.tk-mkt { font-size: 9px; color: var(--muted); border: 1px solid var(--line-3); border-radius: 4px; padding: 1px 5px; }
+.tk-chev { font-size: 10px; color: var(--muted); }
+.tk-cards { border-left: 2px solid var(--line-2); padding-left: 10px; margin-top: 2px; }
+.tk-loading { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted);
+  padding: 12px 4px; }
+.tk-gap { font-size: 12px; color: var(--muted); line-height: 1.7; padding: 10px 4px; }
+.tk-gap-chips { display: inline-flex; gap: 6px; margin-left: 8px; vertical-align: middle; }
 
 /* 2단 레이아웃 */
 .ask-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
@@ -688,6 +704,8 @@ select.input { appearance: none; }
 .ask-col { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
 .ask-col-h { display: flex; align-items: center; gap: 8px; }
 .ask-col-t { font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: -.01em; }
+.ask-col-sub { margin-left: auto; font-size: 9.5px; color: var(--faint); border: 1px solid var(--line-3);
+  border-radius: 999px; padding: 2px 8px; }
 .ask-col-desc { font-size: 11.5px; line-height: 1.55; color: var(--muted); margin: 0 0 3px; }
 .ask-col-desc b { color: var(--text-2); font-weight: 600; }
 

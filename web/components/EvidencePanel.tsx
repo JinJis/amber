@@ -1,13 +1,21 @@
 "use client";
 
-// LG (근거 패널 v2) — the panel's unit flips from DOCUMENT to FIGURE. Three trust layers:
-//   ① 판정 (TrustStrip)  — the QT-2 number audit as the headline, not fine print
-//   ② 차트·표            — artifacts, unchanged
-//   ③ 수치 원장 (Ledger)  — every claim numeral in the prose, one row each:
-//        값 · 문맥 · 출처 [n] · 신선도 · 원문↗   (파생값 🧮 → Derivation Card body)
-//   문서 서랍 / 과정 — the old SourceCards + tool log, demoted to folds (nothing disappears).
-// [n] anchors in the prose are LIVE: hover ↔ card highlight, click → scroll+flash the card
-// here (the panel is the [n]'s destination — the footnote becomes a remote control).
+// LG (근거 패널 v3) — 스트리밍→완료가 "정리"로 읽히는 2단계 플로우.
+//
+// 수집 중 (streaming): 위에서부터
+//   리서치 과정 (live 타임라인 — 도구 호출, 마지막이 스피너)
+//   차트·표 (도착 순)
+//   수집한 출처 (도착 순 + "답변이 완성되면 인용된 출처 [n]과 참고만 한 출처로 정리돼요" 안내)
+//
+// 완료 (done): 읽는 순서대로, 섹션마다 한 줄 설명
+//   ① 판정 (TrustStrip)      — QT-2 숫자 검증이 헤드라인
+//   ② 차트·표                — 답변이 그린 시각 자료
+//   ③ 인용한 출처 [n]         — 본문 [n]과 1:1, 번호순. [n] 클릭/호버 → 이 카드로 (remote control)
+//   ④ 수치 원장               — 본문의 모든 숫자 ↔ 원자료 대조 (파생값 🧮 → Derivation Card)
+//   ⑤ 참고만 한 출처 (접힘)   — 살펴봤지만 인용하지 않은 출처 (버리지 않고 흐리게 보관)
+//   ⑥ 리서치 과정 (접힘)      — 수집 중의 타임라인이 그대로 접혀 내려온다 (아무것도 사라지지 않음)
+//
+// 카드 key는 출처 identity(source|url)라 스트리밍→완료 전환에도 같은 카드가 유지된다.
 
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { ArtifactCard } from "./ArtifactCard";
@@ -50,7 +58,34 @@ export function TrustStrip({ s }: { s: TrustSummary }) {
   );
 }
 
-// ── ③ 수치 원장 ──────────────────────────────────────────────────────────────────
+// 섹션 머리 — 제목 + (개수) + 한 줄 설명. "뭘 어떻게 봐야 하는지"를 라벨이 직접 말해준다.
+function SectionHead({ title, count, desc }: { title: string; count?: number; desc?: string }) {
+  return (
+    <>
+      <div className="ctx-label">{title}{count != null ? ` ${count}` : ""}</div>
+      {desc ? <div className="ctx-desc">{desc}</div> : null}
+    </>
+  );
+}
+
+// ── ⑥ 리서치 과정 — 도구 호출 타임라인 (수집 중엔 live, 완료 후엔 접힘으로 보존) ──
+function ProcessRows({ tools, live }: { tools: ToolUse[]; live: boolean }) {
+  return (
+    <div className="ctx-proc" data-testid="proc-rows">
+      {tools.map((t, j) => {
+        const active = live && j === tools.length - 1;
+        return (
+          <div key={j} className={`ctx-proc-row ${active ? "active" : "done"}`}>
+            <span className="ctx-proc-ic">{active ? <span className="tl-spin" /> : "✓"}</span>
+            <span className="ctx-proc-lbl">{t.label || t.name}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── ④ 수치 원장 ──────────────────────────────────────────────────────────────────
 function LedgerSection({ msg, rows, onEvidence, onPinLedger, hoverCite, setHoverCite, bubbleEl }: {
   msg: Msg; rows: LedgerRow[];
   onEvidence: (c: Citation) => void;
@@ -61,7 +96,8 @@ function LedgerSection({ msg, rows, onEvidence, onPinLedger, hoverCite, setHover
   if (!rows.length) return null;
   return (
     <div className="ctx-section" data-testid="ledger">
-      <div className="ctx-label">수치 원장 — 답변의 모든 숫자</div>
+      <SectionHead title="수치 원장" count={rows.length}
+        desc="답변의 모든 숫자를 원자료와 대조했어요. 행에 올리면 본문 속 위치를 비춰줘요." />
       <div className="ledger">
         {rows.map((r, i) => {
           const cit = citationByIndex(msg, r.citation_idx);
@@ -124,7 +160,9 @@ export function ContextPanel(
 ) {
   const arts = msg?.artifacts ?? [];
   const cites = msg?.citations ?? [];
-  const used = msg ? evidenceOf(msg) : [];
+  // 인용한 출처 = 본문 [n]이 가리키거나 차트·표를 뒷받침한 출처 — [n] 번호순으로.
+  const used = (msg ? evidenceOf(msg) : [])
+    .slice().sort((a, b) => (a.index ?? 999) - (b.index ?? 999));
   const usedKeys = new Set(used.map((c) => `${c.source}|${c.url}`));
   const others = cites.filter((c) => !usedKeys.has(`${c.source}|${c.url}`));
   const tools = uniqueTools(msg?.tools);
@@ -132,15 +170,15 @@ export function ContextPanel(
   const ledger = (msg?.audit?.ledger ?? []) as LedgerRow[];
   const summary = trustSummary(msg);
 
-  // 문서 서랍: collapsed when the ledger carries the story; expanded otherwise (news/conceptual).
-  const [docsOpen, setDocsOpen] = useState(false);
-  useEffect(() => { setDocsOpen(ledger.length === 0); }, [msg, ledger.length]);
+  // 참고만 한 출처 fold — [n] 클릭이 그 안의 카드를 가리키면 펼친다.
+  const [othersOpen, setOthersOpen] = useState(false);
+  useEffect(() => { setOthersOpen(false); }, [msg]);
 
-  // [n] click → make sure the drawer is open, then scroll+flash that card.
+  // [n] click → scroll+flash that card (인용한 출처는 항상 펼쳐져 있다).
   const cardRefs = useRef(new Map<number, HTMLDivElement>());
   useEffect(() => {
     if (!flashCite) return;
-    setDocsOpen(true);
+    if (others.some((c) => c.index === flashCite.n)) setOthersOpen(true);
     const el = cardRefs.current.get(flashCite.n);
     if (el) {
       el.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -148,15 +186,27 @@ export function ContextPanel(
       const t = setTimeout(() => el.classList.remove("flash"), 1600);
       return () => clearTimeout(t);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flashCite]);
 
-  const card = (c: Citation, key: string) => (
-    <div key={key}
+  // 스트리밍→완료 전환에도 같은 카드가 유지되도록 key는 출처 identity로.
+  const card = (c: Citation, j: number) => (
+    <div key={`${c.source}|${c.url}|${j}`}
       ref={(el) => { if (el && c.index != null) cardRefs.current.set(c.index, el); }}
       className={`ctx-card-wrap ${hoverCite != null && c.index === hoverCite ? "hot" : ""}`}
       onMouseEnter={() => c.index != null && setHoverCite(c.index)}
       onMouseLeave={() => setHoverCite(null)}>
       <SourceCard c={c} onExpand={onEvidence} onPin={onPinCitation} />
+    </div>
+  );
+
+  const artsSection = arts.length > 0 && (
+    <div className="ctx-section">
+      <SectionHead title="차트·표" count={arts.length}
+        desc={streaming ? undefined : "답변이 그린 시각 자료 — 값마다 출처가 붙어요."} />
+      <div className="artifacts">
+        {arts.map((a, j) => <ArtifactCard key={a.title || `a${j}`} a={a} onPin={onPinArtifact} onShare={onShareArtifact} onEvidence={onEvidence} />)}
+      </div>
     </div>
   );
 
@@ -174,38 +224,53 @@ export function ContextPanel(
             ? "답변을 작성하며 차트·표·출처를 모으고 있어요…"
             : "답변을 누르면 그 답에 쓰인 차트·표·출처가 여기에 모여요."}
         </div>
+      ) : streaming ? (
+        // ── 수집 중: 과정이 주인공 — 도구 타임라인 + 도착 순서 그대로의 출처 ──
+        <>
+          {tools.length > 0 && (
+            <div className="ctx-section" data-testid="ctx-collecting">
+              <SectionHead title="리서치 과정" count={tools.length} />
+              <ProcessRows tools={tools} live />
+            </div>
+          )}
+          {artsSection}
+          {cites.length > 0 && (
+            <div className="ctx-section">
+              <SectionHead title="수집한 출처" count={cites.length} />
+              <div className="ctx-note">
+                답변이 완성되면 <b>인용한 출처 [n]</b>과 <b>참고만 한 출처</b>로 정리돼요.
+              </div>
+              <div className="ctx-cards">{cites.map(card)}</div>
+            </div>
+          )}
+        </>
       ) : (
+        // ── 완료: 판정 → 차트·표 → 인용한 출처 [n] → 수치 원장 → 참고만 (접힘) → 과정 (접힘) ──
         <>
           {msg && <TrustStrip s={summary} />}
-          {arts.length > 0 && (
-            <div className="ctx-section">
-              <div className="ctx-label">차트·표 {arts.length}</div>
-              <div className="artifacts">
-                {arts.map((a, j) => <ArtifactCard key={`a${j}`} a={a} onPin={onPinArtifact} onShare={onShareArtifact} onEvidence={onEvidence} />)}
-              </div>
+          {artsSection}
+          {used.length > 0 && (
+            <div className="ctx-section" data-testid="ctx-used">
+              <SectionHead title="인용한 출처" count={used.length}
+                desc="답변 속 [n] 번호와 1:1이에요 — 본문의 [n]을 누르면 그 카드로 와요." />
+              <div className="ctx-cards">{used.map(card)}</div>
             </div>
           )}
           {msg && ledger.length > 0 && (
             <LedgerSection msg={msg} rows={ledger} onEvidence={onEvidence} onPinLedger={onPinLedger}
               hoverCite={hoverCite} setHoverCite={setHoverCite} bubbleEl={bubbleEl} />
           )}
-          {used.length > 0 && (
-            <details className="ctx-section ctx-more" open={docsOpen}
-              onToggle={(e) => setDocsOpen((e.target as HTMLDetailsElement).open)}>
-              <summary className="ctx-label">출처 문서 {used.length}</summary>
-              <div className="ctx-cards">{used.map((c, j) => card(c, `u${j}`))}</div>
-            </details>
-          )}
           {others.length > 0 && (
-            <details className="ctx-section ctx-more">
-              <summary className="ctx-label">참고한 모든 출처 {cites.length} · 답변 외 {others.length}</summary>
-              <div className="ctx-cards">{others.map((c, j) => card(c, `o${j}`))}</div>
+            <details className="ctx-section ctx-more" data-testid="ctx-others" open={othersOpen}
+              onToggle={(e) => setOthersOpen((e.target as HTMLDetailsElement).open)}>
+              <summary className="ctx-label">참고만 한 출처 {others.length} — 답변엔 인용 안 됨</summary>
+              <div className="ctx-cards ctx-dim">{others.map(card)}</div>
             </details>
           )}
           {tools.length > 0 && (
-            <details className="ctx-section ctx-more">
-              <summary className="ctx-label">과정 — 도구 {tools.length}개</summary>
-              {tools.map((t, j) => <div key={`t${j}`} className="tool">🔧 {t.label || t.name}</div>)}
+            <details className="ctx-section ctx-more" data-testid="ctx-process">
+              <summary className="ctx-label">리서치 과정 — 도구 {tools.length}개</summary>
+              <ProcessRows tools={tools} live={false} />
             </details>
           )}
         </>

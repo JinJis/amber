@@ -601,7 +601,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
             <main className="chat" ref={scrollRef}>
               {messages.length === 0 && (
                 <div className="empty">
-                  {/* ASK-5: 물어보기 엔트리 — 시장 한 줄·내 종목 질문거리(사전 생성)·Hot Trend.
+                  {/* ASK-6: 물어보기 엔트리 — 종목 탭 → 온디맨드 분석거리 3개 · 뉴스 질문 피드(10분 캐시).
                       모든 탭은 컴포저를 채운다 (auto-send 금지); 접속 시 LLM 0회. */}
                   <CockpitEntry
                     onPick={(q) => { setInput(q); inputRef.current?.focus(); }}

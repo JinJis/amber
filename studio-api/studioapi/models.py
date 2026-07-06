@@ -56,10 +56,10 @@ class DeskFeedCache(Base):
 
 
 class AskFeedCache(Base):
-    """ASK-5: pre-generated ask-feed content. One row per SCOPE — ``ticker:{MKT}:{TICKER}``
-    (shared by every user watching that ticker) or ``hot_trend`` (global). The 5-minute feed
-    refresher upserts these; the entry screen is a pure read. ``signature`` is the digest of
-    the gathered records — when unchanged the refresher keeps the cards and skips the LLM."""
+    """ASK-6: cached ask-feed content. One row per SCOPE — ``news_feed`` (global, upserted by
+    the 10-minute background refresher) or ``ticker:{MKT}:{TICKER}`` (upserted on demand when a
+    user taps that ticker; shared by every user, TTL-gated). ``signature`` is the digest of the
+    gathered records — when unchanged the generator keeps the cards and skips the LLM."""
 
     __tablename__ = "ask_feed_cache"
     scope: Mapped[str] = mapped_column(String(64), primary_key=True)

@@ -119,9 +119,34 @@ async def test_synthesis_failure_keeps_previous_generation(monkeypatch):
     assert out["cards"] == [] and out["signature"] is None and out["unchanged"] is False
 
 
-def test_trend_plan_covers_macro_micro_market():
+def test_news_plan_is_news_first_and_marketwide():
     tools = {"yahoo__asset_classes": {}, "fred__macro_panel": {}, "google_news__news": {}}
-    plan = AF._trend_plan(tools)
+    plan = AF._news_plan(tools)
     names = [p[0] for p in plan]
-    assert "yahoo__asset_classes" in names and "fred__macro_panel" in names
-    assert any(n == "google_news__news" for n in names)
+    news_calls = [p for p in plan if p[0] == "google_news__news"]
+    assert {a["market"] for _, a, _ in news_calls} == {"US", "KR"}   # both markets' headlines
+    assert all("ticker" not in a for _, a, _ in news_calls)          # market-wide, not per-ticker
+    assert "yahoo__asset_classes" in names                           # price context rides along
+
+
+async def test_news_feed_scope_uses_news_kinds(monkeypatch):
+    gathered = [_g(1, "google_news__news", {"items": [{"title": "Fed holds rates",
+                                                       "date": "2026-07-05"}]}, source="Google News")]
+    monkeypatch.setattr(AF, "PlatformClient", lambda key: _FakeClient({"google_news__news": {}}, gathered))
+    monkeypatch.setattr(AF, "_news_plan", lambda tools: [("google_news__news", {}, "x")])
+
+    async def fake_gather(client, tools, plan):
+        return gathered
+    monkeypatch.setattr(AF, "_gather", fake_gather)
+
+    async def fake_synth(prompt):
+        return [
+            {"kind": "macro", "question": "금리 동결 이후 흐름을 같이 볼까요?",
+             "hook": "Fed holds rates (2026-07-05)", "sources": [1]},            # ships
+            {"kind": "filing_deep", "question": "뉴스 스코프에 티커 카드", "hook": "x",
+             "sources": [1]},                                                     # dropped: ticker kind
+        ]
+    monkeypatch.setattr(AF, "_synthesize", fake_synth)
+
+    out = await build_ask_feed(AskFeedRequest(scope="news_feed"), api_key="k")
+    assert [c["kind"] for c in out["cards"]] == ["macro"]

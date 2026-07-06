@@ -1,22 +1,23 @@
-"""ASK-5 — the 물어보기 entry feed: pre-generated per-ticker questions + global Hot Trend.
+"""ASK-6 — the 물어보기 entry feed: background NEWS questions + on-demand per-ticker questions.
 
-Two halves:
+Two halves, two rhythms:
 
-* **Refresher** — one asyncio loop (same pattern as ``scheduler.py``) ticking every
-  ``ask_feed_refresh_seconds`` (5 min). Each tick collects the UNION of watched tickers across
-  all users, and for each scope (``ticker:{MKT}:{TKR}`` + the global ``hot_trend``) calls
-  agent-engine ``POST /agent/ask-feed`` with the previous ``signature`` — agent-engine gathers
-  the scope's records through the gateway and only spends a Gemini call when the data actually
-  changed. Results are upserted into ``ask_feed_cache``. Generation is per TICKER (shared by
-  every watcher), never per user — cost scales with the union, not users × tickers.
+* **News refresher** — one asyncio loop (same pattern as ``scheduler.py``) ticking every
+  ``ask_feed_refresh_seconds`` (10 min). Each tick refreshes ONE scope — ``news_feed`` — by
+  calling agent-engine ``POST /agent/ask-feed`` with the previous ``signature``: agent-engine
+  gathers the freshest US/KR market headlines through the gateway, picks the important news,
+  and only spends a Gemini call when the headlines actually changed. The entry screen then
+  reads the cards from cache. (The old per-ticker background sweep over the union of ALL
+  watched tickers is gone — it made a newly added ticker wait behind N serial gathers.)
 
-* **Read path** — ``GET /ask-feed`` assembles the caller's screen from cache in one DB read:
-  my watchlist tickers' card pools + hot trend. Scopes not generated yet return as
-  ``pending`` tickers (the UI draws a "준비 중" skeleton — a gap, never fabricated content).
+* **On-demand ticker questions** — ``GET /ask-feed/ticker`` is called when the user taps a
+  watchlist ticker on the entry screen: serve the cached pool when it's fresher than
+  ``ask_feed_ticker_ttl_seconds``, else generate ~3 cards right now through agent-engine
+  (signature-gated, so unchanged data never spends an LLM call) and cache per scope
+  (``ticker:{MKT}:{TKR}`` — shared by every user tapping the same ticker).
 
-The refresher authenticates to agent-engine with a watcher's tenant key (first watcher of the
-scope; hot_trend uses the first user) — the single-tenant deployment this targets makes the
-metering attribution question moot.
+* **Read path** — ``GET /ask-feed`` assembles the caller's screen in one DB read: the
+  watchlist tickers (name + groups, no cards) + the news_feed cards.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends
@@ -40,52 +41,48 @@ log = logging.getLogger("studioapi.askfeed")
 
 router = APIRouter(tags=["ask-feed"])
 
-_TIMEOUT = 90.0  # one scope's gather+synth can take a while; the loop is serial by design
+_NEWS_SCOPE = "news_feed"
 
 
 def _scope_key(market: str, ticker: str) -> str:
     return f"ticker:{(market or 'US').upper()}:{ticker}"
 
 
-def _watched_scopes(db: Session) -> list[dict]:
-    """The union of watched tickers across ALL users → [{scope, market, ticker, name, api_key}].
-    The api_key is the first watcher's (used to call agent-engine through the gateway)."""
-    rows = db.execute(
-        select(WatchlistItem.market, WatchlistItem.ticker, WatchlistItem.name, User.api_key)
-        .join(Watchlist, WatchlistItem.watchlist_id == Watchlist.id)
-        .join(User, Watchlist.user_email == User.email)
-        .order_by(WatchlistItem.market, WatchlistItem.ticker)
-    ).all()
-    out: dict[str, dict] = {}
-    for market, ticker, name, api_key in rows:
-        key = _scope_key(market, ticker)
-        if key not in out:
-            out[key] = {"scope": key, "market": (market or "US").upper(), "ticker": ticker,
-                        "name": name or ticker, "api_key": api_key}
-    return list(out.values())
-
-
 def _any_api_key(db: Session) -> str | None:
     return db.scalar(select(User.api_key).where(User.api_key.is_not(None)).limit(1))
 
 
+def _payload_of(row: AskFeedCache | None) -> dict:
+    if row is None:
+        return {}
+    try:
+        return json.loads(row.payload)
+    except (TypeError, ValueError):
+        return {}
+
+
 async def _refresh_scope(client: httpx.AsyncClient, db: Session, *, scope: str,
-                         api_key: str | None, body: dict) -> bool:
-    """Call agent-engine for one scope and upsert the cache. True when new cards landed."""
+                         api_key: str | None, body: dict, timeout: float) -> bool:
+    """Call agent-engine for one scope and upsert the cache. True when new cards landed.
+    ``unchanged`` (same data signature) bumps ``generated_at`` — the cards are re-confirmed
+    fresh without an LLM spend. Failure keeps the previous generation (honesty rule)."""
     if not api_key:
         return False
     row = db.get(AskFeedCache, scope)
     body["prev_signature"] = row.signature if row else None
     try:
         r = await client.post(f"{settings.agent_engine_url}/agent/ask-feed",
-                              json=body, headers={"X-API-KEY": api_key}, timeout=_TIMEOUT)
+                              json=body, headers={"X-API-KEY": api_key}, timeout=timeout)
         r.raise_for_status()
         out = r.json()
-    except Exception as exc:  # noqa: BLE001 — one dead scope never stalls the loop
+    except Exception as exc:  # noqa: BLE001 — one dead scope never stalls the caller
         log.warning("ask-feed refresh failed for %s: %s", scope, exc)
         return False
     if out.get("unchanged"):
-        return False  # records didn't move → previous cards still stand
+        if row is not None:  # data didn't move → same cards, re-confirmed now
+            row.generated_at = datetime.utcnow()
+            db.commit()
+        return False
     cards = out.get("cards") or []
     if not cards:
         return False  # synthesis unavailable → keep the previous generation (honesty rule)
@@ -101,25 +98,16 @@ async def _refresh_scope(client: httpx.AsyncClient, db: Session, *, scope: str,
 
 
 async def refresh_once() -> dict:
-    """One refresher pass over every watched scope + hot_trend. Serial on purpose — a tick is
-    background work; spreading N gathers over the tick beats hammering the gateway at once."""
-    refreshed, total = 0, 0
+    """One refresher pass — the single global news_feed scope."""
     async with httpx.AsyncClient() as client:
         with SessionLocal() as db:
-            scopes = _watched_scopes(db)
-            hot_key = _any_api_key(db)
-            for s in scopes:
-                total += 1
-                if await _refresh_scope(client, db, scope=s["scope"], api_key=s["api_key"],
-                                        body={"scope": "ticker", "market": s["market"],
-                                              "ticker": s["ticker"], "name": s["name"]}):
-                    refreshed += 1
-            if hot_key:
-                total += 1
-                if await _refresh_scope(client, db, scope="hot_trend", api_key=hot_key,
-                                        body={"scope": "hot_trend", "limit": 6}):
-                    refreshed += 1
-    return {"scopes": total, "refreshed": refreshed}
+            key = _any_api_key(db)
+            if not key:
+                return {"scopes": 0, "refreshed": 0}
+            ok = await _refresh_scope(client, db, scope=_NEWS_SCOPE, api_key=key,
+                                      body={"scope": _NEWS_SCOPE, "limit": 6},
+                                      timeout=settings.ask_feed_generate_timeout_seconds)
+    return {"scopes": 1, "refreshed": 1 if ok else 0}
 
 
 async def _loop() -> None:
@@ -127,7 +115,7 @@ async def _loop() -> None:
         try:
             out = await refresh_once()
             if out["refreshed"]:
-                log.info("ask-feed refreshed %(refreshed)d/%(scopes)d scope(s)", out)
+                log.info("ask-feed news_feed refreshed")
         except Exception:
             log.exception("ask-feed refresh tick failed")
         await asyncio.sleep(settings.ask_feed_refresh_seconds)
@@ -138,20 +126,20 @@ def start(task_holder: list) -> None:
         log.info("ask-feed refresher disabled")
         return
     task_holder.append(asyncio.create_task(_loop()))
-    log.info("ask-feed refresher started (every %ss)", settings.ask_feed_refresh_seconds)
+    log.info("ask-feed news refresher started (every %ss)", settings.ask_feed_refresh_seconds)
 
 
-@router.get("/ask-feed", summary="ASK-5: the 물어보기 entry feed (pre-generated, one DB read)")
+@router.get("/ask-feed", summary="ASK-6: the 물어보기 entry feed (one DB read, zero LLM)")
 async def get_ask_feed(user: User = Depends(current_user)) -> dict:
     """Assemble the caller's 물어보기 entry screen from cache — one DB read, zero LLM calls.
-    Tickers whose pool isn't generated yet are listed in ``pending`` (drawn as skeletons)."""
+    Tickers come WITHOUT cards; tapping one calls ``GET /ask-feed/ticker`` on demand."""
     with SessionLocal() as db:
         return _assemble(db, user.email)
 
 
 def _assemble(db: Session, email: str) -> dict:
     # Each ticker carries the watchlist GROUP(s) it belongs to — the entry screen filters by group
-    # (관심그룹), not by individual ticker. A ticker in two groups appears under both filters.
+    # (관심그룹). A ticker in two groups appears under both filters.
     rows = db.execute(
         select(Watchlist.name, WatchlistItem.market, WatchlistItem.ticker, WatchlistItem.name)
         .join(Watchlist, WatchlistItem.watchlist_id == Watchlist.id)
@@ -164,26 +152,40 @@ def _assemble(db: Session, email: str) -> dict:
         if group not in groups:
             groups.append(group)
         key = _scope_key(market, ticker)
-        entry = by_ticker.setdefault(key, {"market": market, "ticker": ticker,
+        entry = by_ticker.setdefault(key, {"market": (market or "US").upper(), "ticker": ticker,
                                            "name": name or ticker, "groups": []})
         if group not in entry["groups"]:
             entry["groups"].append(group)
 
-    tickers, pending = [], []
-    for key, entry in by_ticker.items():
-        row = db.get(AskFeedCache, key)
-        if row is None:
-            pending.append(entry)
-            continue
-        payload = json.loads(row.payload)
-        tickers.append({**entry, "cards": payload.get("cards") or [],
-                        "generated_at": payload.get("generated_at")})
-    hot = db.get(AskFeedCache, "hot_trend")
-    hot_payload = json.loads(hot.payload) if hot else None
+    news = _payload_of(db.get(AskFeedCache, _NEWS_SCOPE))
     return {
         "groups": groups,
-        "tickers": tickers,
-        "pending": pending,
-        "hot_trend": (hot_payload or {}).get("cards") or [],
-        "hot_trend_generated_at": (hot_payload or {}).get("generated_at"),
+        "tickers": list(by_ticker.values()),
+        "news_feed": news.get("cards") or [],
+        "news_generated_at": news.get("generated_at"),
     }
+
+
+@router.get("/ask-feed/ticker", summary="ASK-6: on-demand deep-dive questions for ONE ticker")
+async def get_ticker_feed(market: str, ticker: str, name: str | None = None,
+                          user: User = Depends(current_user)) -> dict:
+    """The user tapped a watchlist ticker: serve the cached pool when fresh, else gather that
+    ticker's latest records + one Gemini pass right now (~3 cards). Cache is per TICKER —
+    shared by every user. Never fabricates: generation failure returns the stale pool if one
+    exists, else an empty list the UI draws as an honest gap."""
+    scope = _scope_key(market, ticker)
+    ttl = timedelta(seconds=settings.ask_feed_ticker_ttl_seconds)
+    with SessionLocal() as db:
+        row = db.get(AskFeedCache, scope)
+        if row is not None and row.generated_at and datetime.utcnow() - row.generated_at < ttl:
+            p = _payload_of(row)
+            return {"cards": (p.get("cards") or [])[:3], "generated_at": p.get("generated_at"),
+                    "cached": True}
+        async with httpx.AsyncClient() as client:
+            await _refresh_scope(client, db, scope=scope, api_key=user.api_key,
+                                 body={"scope": "ticker", "market": (market or "US").upper(),
+                                       "ticker": ticker, "name": name or ticker, "limit": 3},
+                                 timeout=settings.ask_feed_generate_timeout_seconds)
+        p = _payload_of(db.get(AskFeedCache, scope))
+        return {"cards": (p.get("cards") or [])[:3], "generated_at": p.get("generated_at"),
+                "cached": False}

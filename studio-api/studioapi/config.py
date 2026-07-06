@@ -36,9 +36,11 @@ class Settings(BaseSettings):
     # flags-on install without touching the UI).
     alerts_scheduler_enabled: bool = True                # ALERTS_SCHEDULER_ENABLED
     alerts_tick_seconds: int = 60                        # ALERTS_TICK_SECONDS
-    # ASK-5: the 물어보기 entry feed — pre-generated per-ticker questions + global Hot Trend.
+    # ASK-6: the 물어보기 entry feed — background news_feed questions + on-demand ticker pools.
     ask_feed_enabled: bool = True                        # ASK_FEED_ENABLED
-    ask_feed_refresh_seconds: int = 300                  # ASK_FEED_REFRESH_SECONDS (5 min)
+    ask_feed_refresh_seconds: int = 600                  # ASK_FEED_REFRESH_SECONDS (news_feed, 10 min)
+    ask_feed_ticker_ttl_seconds: int = 1800              # ASK_FEED_TICKER_TTL_SECONDS (per-ticker cache, 30 min)
+    ask_feed_generate_timeout_seconds: float = 45.0      # ASK_FEED_GENERATE_TIMEOUT_SECONDS (one gather+synth)
 
 
 settings = Settings()

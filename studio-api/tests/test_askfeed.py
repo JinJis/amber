@@ -1,16 +1,17 @@
-"""ASK-5 — ask-feed cache: refresher upsert (signature skip · honesty on empty), scope union
-across users, and the one-DB-read assembly the entry screen depends on."""
+"""ASK-6 — ask-feed: news_feed background refresh (signature skip · honesty on empty),
+the one-DB-read assembly, and the on-demand per-ticker pool (cache TTL · no LLM when fresh)."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timedelta
 
 import httpx
 import respx
 from fastapi.testclient import TestClient
 
-from studioapi.askfeed import _assemble, _scope_key, _watched_scopes, refresh_once
+from studioapi.askfeed import _assemble, _scope_key, refresh_once
 from studioapi.config import settings
 from studioapi.db import SessionLocal, init_db
 from studioapi.main import app
@@ -19,9 +20,14 @@ from studioapi.models import AskFeedCache, User, Watchlist, WatchlistItem
 client = TestClient(app)
 SVC = "dev-service-token"
 
-CARDS = {"cards": [{"kind": "filing_deep", "question": "새 공시 위험요소 보여줘",
-                    "hook": "새 공시 접수", "citations": [{"source": "SEC EDGAR"}]}],
+CARDS = {"cards": [{"kind": "macro", "question": "금리 동결 이후 흐름 같이 볼까요?",
+                    "hook": "Fed holds rates", "citations": [{"source": "Google News"}]}],
          "signature": "sig-1", "unchanged": False, "generated_at": "2026-07-05T00:00:00+00:00"}
+
+TICKER_CARDS = {"cards": [{"kind": "filing_deep", "question": "새 공시 위험요소 들여다볼까요?",
+                           "hook": "새 공시 접수", "citations": [{"source": "SEC EDGAR"}]}],
+                "signature": "sig-t1", "unchanged": False,
+                "generated_at": "2026-07-05T00:00:00+00:00"}
 
 
 def setup_module(_module):
@@ -53,32 +59,24 @@ def _hdr(email: str) -> dict:
     return {"X-Service-Token": SVC, "X-User-Email": email}
 
 
-def test_watched_scopes_unions_across_users():
-    with SessionLocal() as db:
-        _mk_user(db, "a@u.com"); _mk_user(db, "b@u.com")
-        _mk_watch(db, "a@u.com", "AAPL", name="Apple")
-        _mk_watch(db, "b@u.com", "AAPL")           # same ticker → ONE scope (shared pool)
-        _mk_watch(db, "b@u.com", "005930", market="KR", name="삼성전자")
-        scopes = {s["scope"]: s for s in _watched_scopes(db)}
-    assert set(scopes) >= {"ticker:US:AAPL", "ticker:KR:005930"}
-    assert scopes["ticker:US:AAPL"]["api_key"]      # a watcher's key rides along
-
-
 @respx.mock
-def test_refresh_once_upserts_and_signature_skips(monkeypatch):
+def test_refresh_once_is_news_feed_only(monkeypatch):
+    """The background refresher touches ONE scope (news_feed) — never a per-ticker sweep."""
     monkeypatch.setattr(settings, "agent_engine_url", "http://ae.test")
     with SessionLocal() as db:
         _mk_user(db, "r@u.com")
-        _mk_watch(db, "r@u.com", "NVDA", name="NVIDIA")
+        _mk_watch(db, "r@u.com", "NVDA", name="NVIDIA")   # watched, but NOT swept
 
     route = respx.post("http://ae.test/agent/ask-feed").mock(
         return_value=httpx.Response(200, json=CARDS))
     out = asyncio.run(refresh_once())
-    assert out["refreshed"] >= 1
+    assert out == {"scopes": 1, "refreshed": 1}
+    assert route.call_count == 1
+    assert json.loads(route.calls[0].request.content)["scope"] == "news_feed"
     with SessionLocal() as db:
-        row = db.get(AskFeedCache, "ticker:US:NVDA")
+        row = db.get(AskFeedCache, "news_feed")
         assert row is not None and row.signature == "sig-1"
-        assert json.loads(row.payload)["cards"][0]["kind"] == "filing_deep"
+        assert db.get(AskFeedCache, "ticker:US:NVDA") is None   # no background ticker rows
 
     # second tick: engine says unchanged → cards kept, row NOT overwritten
     route.mock(return_value=httpx.Response(200, json={"cards": [], "signature": "sig-1",
@@ -86,35 +84,29 @@ def test_refresh_once_upserts_and_signature_skips(monkeypatch):
     out2 = asyncio.run(refresh_once())
     assert out2["refreshed"] == 0
     with SessionLocal() as db:
-        assert db.get(AskFeedCache, "ticker:US:NVDA").signature == "sig-1"
+        assert db.get(AskFeedCache, "news_feed").signature == "sig-1"
 
     # engine fails (empty cards, no signature) → previous generation preserved (honesty rule)
     route.mock(return_value=httpx.Response(200, json={"cards": [], "signature": None,
                                                       "unchanged": False}))
     asyncio.run(refresh_once())
     with SessionLocal() as db:
-        assert json.loads(db.get(AskFeedCache, "ticker:US:NVDA").payload)["cards"]
+        assert json.loads(db.get(AskFeedCache, "news_feed").payload)["cards"]
 
 
-def test_assemble_reads_cache_and_lists_pending():
+def test_assemble_lists_tickers_without_cards_plus_news():
     with SessionLocal() as db:
         _mk_user(db, "asm@u.com")
-        _mk_watch(db, "asm@u.com", "MSFT", name="Microsoft")     # no cache yet → pending
         _mk_watch(db, "asm@u.com", "TSLA", name="Tesla")
-        db.merge(AskFeedCache(scope=_scope_key("US", "TSLA"),
+        db.merge(AskFeedCache(scope="news_feed",
                               payload=json.dumps({"cards": CARDS["cards"],
-                                                  "generated_at": "2026-07-05T00:00:00+00:00"}),
-                              signature="s"))
-        db.merge(AskFeedCache(scope="hot_trend",
-                              payload=json.dumps({"cards": [{"kind": "macro", "question": "CPI 추이?",
-                                                             "hook": "미 CPI 3.1%",
-                                                             "citations": [{"source": "FRED"}]}],
                                                   "generated_at": "2026-07-05T00:05:00+00:00"})))
         db.commit()
         out = _assemble(db, "asm@u.com")
-    assert [p["ticker"] for p in out["pending"]] == ["MSFT"]
-    assert out["tickers"][0]["ticker"] == "TSLA" and out["tickers"][0]["cards"]
-    assert out["hot_trend"][0]["kind"] == "macro"
+    t = next(x for x in out["tickers"] if x["ticker"] == "TSLA")
+    assert t["name"] == "Tesla" and t["groups"] and "cards" not in t
+    assert out["news_feed"][0]["kind"] == "macro"
+    assert out["news_generated_at"] == "2026-07-05T00:05:00+00:00"
 
 
 def test_ask_feed_endpoint_zero_llm(monkeypatch):
@@ -125,7 +117,73 @@ def test_ask_feed_endpoint_zero_llm(monkeypatch):
         called["n"] += 1
         raise AssertionError("engine must not be called at request time")
     monkeypatch.setattr(httpx.AsyncClient, "post", _boom)
-    r = client.get("/ask-feed", headers=_hdr("asm@u.com"))
+    with SessionLocal() as db:
+        _mk_user(db, "zero@u.com")
+    r = client.get("/ask-feed", headers=_hdr("zero@u.com"))
     assert r.status_code == 200 and called["n"] == 0
     body = r.json()
-    assert "tickers" in body and "hot_trend" in body and "pending" in body
+    assert "tickers" in body and "news_feed" in body and "groups" in body
+
+
+@respx.mock
+def test_ticker_on_demand_generates_then_serves_cache(monkeypatch):
+    monkeypatch.setattr(settings, "agent_engine_url", "http://ae.test")
+    with SessionLocal() as db:
+        _mk_user(db, "od@u.com")
+
+    route = respx.post("http://ae.test/agent/ask-feed").mock(
+        return_value=httpx.Response(200, json=TICKER_CARDS))
+    r = client.get("/ask-feed/ticker", params={"market": "US", "ticker": "AAPL", "name": "Apple"},
+                   headers=_hdr("od@u.com"))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["cached"] is False and body["cards"][0]["kind"] == "filing_deep"
+    sent = json.loads(route.calls[0].request.content)
+    assert sent["scope"] == "ticker" and sent["ticker"] == "AAPL" and sent["limit"] == 3
+
+    # fresh cache → served without another engine call
+    r2 = client.get("/ask-feed/ticker", params={"market": "US", "ticker": "AAPL"},
+                    headers=_hdr("od@u.com"))
+    assert r2.status_code == 200 and r2.json()["cached"] is True
+    assert route.call_count == 1
+
+
+@respx.mock
+def test_ticker_stale_cache_regenerates_and_unchanged_bumps_ttl(monkeypatch):
+    monkeypatch.setattr(settings, "agent_engine_url", "http://ae.test")
+    scope = _scope_key("US", "MSFT")
+    stale = datetime.utcnow() - timedelta(seconds=settings.ask_feed_ticker_ttl_seconds + 60)
+    with SessionLocal() as db:
+        _mk_user(db, "st@u.com")
+        db.merge(AskFeedCache(scope=scope, signature="sig-old", generated_at=stale,
+                              payload=json.dumps({"cards": TICKER_CARDS["cards"],
+                                                  "generated_at": "2026-07-01T00:00:00+00:00"})))
+        db.commit()
+
+    # engine says unchanged → same cards return, and generated_at is bumped (TTL reset)
+    route = respx.post("http://ae.test/agent/ask-feed").mock(
+        return_value=httpx.Response(200, json={"cards": [], "signature": "sig-old",
+                                               "unchanged": True}))
+    r = client.get("/ask-feed/ticker", params={"market": "US", "ticker": "MSFT"},
+                   headers=_hdr("st@u.com"))
+    assert r.status_code == 200 and r.json()["cards"]
+    assert json.loads(route.calls[0].request.content)["prev_signature"] == "sig-old"
+    with SessionLocal() as db:
+        assert db.get(AskFeedCache, scope).generated_at > stale
+
+    # now fresh again → no engine call
+    client.get("/ask-feed/ticker", params={"market": "US", "ticker": "MSFT"},
+               headers=_hdr("st@u.com"))
+    assert route.call_count == 1
+
+
+@respx.mock
+def test_ticker_generation_failure_returns_honest_gap(monkeypatch):
+    monkeypatch.setattr(settings, "agent_engine_url", "http://ae.test")
+    with SessionLocal() as db:
+        _mk_user(db, "gap@u.com")
+    respx.post("http://ae.test/agent/ask-feed").mock(return_value=httpx.Response(500))
+    r = client.get("/ask-feed/ticker", params={"market": "KR", "ticker": "005930"},
+                   headers=_hdr("gap@u.com"))
+    assert r.status_code == 200
+    assert r.json()["cards"] == []          # a gap, never fabricated content

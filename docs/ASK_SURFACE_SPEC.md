@@ -58,6 +58,10 @@
 
 ## ASK-5 — 물어보기 첫 화면: "오늘 물어볼 것"이 즉시 보인다
 
+> **⚠ ASK-7(2026-07-06)이 이 섹션의 상당 부분을 대체한다** — 아래 ①(pulse strip/티커
+> 테이프)은 삭제, ②는 "탭한 종목만 온디맨드 생성"으로, ③ Hot Trend는 "지금 뉴스에서"
+> (news_feed, 10분)로 바뀌었다. 문서 맨 아래 **ASK-7** 섹션이 현행 계약.
+
 ### 문제
 현재 CockpitEntry는 4개 섹션(펄스 스트립·제안 3장·내 종목 스트립·데스크 폴드)이 병렬
 나열 — 복잡하고, 접속 시 desk-feed를 온디맨드 생성해 느리며, 질문거리가 3장뿐이라 빈약.
@@ -129,5 +133,37 @@
 | ASK-4 | 물어보기 통합 | web | vitest: 레일 버튼 1개, 라벨 |
 | ASK-5 | ask-feed 파이프라인+첫 화면 | studio-api·agent-engine·web | 유닛(캐시 upsert·서명 스킵·조립) + eval 시나리오(ask-feed 카드에 미출처 수치 0) |
 | ASK-6 | 온보딩 v2 | web | vitest: 3종목 미만 진행 불가, 알림 스텝 부재 |
+| ASK-7 | 근거 패널 v3 + 엔트리 v4 | studio-api·agent-engine·web | 유닛(패널 2단계 플로우·온디맨드 캐시 TTL·news_feed 전용 리프레셔) |
 
 전 태스크: 클린 빌드 + tiny 유니버스(eval_us/eval_kr)로 검증 (memory 규칙).
+
+---
+
+## ASK-7 (2026-07-06) — 근거 패널 v3 · 엔트리 v4 (현행 계약)
+
+### A. 근거 패널 v3 — 스트리밍→완료가 "정리"로 읽힌다
+문제: 수집 중 도착순으로 쌓이던 카드가 답변 완성 순간 전혀 다른 6개 섹션으로 재배열 —
+과정이 안 읽히고, 어떤 출처가 실제 인용됐는지·[n]이 뭘 가리키는지 불명확.
+
+- **수집 중**: `리서치 과정`(도구 타임라인, 마지막 스피너) → `차트·표` → `수집한 출처`
+  (도착순 + "답변이 완성되면 **인용한 출처 [n]**과 **참고만 한 출처**로 정리돼요" 예고).
+- **완료**: `판정(TrustStrip)` → `차트·표` → `인용한 출처 [n]`(번호순, 항상 펼침 — 본문
+  [n]의 도착지) → `수치 원장` → `참고만 한 출처`(접힘·흐림) → `리서치 과정`(접힘 보존).
+- 섹션마다 한 줄 설명(ctx-desc)이 "뭘 어떻게 봐야 하는지"를 직접 말한다. 카드 key는 출처
+  identity(source|url)라 전환에도 같은 카드가 유지. [n] 배지는 filing/data/web 카드 공통.
+- 근거/핀 액션 용어는 "노트북"으로 통일 (＋ 노트북 · 노트북에 담기). "대시보드"는
+  피처플래그 꺼진 Board 표면에만 남는다.
+
+### B. 엔트리 v4 — 종목은 탭할 때만, 뉴스는 백그라운드
+- **티커 테이프 삭제** (pulse strip 미사용; `/market/pulse` 엔드포인트는 존치).
+- **내 관심종목 파고들기**: 전 티커 사전 생성(전 유저 합집합 × 5분 스윕 — 느리고 비쌈)을
+  버리고, **유저가 종목 칩을 탭한 순간** `GET /ask-feed/ticker?market&ticker&name`으로
+  최신 기록 기반 카드 **3개**를 준비. studio-api가 scope `ticker:{MKT}:{TKR}` 캐시를
+  `ASK_FEED_TICKER_TTL_SECONDS`(30분) 내 재사용, 서명 동일 시 LLM 스킵+TTL 갱신.
+  실패/빈 결과 = 정직한 공백 + capability 칩("직접 물어보기") — 날조 금지.
+- **지금 뉴스에서** (Hot Trend 대체): `news_feed` 스코프 — google_news US/KR 시장 전반
+  헤드라인 + 지수 스냅샷을 10분 주기(`ASK_FEED_REFRESH_SECONDS=600`) 백그라운드 갱신,
+  Gemini가 "중요한 뉴스"만 골라 궁금증을 자아내는 질문 카드로 합성(kind: macro|micro|market).
+  백그라운드 리프레셔가 도는 스코프는 **news_feed 하나뿐**.
+- `GET /ask-feed` 응답: `{groups, tickers[{market,ticker,name,groups}], news_feed[], news_generated_at}`
+  (tickers에 cards 없음 — pending 개념 삭제).

@@ -37,7 +37,7 @@ function Shell({ a, children, bare, hideTitle, onPin, onShare, onRemove }: {
         <span style={{ flex: 1 }} />
         {onPin && (
           <button type="button" className="artifact-toggle" disabled={pinned}
-            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 대시보드" : "＋ 대시보드"}</button>
+            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 노트북" : "＋ 노트북"}</button>
         )}
         {onShare && <button type="button" className="artifact-toggle" onClick={() => onShare(a)}>↗ 공유</button>}
         {onRemove && <button type="button" className="artifact-toggle" onClick={onRemove}>제거</button>}

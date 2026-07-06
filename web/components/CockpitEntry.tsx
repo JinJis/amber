@@ -1,21 +1,17 @@
 "use client";
 
-// ASK-5 탐구 엔트리 (v3 — 전문적 + 친근). 접속 시 LLM 0회: 모든 콘텐츠는 5분 주기 ask-feed
-// refresher가 미리 만든 캐시. 한 화면에서 서비스 정체성이 읽히도록:
+// ASK-6 탐구 엔트리 (v4). 접속 시 LLM 0회 — 뉴스 질문 피드는 10분 주기 백그라운드 캐시,
+// 종목 분석거리는 사용자가 종목을 "직접 눌렀을 때"만 온디맨드로 3개 준비(서버 캐시 공유).
 //   · 히어로 — "오늘, 무엇을 분석할까요?" + 신뢰 한 줄(출처[n] · 전망 안 함)
-//   · 티커 테이프 — 증권거래소처럼 오른쪽→왼쪽으로 무한히 흐르는 지수/환율 (탭 → 질문)
-//   · 2단 레이아웃: [내 관심종목 파고들기] ⟷ [Hot Trend]
-//       - 관심그룹 필터, 최신 기록 기반 분석 카드(이모지 아이콘 · 왜 지금 · 눌러보는 출처)
-// 전역 규칙: 카드 탭 = 컴포저 채움(자동 전송 없음). 출처 탭 = 근거 뷰어. 미생성 = "준비 중".
+//   · 2단 레이아웃: [내 관심종목 파고들기 — 종목 칩 탭 → 분석 카드 3개] ⟷ [지금 뉴스에서]
+// 전역 규칙: 카드 탭 = 컴포저 채움(자동 전송 없음). 출처 탭 = 근거 뷰어. 미생성 = 정직한 공백.
 
 import { useEffect, useMemo, useState } from "react";
 import type { Citation } from "@/lib/types";
 
-type PulseItem = { label: string; ticker: string; price?: number | null; change_percent?: number | null; as_of?: string | null };
 type AskCard = { kind: string; question: string; hook: string; ticker?: string | null; market?: string | null;
                  citations?: Citation[] };
-type TickerPool = { market: string; ticker: string; name: string; groups: string[]; cards: AskCard[] };
-type Pending = { market: string; ticker: string; name: string; groups: string[] };
+type TickerInfo = { market: string; ticker: string; name: string; groups: string[] };
 
 // per-kind emoji + short label — one warm mark per card.
 const KIND: Record<string, { i: string; t: string }> = {
@@ -44,10 +40,6 @@ export function capabilityChips(name: string, market: string): { label: string; 
     : { label: "거장 보유(13F)", q: `${name} 들고 있는 투자 거장 있어?` });
   return chips;
 }
-
-const fmtPct = (v?: number | null) =>
-  v == null ? "" : `${v > 0 ? "+" : ""}${v.toFixed(v <= -100 || v >= 100 ? 0 : 2)}%`;
-const dir = (v?: number | null) => (v == null ? "flat" : v > 0 ? "up" : v < 0 ? "down" : "flat");
 
 // One analysis card: the body fills the composer; the source chip opens the evidence viewer.
 function QCard({ c, name, onPick, onEvidence }: {
@@ -78,32 +70,31 @@ function QCard({ c, name, onPick, onEvidence }: {
   );
 }
 
+const tkKey = (t: { market: string; ticker: string }) => `${t.market}:${t.ticker}`;
+
 export default function CockpitEntry({ onPick, onQuestions, onEvidence }: {
   onPick: (q: string) => void;                       // fill the composer, focus — never send
   onQuestions?: (qs: string[]) => void;              // today's questions → rotating placeholder
   onEvidence?: (cit: Citation) => void;              // open the source/evidence viewer
 }) {
-  const [pulse, setPulse] = useState<PulseItem[]>([]);
-  const [pools, setPools] = useState<TickerPool[]>([]);
-  const [pending, setPending] = useState<Pending[]>([]);
+  const [tickers, setTickers] = useState<TickerInfo[]>([]);
   const [groups, setGroups] = useState<string[]>([]);
-  const [hot, setHot] = useState<AskCard[]>([]);
+  const [news, setNews] = useState<AskCard[]>([]);
   const [group, setGroup] = useState<string | null>(null);      // selected 관심그룹 filter (null = all)
+  // 종목 파고들기: 탭한 종목만 온디맨드 생성. sel = 펼친 종목, cardsBy = 세션 캐시.
+  const [sel, setSel] = useState<string | null>(null);
+  const [cardsBy, setCardsBy] = useState<Record<string, AskCard[]>>({});
+  const [loadingKey, setLoadingKey] = useState<string | null>(null);
 
   useEffect(() => {
     let dead = false;
     (async () => {
       try {
-        const r = await fetch("/api/market/pulse");
-        if (r.ok && !dead) setPulse(((await r.json()).items ?? []));
-      } catch { /* the tape is optional */ }
-      try {
         const r = await fetch("/api/ask-feed");
         if (r.ok && !dead) {
           const d = await r.json();
-          const ps: TickerPool[] = d.tickers ?? [];
-          setPools(ps); setPending(d.pending ?? []); setHot(d.hot_trend ?? []); setGroups(d.groups ?? []);
-          const qs = ps.flatMap((p) => p.cards.map((c) => c.question)).slice(0, 6);
+          setTickers(d.tickers ?? []); setGroups(d.groups ?? []); setNews(d.news_feed ?? []);
+          const qs = (d.news_feed ?? []).map((c: AskCard) => c.question).slice(0, 6);
           if (qs.length) onQuestions?.(qs);
         }
       } catch { /* optional — composer always usable */ }
@@ -112,17 +103,29 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const inGroup = (g: string[]) => group === null || g.includes(group);
-  const visPools = useMemo(() => pools.filter((p) => inGroup(p.groups)), [pools, group]);
-  const visPending = useMemo(() => pending.filter((p) => inGroup(p.groups)), [pending, group]);
-  // each visible ticker contributes its top 3 cards, self-labeled with the company name.
-  const mineCards = useMemo(
-    () => visPools.flatMap((p) => p.cards.slice(0, 3).map((c) => ({ c, name: p.name }))),
-    [visPools]);
+  async function pickTicker(t: TickerInfo) {
+    const key = tkKey(t);
+    if (sel === key) { setSel(null); return; }        // tap again → fold
+    setSel(key);
+    if (cardsBy[key] || loadingKey === key) return;   // session cache / already fetching
+    setLoadingKey(key);
+    try {
+      const p = new URLSearchParams({ market: t.market, ticker: t.ticker, name: t.name });
+      const r = await fetch(`/api/ask-feed/ticker?${p.toString()}`);
+      const d = r.ok ? await r.json() : { cards: [] };
+      setCardsBy((prev) => ({ ...prev, [key]: (d.cards ?? []) as AskCard[] }));
+    } catch {
+      setCardsBy((prev) => ({ ...prev, [key]: [] }));  // honest gap — never fabricated
+    } finally {
+      setLoadingKey((k) => (k === key ? null : k));
+    }
+  }
 
-  const hasMine = pools.length > 0 || pending.length > 0;
-  // duplicate the tape items so the marquee loops seamlessly.
-  const tape = pulse.length ? [...pulse, ...pulse] : [];
+  const inGroup = (g: string[]) => group === null || g.includes(group);
+  const visTickers = useMemo(() => tickers.filter((t) => inGroup(t.groups)), [tickers, group]);
+  const selTicker = useMemo(() => tickers.find((t) => tkKey(t) === sel) ?? null, [tickers, sel]);
+  const selVisible = selTicker != null && visTickers.some((t) => tkKey(t) === sel);
+  const selCards = sel ? cardsBy[sel] : undefined;
 
   return (
     <div className="ask" data-testid="cockpit">
@@ -133,35 +136,16 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence }: {
         <p className="ask-trust">모든 답에는 <b>출처[n]</b>가 붙고, <span className="ask-noforecast">전망은 하지 않아요</span>.</p>
       </div>
 
-      {/* 티커 테이프 — 증권거래소처럼 무한 흐름 */}
-      {tape.length > 0 && (
-        <div className="tape" data-testid="ck-tape" aria-label="시장 시세">
-          <div className="tape-track">
-            {tape.map((p, i) => (
-              <button key={i} type="button" className="tape-item" tabIndex={i < pulse.length ? 0 : -1}
-                aria-hidden={i >= pulse.length}
-                onClick={() => onPick(`오늘 ${p.label}가 ${((p.change_percent ?? 0) >= 0 ? "올랐" : "내렸")}는데, 왜 그런지 같이 알아볼까요?`)}>
-                <span className="tape-lbl">{p.label}</span>
-                <span className="tape-px mono">{p.price?.toLocaleString(undefined, { maximumFractionDigits: 1 })}</span>
-                <span className={`tape-chg mono ${dir(p.change_percent)}`}>
-                  {p.change_percent != null && (p.change_percent > 0 ? "▲" : p.change_percent < 0 ? "▼" : "·")}{fmtPct(p.change_percent).replace("+", "")}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 2단: 내 관심종목 파고들기 · Hot Trend */}
+      {/* 2단: 내 관심종목 파고들기 · 지금 뉴스에서 */}
       <div className="ask-cols">
-        {/* 왼쪽 — 내 관심종목 파고들기 */}
+        {/* 왼쪽 — 내 관심종목 파고들기 (종목을 누르면 그 자리에서 3개 준비) */}
         <section className="ask-col" data-testid="ck-mine">
           <div className="ask-col-h">
             <span className="ask-col-t">🔎 내 관심종목 파고들기</span>
           </div>
-          <p className="ask-col-desc">관심 종목의 <b>최신 공시·가격·뉴스</b>에서 추린 분석거리예요. 탭하면 입력창에 담겨요.</p>
+          <p className="ask-col-desc">궁금한 종목을 누르면 <b>최신 공시·가격·뉴스</b>에서 추린 분석거리 3개를 바로 준비해드려요.</p>
 
-          {hasMine ? (
+          {tickers.length > 0 ? (
             <>
               {groups.length > 1 && (
                 <div className="grp-row">
@@ -172,38 +156,69 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence }: {
                   ))}
                 </div>
               )}
-              <div className="qc-list">
-                {mineCards.map(({ c, name }, i) => (
-                  <QCard key={i} c={c} name={name} onPick={onPick} onEvidence={onEvidence} />
-                ))}
+              <div className="tk-row" role="listbox" aria-label="관심종목">
+                {visTickers.map((t) => {
+                  const key = tkKey(t);
+                  const on = sel === key;
+                  return (
+                    <button key={key} type="button" data-testid={`tk-${t.ticker}`}
+                      className={`tk-chip ${on ? "on" : ""}`} aria-pressed={on}
+                      onClick={() => void pickTicker(t)}>
+                      <span className="tk-name">{t.name}</span>
+                      <span className="tk-mkt mono">{t.market}</span>
+                      {loadingKey === key ? <span className="tl-spin" aria-hidden /> : (
+                        <span className="tk-chev" aria-hidden>{on ? "▾" : "▸"}</span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
-              {visPending.length > 0 && (
-                <div className="pend-row" data-testid="ck-pending">
-                  {visPending.map((p) => (
-                    <span key={p.ticker} className="pend" title="다음 갱신에 분석거리가 채워집니다">
-                      <span className="pend-dot" />{p.name} · 준비 중
-                    </span>
-                  ))}
+
+              {selTicker && selVisible && (
+                <div className="tk-cards" data-testid="tk-cards">
+                  {loadingKey === sel ? (
+                    <div className="tk-loading" data-testid="tk-loading">
+                      <span className="tl-spin" aria-hidden />
+                      {selTicker.name}의 최신 공시·가격·뉴스를 훑는 중…
+                    </div>
+                  ) : selCards && selCards.length > 0 ? (
+                    <div className="qc-list">
+                      {selCards.slice(0, 3).map((c, i) => (
+                        <QCard key={i} c={c} name={selTicker.name} onPick={onPick} onEvidence={onEvidence} />
+                      ))}
+                    </div>
+                  ) : selCards ? (
+                    <div className="tk-gap" data-testid="tk-gap">
+                      지금은 {selTicker.name}의 분석거리를 준비하지 못했어요 — 잠시 후 다시 눌러보세요.
+                      직접 물어보셔도 돼요:
+                      <span className="tk-gap-chips">
+                        {capabilityChips(selTicker.name, selTicker.market).slice(0, 3).map((ch) => (
+                          <button key={ch.label} type="button" className="grp" onClick={() => onPick(ch.q)}>{ch.label}</button>
+                        ))}
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
               )}
             </>
           ) : (
             <div className="nudge-card" data-testid="ck-nudge">
               <div className="nudge-t">관심종목을 등록하면</div>
-              <div className="nudge-b">매일 이 자리에 오늘 파고들 분석거리를 미리 준비해둡니다.</div>
+              <div className="nudge-b">여기서 종목을 눌러 그날의 분석거리를 바로 받아볼 수 있어요.</div>
             </div>
           )}
         </section>
 
-        {/* 오른쪽 — Hot Trend */}
-        {hot.length > 0 && (
-          <section className="ask-col" data-testid="ck-hot">
+        {/* 오른쪽 — 지금 뉴스에서 (10분 주기 백그라운드 갱신) */}
+        {news.length > 0 && (
+          <section className="ask-col" data-testid="ck-news">
             <div className="ask-col-h">
-              <span className="ask-col-t">🔥 Hot Trend</span>
+              <span className="ask-col-t">📰 지금 뉴스에서</span>
+              <span className="ask-col-sub mono">10분마다 갱신</span>
             </div>
-            <p className="ask-col-desc">지금 시장 전반에서 벌어지는 일 — <b>거시·산업·시장</b>을 한눈에.</p>
+            <p className="ask-col-desc">실시간 뉴스에서 <b>중요한 소식</b>만 골라 질문으로 만들어뒀어요.</p>
             <div className="qc-list">
-              {hot.map((c, i) => <QCard key={i} c={c} onPick={onPick} onEvidence={onEvidence} />)}
+              {news.map((c, i) => <QCard key={i} c={c} onPick={onPick} onEvidence={onEvidence} />)}
             </div>
           </section>
         )}

@@ -134,7 +134,7 @@ COMMUNITY: list[dict] = [
                 "인플레이션 전망·예측은 하지 말고 발표된 수치만.",
     },
     {
-        "id": "cpr_econ", "title": "경제지표 대시보드", "category": "거시",
+        "id": "cpr_econ", "title": "경제지표 브리핑", "category": "거시",
         "description": "실업률·GDP 등 핵심 경제지표 최근치.",
         "body": "미국의 실업률·비농업고용·GDP 성장률 등 핵심 경제지표의 최근 관측치를 각각 기준일과 함께 "
                 "한 줄씩 정리해줘(DBnomics). 예측 없이 사실만.",

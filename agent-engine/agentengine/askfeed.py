@@ -1,13 +1,18 @@
-"""ASK-5 — pre-generated ask-feed: per-TICKER deep questions + a global Hot Trend brief.
+"""ASK-6 — ask-feed: on-demand per-TICKER deep questions + a background NEWS question feed.
 
-The 물어보기 entry screen must render in one DB read — no LLM at request time. studio-api's
-feed refresher calls this module every ~5 minutes; we gather the ticker's (or the market's)
-latest records through the gateway, and only when the data actually changed (signature) spend
-one Gemini flash call to synthesize. Reuses the desk-feed machinery: bounded gather, citation-
-drop, QT-2 hook audit (an invented number never ships).
+Two scopes, two rhythms:
 
-Generation is per TICKER, not per user — any user watching the same ticker shares the pool
-(cost scales with the union of watched tickers, not with users × tickers).
+* ``news_feed`` — studio-api's refresher calls this every ~10 minutes in the background:
+  gather the freshest US/KR market headlines (+ an index snapshot for context) through the
+  gateway, pick the IMPORTANT news, and synthesize curiosity-provoking question cards. The
+  entry screen shows them instantly (pure cache read).
+* ``ticker`` — called on demand when the user taps a watchlist ticker on the entry screen
+  (never as a background sweep over every watched ticker): gather that ticker's latest
+  records and synthesize ~3 deep-dive cards. studio-api caches per scope with a TTL.
+
+Both reuse the desk-feed machinery: bounded gather, signature check (unchanged data → no
+LLM spend), citation-drop, QT-2 hook audit (an invented number never ships). Generation is
+per SCOPE, never per user — any user tapping the same ticker shares the pool.
 """
 
 from __future__ import annotations
@@ -33,11 +38,11 @@ from agentengine.client import PlatformClient
 logger = logging.getLogger(__name__)
 
 _TICKER_KINDS = {"filing_deep", "price_context", "news_probe", "history_echo", "fundamental_shift"}
-_TREND_KINDS = {"macro", "micro", "market"}
+_NEWS_KINDS = {"macro", "micro", "market"}
 
 
 class AskFeedRequest(BaseModel):
-    scope: str                       # "ticker" | "hot_trend"
+    scope: str                       # "ticker" | "news_feed" ("hot_trend" accepted as legacy alias)
     market: str | None = None        # scope=ticker
     ticker: str | None = None        # scope=ticker
     name: str | None = None          # display name for the prompt
@@ -75,17 +80,15 @@ def _ticker_plan(tools: dict[str, dict], req: AskFeedRequest) -> list[tuple[str,
     return plan
 
 
-def _trend_plan(tools: dict[str, dict]) -> list[tuple[str, dict, str]]:
-    """Global gather — the macro/micro/market picture everyone shares."""
+def _news_plan(tools: dict[str, dict]) -> list[tuple[str, dict, str]]:
+    """News-first global gather — broad real-time market headlines (no ticker → the provider
+    returns market-wide news) + one index snapshot so the editor has price context."""
     plan: list[tuple[str, dict, str]] = []
+    if "google_news__news" in tools:
+        plan.append(("google_news__news", {"market": "US", "limit": 8}, "미국 시장 실시간 헤드라인"))
+        plan.append(("google_news__news", {"market": "KR", "limit": 8}, "한국 시장 실시간 헤드라인"))
     if "yahoo__asset_classes" in tools:
         plan.append(("yahoo__asset_classes", {}, "지수·금리·원자재·환율 스냅샷"))
-    if "fred__macro_panel" in tools:
-        plan.append(("fred__macro_panel", {"region": "US"}, "미국 매크로 패널"))
-        plan.append(("fred__macro_panel", {"region": "KR"}, "한국 매크로 패널"))
-    for anchor, mkt, why in (("AAPL", "US", "미국 시장 헤드라인"), ("005930", "KR", "한국 시장 헤드라인")):
-        if "google_news__news" in tools:
-            plan.append(("google_news__news", {"ticker": anchor, "market": mkt}, why))
     return plan
 
 
@@ -112,17 +115,18 @@ _TICKER_PROMPT = """당신은 리서치 데스크의 선임 애널리스트입�
 {snippets}
 """
 
-_TREND_PROMPT = """당신은 리서치 데스크의 시황 에디터입니다. 아래는 방금 수집된 거시·시장
-스니펫들입니다([n] 인덱스). "지금 시장에서 벌어지는 일"을 훑는 Hot Trend 카드를 {limit}개
-이내로 만드세요 — 거시(금리·물가·환율), 미시(실적·공시 흐름), 금융시장(지수·변동성)을 고루.
+_NEWS_PROMPT = """당신은 리서치 데스크의 시황 에디터입니다. 아래는 방금 수집된 미국·한국 시장의
+실시간 뉴스 헤드라인과 시장 스냅샷입니다([n] 인덱스). 이 중 **투자 리서치 관점에서 정말 중요한
+뉴스**만 골라, 사용자가 "궁금해서 눌러보고 싶어지는" 질문 카드를 {limit}개 이내로 만드세요.
+사소한 잡음(단순 시황 중계, 광고성 기사, 중복 보도)은 버리세요.
 
 규칙 (모두 필수):
-- kind는 다음 중 하나: macro | micro | market
-- hook: 스니펫의 실제 사실 한 줄 (수치는 스니펫 그대로). 제목 역할 — 구체적일 것.
-  예: "미 CPI가 5월에 3.1%로 나왔어요", "코스피가 오늘 5.8% 급등했어요".
+- kind는 다음 중 하나: macro(금리·물가·환율·정책) | micro(기업 실적·공시·산업) | market(지수·수급·변동성)
+- hook: 스니펫의 실제 사실 한 줄 (수치·날짜는 스니펫 그대로; 지어내지 말 것). 제목 역할 —
+  구체적일 것. 예: "미 CPI가 5월에 3.1%로 나왔어요", "코스피가 오늘 5.8% 급등했어요".
 - question: **친근한 초대형 문장**으로 쓸 것. 해요체로 "~할까요?"/"~볼까요?"로 끝내고 함께
-  살펴보자는 톤. 딱딱한 "~인가?"/"~있는가?" 금지. 그 트렌드를 도구로 더 파볼 수 있는 실제
-  요청이어야 함. 예: "물가가 어떻게 흘러왔는지 최근 추이를 같이 볼까요?"
+  살펴보자는 톤. 딱딱한 "~인가?"/"~있는가?" 금지. 그 뉴스를 우리 도구(가격·공시·거시 데이터)로
+  더 파볼 수 있는 실제 요청이어야 함. 예: "이 소식이 나온 뒤 주가가 어떻게 움직였는지 같이 볼까요?"
 - sources: 근거 스니펫 인덱스 배열 — 근거 없는 카드 금지.
 - 절대 금지: 방향 예측, 조언, "기회" 류. "이런 데이터가 나왔다"까지만.
 
@@ -166,7 +170,8 @@ async def build_ask_feed(req: AskFeedRequest, api_key: str | None) -> dict:
         logger.warning("ask-feed catalog unavailable: %s", exc)
         return {"cards": [], "signature": None, "unchanged": False, "generated_at": _now_iso()}
 
-    plan = _ticker_plan(tools, req) if req.scope == "ticker" else _trend_plan(tools)
+    is_ticker = req.scope == "ticker"
+    plan = _ticker_plan(tools, req) if is_ticker else _news_plan(tools)
     gathered = await _gather(client, tools, plan)
     if not gathered:
         return {"cards": [], "signature": None, "unchanged": False, "generated_at": _now_iso()}
@@ -178,8 +183,8 @@ async def build_ask_feed(req: AskFeedRequest, api_key: str | None) -> dict:
 
     limit = max(3, min(req.limit, 6))
     prompt = (_TICKER_PROMPT.format(name=req.name or req.ticker, limit=limit, snippets=_snippets(gathered))
-              if req.scope == "ticker"
-              else _TREND_PROMPT.format(limit=limit, snippets=_snippets(gathered)))
+              if is_ticker
+              else _NEWS_PROMPT.format(limit=limit, snippets=_snippets(gathered)))
     raw_cards: list[dict] = []
     try:
         raw_cards = await _synthesize(prompt)
@@ -188,7 +193,7 @@ async def build_ask_feed(req: AskFeedRequest, api_key: str | None) -> dict:
         logger.warning("ask-feed synthesis unavailable (%s)", type(exc).__name__)
         return {"cards": [], "signature": None, "unchanged": False, "generated_at": _now_iso()}
 
-    allowed = _TICKER_KINDS if req.scope == "ticker" else _TREND_KINDS
+    allowed = _TICKER_KINDS if is_ticker else _NEWS_KINDS
     by_idx = {g["idx"]: g for g in gathered}
     from agentengine.audit import audit_answer
     cards: list[DeskCard] = []
@@ -207,7 +212,7 @@ async def build_ask_feed(req: AskFeedRequest, api_key: str | None) -> dict:
         cards.append(DeskCard(
             kind=rc["kind"], question=(rc.get("question") or "").strip(),
             hook=(rc.get("hook") or "").strip(), citations=cites,
-            ticker=rc.get("ticker") or (req.ticker if req.scope == "ticker" else cites[0].ticker),
+            ticker=rc.get("ticker") or (req.ticker if is_ticker else cites[0].ticker),
             market=req.market, deeplink=next((c.url for c in cites if c.url), None),
         ))
         if len(cards) >= limit:

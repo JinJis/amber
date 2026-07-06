@@ -78,10 +78,11 @@ async def desk_feed(body: DeskFeedRequest, x_api_key: Annotated[str | None, Head
     return await build_desk_feed(body, x_api_key)
 
 
-@app.post("/agent/ask-feed", tags=["Agent"], summary="ASK-5: pre-generated ask-feed (per-ticker questions / hot trend)")
+@app.post("/agent/ask-feed", tags=["Agent"], summary="ASK-6: ask-feed (news_feed background / ticker on-demand)")
 async def ask_feed(body: AskFeedRequest, x_api_key: Annotated[str | None, Header(alias="X-API-KEY")] = None) -> dict:
-    """Called by studio-api's 5-minute feed refresher, never at request time: gather the scope's
-    latest records → signature check (unchanged → no LLM) → one Gemini pass → audited cards."""
+    """scope=news_feed: studio-api's 10-minute background refresher. scope=ticker: on demand when
+    the user taps a watchlist ticker on the entry screen. Either way: gather the scope's latest
+    records → signature check (unchanged → no LLM) → one Gemini pass → audited cards."""
     return await build_ask_feed(body, x_api_key)
 
 
