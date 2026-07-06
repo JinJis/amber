@@ -7,8 +7,11 @@ Two scopes, two rhythms:
   gateway, pick the IMPORTANT news, and synthesize curiosity-provoking question cards. The
   entry screen shows them instantly (pure cache read).
 * ``ticker`` — called on demand when the user taps a watchlist ticker on the entry screen
-  (never as a background sweep over every watched ticker): gather that ticker's latest
-  records and synthesize ~3 deep-dive cards. studio-api caches per scope with a TTL.
+  (never as a background sweep over every watched ticker): a WIDE gather over every angle
+  the desk has for that ticker (price·filings·news·valuation·insiders/flows·consensus·
+  earnings·drawdown·volatility), then ONE two-stage Gemini pass — per-source candidate
+  cards (2–3 each) → curated picks (3–5, kind-diverse, surprise-first). studio-api caches
+  per scope with a TTL. (ASK-9: no more same-y 가격/공시/뉴스 triple.)
 
 Both reuse the desk-feed machinery: bounded gather, signature check (unchanged data → no
 LLM spend), citation-drop, QT-2 hook audit (an invented number never ships). Generation is
@@ -29,7 +32,6 @@ from agentengine.deskfeed import (
     DeskCard,
     _gather,
     _now_iso,
-    _parse_cards,
     _SNIPPET_CHARS,
     _SYNTH_SCHEMA,
 )
@@ -37,7 +39,8 @@ from agentengine.client import PlatformClient
 
 logger = logging.getLogger(__name__)
 
-_TICKER_KINDS = {"filing_deep", "price_context", "news_probe", "history_echo", "fundamental_shift"}
+_TICKER_KINDS = {"filing_deep", "price_context", "news_probe", "history_echo", "fundamental_shift",
+                 "valuation", "ownership", "earnings"}
 _NEWS_KINDS = {"macro", "micro", "market"}
 
 
@@ -62,21 +65,31 @@ def _signature(gathered: list[dict]) -> str:
 
 
 def _ticker_plan(tools: dict[str, dict], req: AskFeedRequest) -> list[tuple[str, dict, str]]:
-    """Bounded gather for ONE ticker — the freshest primary records a deep question can cite."""
+    """Wide gather for ONE ticker (ASK-9) — every angle the desk can question from, not just
+    price/filings/news: valuation, insiders/flows, consensus, earnings, drawdown, volatility.
+    Each entry is tools-guarded, so a missing connector just narrows the pool."""
     t, m = req.ticker, (req.market or "US").upper()
     name = req.name or t
+    us = m == "US"
     plan: list[tuple[str, dict, str]] = []
-    if "yahoo__price_snapshot" in tools:
-        plan.append(("yahoo__price_snapshot", {"ticker": t, "market": m}, f"{name} 오늘 가격"))
-    filings = "sec_edgar__filings" if m == "US" else "opendart__filings"
-    if filings in tools:
-        plan.append((filings, {"ticker": t, "market": m}, f"{name} 최근 공시"))
-    if "google_news__news" in tools:
-        plan.append(("google_news__news", {"ticker": t, "market": m}, f"{name} 헤드라인"))
-    if m == "US" and "fmp__earnings_calendar" in tools:
-        plan.append(("fmp__earnings_calendar", {"ticker": t, "market": m}, f"{name} 어닝 일정"))
-    if "market_history__drawdown_now" in tools:
-        plan.append(("market_history__drawdown_now", {"ticker": t, "market": m}, f"{name} 현재 낙폭 맥락"))
+    args = {"ticker": t, "market": m}
+
+    def want(tool: str, why: str) -> None:
+        if tool in tools:
+            plan.append((tool, dict(args), why))
+
+    want("yahoo__price_snapshot", f"{name} 오늘 가격")
+    want("sec_edgar__filings" if us else "opendart__filings", f"{name} 최근 공시")
+    want("google_news__news", f"{name} 헤드라인")
+    want("sec_edgar__metrics_snapshot" if us else "opendart__metrics_snapshot", f"{name} 밸류에이션 지표")
+    want("sec_edgar__insider_trades" if us else "opendart__insider_trades", f"{name} 내부자 거래")
+    if not us:
+        want("kis__investor_flow", f"{name} 외국인·기관 수급")
+    if us:
+        want("fmp__consensus_estimates", f"{name} 애널리스트 컨센서스")
+        want("fmp__earnings_calendar", f"{name} 어닝 일정·서프라이즈")
+    want("market_history__drawdowns", f"{name} 현재 낙폭 맥락")
+    want("market_history__vol_context", f"{name} 변동성 위치(과거 대비)")
     return plan
 
 
@@ -93,20 +106,30 @@ def _news_plan(tools: dict[str, dict]) -> list[tuple[str, dict, str]]:
 
 
 _TICKER_PROMPT = """당신은 리서치 데스크의 선임 애널리스트입니다. 아래는 {name}의 방금 수집된
-최신 기록 스니펫들입니다([n] 인덱스). 이 종목을 지켜보는 사용자에게 "오늘 같이 파볼 만한"
-깊이 있는 분석 카드를 {limit}개 이내로 만드세요.
+서로 다른 데이터소스 스니펫들입니다([n] 인덱스). 두 단계로 작업하세요.
 
-규칙 (모두 필수):
+1단계 — candidates (소스별 후보): 각 스니펫(소스)마다 그 소스의 실제 사실에서 출발하는 분석
+카드 후보를 2~3개씩 만드세요. 흥미로운 사실이 없는 소스는 건너뛰어도 됩니다.
+
+2단계 — picks (큐레이션): 후보 전체에서, 이 종목을 지켜보는 사용자가 "오늘 가장 눌러보고
+싶을" 카드 {limit}개의 인덱스(0부터, candidates 배열 기준)를 고르세요.
+- 다양성 필수: 같은 kind를 2개 이상 뽑지 마세요. 가격·공시·뉴스만 나열하지 말고 밸류에이션·
+  수급/내부자·어닝·과거 기록처럼 서로 다른 각도가 섞이게.
+- 의외성 우선: 뻔한 것("주가 올랐어요")보다 데이터 속 의외·모순·변화 지점을 고르세요 —
+  내부자 매도/매수, 밸류에이션의 과거 대비 위치, 컨센서스와의 괴리, 수급 반전, 새 공시의
+  바뀐 위험요소, 변동성의 이례적 위치 같은 것.
+
+카드 규칙 (모두 필수):
 - kind는 다음 중 하나: filing_deep(공시 속으로) | price_context(가격 맥락) | news_probe(뉴스 검증)
-  | history_echo(과거 기록 대조) | fundamental_shift(재무 변화)
+  | history_echo(과거 기록 대조) | fundamental_shift(재무 변화) | valuation(밸류에이션)
+  | ownership(수급·내부자·보유) | earnings(어닝·컨센서스)
 - hook: 스니펫의 실제 사실 한 줄 (수치·날짜는 스니펫 그대로; 지어내지 말 것) — 오늘 왜 이걸
-  볼 만한지. 예: "오늘 삼성전자가 8.2% 뛰었어요", "6/28 새 8-K가 접수됐어요".
+  볼 만한지. 예: "오늘 삼성전자가 8.2% 뛰었어요", "임원이 지난주 지분을 줄였어요".
 - question: **친근한 초대형 문장**으로 쓸 것. 반드시 해요체로, "~할까요?" 또는 "~볼까요?"로
   끝내고, 사용자를 함께 살펴보자고 이끄는 따뜻한 톤. 딱딱한 "~수준인가?", "~있는가?",
   "~무엇인가?" 금지. 얕은 질문("주가 알려줘") 금지 — 스니펫의 구체 사실에서 출발해 파고들 것.
-  좋은 예: "오늘 8% 넘게 뛰었는데, 최근 공시랑 뉴스로 왜 그런지 같이 알아볼까요?",
-  "이번 낙폭이 과거 급락들과 비교하면 어느 정도인지 함께 살펴볼까요?",
-  "새로 올라온 공시에 바뀐 위험요소가 있는지 들여다볼까요?"
+  좋은 예: "내부자가 지분을 줄였다는데 최근 공시·수급이랑 같이 들여다볼까요?",
+  "지금 밸류에이션이 과거 밴드에서 어디쯤인지 함께 살펴볼까요?"
   (question은 그 자체로 에이전트가 도구로 답할 수 있는 실제 요청이어야 함)
 - sources: hook의 근거 스니펫 인덱스 배열 — 근거 없는 카드 금지.
 - 절대 금지: 매수/매도 조언, 전망, 목표가, "기회"·"추천" 류.
@@ -135,14 +158,54 @@ _NEWS_PROMPT = """당신은 리서치 데스크의 시황 에디터입니다. �
 """
 
 
-async def _synthesize(prompt: str) -> list[dict]:
+# ASK-9: the ticker scope answers in TWO fields — every per-source candidate + the curator's
+# picks — so the model provably generates per-source before curating for diversity.
+_CARD_ITEM = {
+    "type": "object",
+    "properties": {
+        "kind": {"type": "string"},
+        "question": {"type": "string"},
+        "hook": {"type": "string"},
+        "sources": {"type": "array", "items": {"type": "integer"}},
+        "ticker": {"type": "string"},
+    },
+    "required": ["kind", "question", "hook", "sources"],
+}
+_CURATE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "candidates": {"type": "array", "items": _CARD_ITEM},
+        "picks": {"type": "array", "items": {"type": "integer"}},
+    },
+    "required": ["candidates", "picks"],
+}
+
+
+def _loads_obj(raw: str) -> dict:
+    """Robust JSON object pull (flash models don't always honor strict JSON mode)."""
+    import re as _re
+    try:
+        obj = json.loads(raw)
+        return obj if isinstance(obj, dict) else {}
+    except (ValueError, TypeError):
+        m = _re.search(r"\{.*\}", raw or "", _re.S)
+        if m:
+            try:
+                obj = json.loads(m.group(0))
+                return obj if isinstance(obj, dict) else {}
+            except (ValueError, TypeError):
+                return {}
+    return {}
+
+
+async def _gen_json(prompt: str, schema: dict) -> dict:
     from google.genai import types
 
     from agentengine.gemini_io import _get_text_from_response, genai_client
 
     cfg = types.GenerateContentConfig(
-        temperature=0.4, max_output_tokens=2048, response_mime_type="application/json",
-        response_schema=_SYNTH_SCHEMA, thinking_config=types.ThinkingConfig(thinking_budget=0),
+        temperature=0.4, max_output_tokens=4096, response_mime_type="application/json",
+        response_schema=schema, thinking_config=types.ThinkingConfig(thinking_budget=0),
     )
     client = genai_client()
     resp = await asyncio.wait_for(
@@ -150,7 +213,38 @@ async def _synthesize(prompt: str) -> list[dict]:
                           model=settings.budget_model, contents=prompt, config=cfg),
         timeout=settings.gemini_timeout_seconds,
     )
-    return _parse_cards(_get_text_from_response(resp) or "")
+    return _loads_obj(_get_text_from_response(resp) or "")
+
+
+async def _synthesize(prompt: str) -> list[dict]:
+    """news_feed scope — one pass, flat card list."""
+    obj = await _gen_json(prompt, _SYNTH_SCHEMA)
+    cards = obj.get("cards", [])
+    return cards if isinstance(cards, list) else []
+
+
+async def _synthesize_curated(prompt: str) -> dict:
+    """ticker scope (ASK-9) — per-source candidates + the curator's picks."""
+    return await _gen_json(prompt, _CURATE_SCHEMA)
+
+
+def _curate(obj: dict, limit: int) -> list[dict]:
+    """Resolve picks → cards with a diversity guard: at most 2 of the same kind, in pick
+    order. Falls back to the candidate list when picks are missing/invalid."""
+    cands = [c for c in (obj.get("candidates") or []) if isinstance(c, dict)]
+    picks = [i for i in (obj.get("picks") or []) if isinstance(i, int) and 0 <= i < len(cands)]
+    chosen = [cands[i] for i in picks] if picks else cands
+    out: list[dict] = []
+    per_kind: dict[str, int] = {}
+    for c in chosen:
+        k = str(c.get("kind") or "")
+        if per_kind.get(k, 0) >= 2:
+            continue
+        per_kind[k] = per_kind.get(k, 0) + 1
+        out.append(c)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _snippets(gathered: list[dict]) -> str:
@@ -187,7 +281,11 @@ async def build_ask_feed(req: AskFeedRequest, api_key: str | None) -> dict:
               else _NEWS_PROMPT.format(limit=limit, snippets=_snippets(gathered)))
     raw_cards: list[dict] = []
     try:
-        raw_cards = await _synthesize(prompt)
+        if is_ticker:
+            # ASK-9: per-source candidates → curated picks (diverse, surprising angles)
+            raw_cards = _curate(await _synthesize_curated(prompt), limit)
+        else:
+            raw_cards = await _synthesize(prompt)
     except Exception as exc:  # noqa: BLE001 — no fabricated fallback here: the entry screen
         # simply keeps the previous generation (honesty over fake data).
         logger.warning("ask-feed synthesis unavailable (%s)", type(exc).__name__)

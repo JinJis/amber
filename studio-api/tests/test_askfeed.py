@@ -139,7 +139,7 @@ def test_ticker_on_demand_generates_then_serves_cache(monkeypatch):
     body = r.json()
     assert body["cached"] is False and body["cards"][0]["kind"] == "filing_deep"
     sent = json.loads(route.calls[0].request.content)
-    assert sent["scope"] == "ticker" and sent["ticker"] == "AAPL" and sent["limit"] == 3
+    assert sent["scope"] == "ticker" and sent["ticker"] == "AAPL" and sent["limit"] == 5
 
     # fresh cache → served without another engine call
     r2 = client.get("/ask-feed/ticker", params={"market": "US", "ticker": "AAPL"},

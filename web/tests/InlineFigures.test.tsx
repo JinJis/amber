@@ -61,3 +61,60 @@ describe("AnswerArticle (인라인 그림)", () => {
     expect(onOuter).not.toHaveBeenCalled();
   });
 });
+
+// ── LG-4: 본문 속 수치 원장 — 하이라이트 + hover 팝업 ─────────────────────────────
+import { makeMdComponents } from "../components/Chat";
+import { annotateNumerals } from "../lib/evidence";
+import type { Citation } from "../lib/types";
+
+const ROWS = [
+  { raw: "391.0B", value: 391e9, span: [4, 10] as [number, number], citation_idx: 1, supported: true },
+  { raw: "999조", value: 999e12, span: [24, 28] as [number, number], citation_idx: null, supported: false },
+];
+const CONTENT = "매출은 391.0B [1]로 늘었고, 목표 999조는 검증 밖이다.";
+const CITES: Citation[] = [{ index: 1, kind: "filing", source: "SEC EDGAR", as_of: "2026-06-30" }];
+
+describe("annotateNumerals (수치 → #num-i 링크)", () => {
+  it("스팬 자리의 수치를 [raw](#num-i)로 감싼다 (뒤에서부터 삽입해 좌표 보존)", () => {
+    expect(annotateNumerals(CONTENT, ROWS as any))
+      .toBe("매출은 [391.0B](#num-0) [1]로 늘었고, 목표 [999조](#num-1)는 검증 밖이다.");
+  });
+  it("스팬이 본문과 어긋난 행은 건너뛴다 (오래된 대화 방어)", () => {
+    const drifted = [{ raw: "391.0B", value: 1, span: [0, 6] as [number, number], supported: true }];
+    expect(annotateNumerals(CONTENT, drifted as any)).toBe(CONTENT);
+  });
+});
+
+describe("NumHighlight (본문 하이라이트 + 팝업)", () => {
+  const mk = (onEvidence = vi.fn(), onPinLedger = vi.fn()) =>
+    makeMdComponents(null, vi.fn(), vi.fn(), { rows: ROWS as any, citations: CITES, onEvidence, onPinLedger });
+
+  it("검증 수치는 노란 하이라이트 + 팝업에 원자료 대조·출처 [n]·as_of", () => {
+    render(<AnswerArticle mdComponents={mk()} content={annotateNumerals(CONTENT, ROWS as any)} />);
+    const hls = screen.getAllByTestId("num-hl");
+    expect(hls[0].textContent).toContain("391.0B");
+    expect(hls[0].textContent).toContain("원자료 대조 확인");        // 팝업 내용 (hover 시 표시)
+    expect(hls[0].textContent).toContain("[1] SEC EDGAR · 2026-06-30");
+    expect(hls[0].textContent).toContain("클릭하면 원문");
+  });
+
+  it("미확인 수치는 앰버(warn) + 경고 팝업, 클릭 불가", () => {
+    render(<AnswerArticle mdComponents={mk()} content={annotateNumerals(CONTENT, ROWS as any)} />);
+    const warn = screen.getAllByTestId("num-hl")[1];
+    expect(warn.className).toContain("warn");
+    expect(warn.textContent).toContain("대조되지 않은 수치");
+    expect(warn.getAttribute("role")).toBeNull();
+  });
+
+  it("하이라이트 클릭 → 해당 인용으로 onEvidence, 팝업 📌 → 노트북 담기", () => {
+    const onEvidence = vi.fn(); const onPin = vi.fn();
+    render(<AnswerArticle mdComponents={mk(onEvidence, onPin)}
+      content={annotateNumerals(CONTENT, ROWS as any)} />);
+    const hl = screen.getAllByTestId("num-hl")[0];
+    fireEvent.click(hl);
+    expect(onEvidence).toHaveBeenCalledWith(expect.objectContaining({ index: 1 }));
+    fireEvent.click(screen.getByText("📌 노트북에 담기"));
+    expect(onPin).toHaveBeenCalledWith(expect.objectContaining({ raw: "391.0B" }),
+      expect.objectContaining({ index: 1 }));
+  });
+});

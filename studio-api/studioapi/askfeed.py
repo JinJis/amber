@@ -12,7 +12,7 @@ Two halves, two rhythms:
 
 * **On-demand ticker questions** — ``GET /ask-feed/ticker`` is called when the user taps a
   watchlist ticker on the entry screen: serve the cached pool when it's fresher than
-  ``ask_feed_ticker_ttl_seconds``, else generate ~3 cards right now through agent-engine
+  ``ask_feed_ticker_ttl_seconds``, else generate 3~5 curated cards right now through agent-engine
   (signature-gated, so unchanged data never spends an LLM call) and cache per scope
   (``ticker:{MKT}:{TKR}`` — shared by every user tapping the same ticker).
 
@@ -170,7 +170,8 @@ def _assemble(db: Session, email: str) -> dict:
 async def get_ticker_feed(market: str, ticker: str, name: str | None = None,
                           user: User = Depends(current_user)) -> dict:
     """The user tapped a watchlist ticker: serve the cached pool when fresh, else gather that
-    ticker's latest records + one Gemini pass right now (~3 cards). Cache is per TICKER —
+    ticker's latest records + one two-stage Gemini pass right now (소스별 후보 → 3~5개
+    큐레이션, ASK-9). Cache is per TICKER —
     shared by every user. Never fabricates: generation failure returns the stale pool if one
     exists, else an empty list the UI draws as an honest gap."""
     scope = _scope_key(market, ticker)
@@ -179,13 +180,13 @@ async def get_ticker_feed(market: str, ticker: str, name: str | None = None,
         row = db.get(AskFeedCache, scope)
         if row is not None and row.generated_at and datetime.utcnow() - row.generated_at < ttl:
             p = _payload_of(row)
-            return {"cards": (p.get("cards") or [])[:3], "generated_at": p.get("generated_at"),
+            return {"cards": (p.get("cards") or [])[:5], "generated_at": p.get("generated_at"),
                     "cached": True}
         async with httpx.AsyncClient() as client:
             await _refresh_scope(client, db, scope=scope, api_key=user.api_key,
                                  body={"scope": "ticker", "market": (market or "US").upper(),
-                                       "ticker": ticker, "name": name or ticker, "limit": 3},
+                                       "ticker": ticker, "name": name or ticker, "limit": 5},
                                  timeout=settings.ask_feed_generate_timeout_seconds)
         p = _payload_of(db.get(AskFeedCache, scope))
-        return {"cards": (p.get("cards") or [])[:3], "generated_at": p.get("generated_at"),
+        return {"cards": (p.get("cards") or [])[:5], "generated_at": p.get("generated_at"),
                 "cached": False}

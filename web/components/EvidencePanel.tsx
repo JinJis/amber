@@ -11,20 +11,16 @@
 //   ① 판정 (TrustStrip)      — QT-2 숫자 검증이 헤드라인
 //   ② 차트·표                — 답변이 그린 시각 자료
 //   ③ 인용한 출처 [n]         — 본문 [n]과 1:1, 번호순. [n] 클릭/호버 → 이 카드로 (remote control)
-//   ④ 수치 원장               — 본문의 모든 숫자 ↔ 원자료 대조 (파생값 🧮 → Derivation Card)
-//   ⑤ 참고만 한 출처 (접힘)   — 살펴봤지만 인용하지 않은 출처 (버리지 않고 흐리게 보관)
-//   ⑥ 리서치 과정 (접힘)      — 수집 중의 타임라인이 그대로 접혀 내려온다 (아무것도 사라지지 않음)
+//   ④ 참고만 한 출처 (접힘)   — 살펴봤지만 인용하지 않은 출처 (버리지 않고 흐리게 보관)
+//   ⑤ 리서치 과정 (접힘)      — 수집 중의 타임라인이 그대로 접혀 내려온다 (아무것도 사라지지 않음)
 //
-// 카드 key는 출처 identity(source|url)라 스트리밍→완료 전환에도 같은 카드가 유지된다.
+// 수치 원장은 패널에서 본문 속으로 옮겨졌다 (LG-4): 답변의 숫자가 하이라이트되고 hover 팝업이
+// 원자료 대조를 보여준다. 카드 key는 출처 identity라 스트리밍→완료 전환에도 카드가 유지된다.
 
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { ArtifactCard } from "./ArtifactCard";
 import { SourceCard } from "./SourceCard";
-import { FreshnessDot } from "./ui";
-import {
-  citationByIndex, clearNumeralHighlight, contextLabel, evidenceOf, highlightNumeral,
-  occurrenceIndex, trustSummary, type LedgerRow, type TrustSummary,
-} from "../lib/evidence";
+import { evidenceOf, trustSummary, type TrustSummary } from "../lib/evidence";
 import type { Artifact, Citation, Msg, ToolUse } from "../lib/types";
 
 function uniqueTools(tools?: ToolUse[]): ToolUse[] {
@@ -85,77 +81,20 @@ function ProcessRows({ tools, live }: { tools: ToolUse[]; live: boolean }) {
   );
 }
 
-// ── ④ 수치 원장 ──────────────────────────────────────────────────────────────────
-function LedgerSection({ msg, rows, onEvidence, onPinLedger, hoverCite, setHoverCite, bubbleEl }: {
-  msg: Msg; rows: LedgerRow[];
-  onEvidence: (c: Citation) => void;
-  onPinLedger?: (row: Record<string, unknown>, c: Citation | null) => void;   // NB-2: 📌 노트에 담기
-  hoverCite: number | null; setHoverCite: (n: number | null) => void;
-  bubbleEl?: () => HTMLElement | null;   // the focused answer's bubble, for prose highlight
-}) {
-  if (!rows.length) return null;
-  return (
-    <div className="ctx-section" data-testid="ledger">
-      <SectionHead title="수치 원장" count={rows.length}
-        desc="답변의 모든 숫자를 원자료와 대조했어요. 행에 올리면 본문 속 위치를 비춰줘요." />
-      <div className="ledger">
-        {rows.map((r, i) => {
-          const cit = citationByIndex(msg, r.citation_idx);
-          const derived = !!cit?.computation;
-          const label = contextLabel(msg.content, r);
-          return (
-            <div key={i}
-              className={`lg-row ${r.supported ? "" : "unsupported"} ${cit && hoverCite === cit.index ? "hot" : ""}`}
-              data-testid={`lg-row-${i}`}
-              role={cit ? "button" : undefined}
-              onMouseEnter={() => {
-                if (cit?.index != null) setHoverCite(cit.index);
-                highlightNumeral(bubbleEl?.() ?? null, r.raw, occurrenceIndex(rows, i));
-              }}
-              onMouseLeave={() => { setHoverCite(null); clearNumeralHighlight(); }}
-              onClick={cit ? () => onEvidence(cit) : undefined}
-              title={r.supported
-                ? (derived ? "계산으로 도출된 값 — 클릭하면 도출 과정" : "클릭하면 원문")
-                : "이 수치는 이번 턴 도구 반환값과 일치하지 않았습니다"}>
-              <span className="lg-val mono">{r.raw}</span>
-              <span className="lg-ctx">{label || (r.supported ? "" : "답변 표현")}</span>
-              {r.supported ? (
-                <span className="lg-src mono">
-                  {derived ? "🧮 " : ""}{cit ? <>[{cit.index}] {(cit.source || "").slice(0, 18)}</> : "차트·표 데이터"}
-                </span>
-              ) : (
-                <span className="lg-src lg-warn mono">⚠ 미확인</span>
-              )}
-              {cit?.freshness ? <FreshnessDot f={cit.freshness} /> : null}
-              {r.supported && onPinLedger ? (
-                <button type="button" className="lg-pin" data-testid={`lg-pin-${i}`} title="노트에 담기"
-                  onClick={(e) => { e.stopPropagation(); onPinLedger(r as unknown as Record<string, unknown>, cit); }}>📌</button>
-              ) : null}
-              {cit ? <span className="lg-open mono">↗</span> : null}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 // ── the panel ────────────────────────────────────────────────────────────────────
 export function ContextPanel(
-  { msg, streaming, onEvidence, onPinArtifact, onPinCitation, onPinLedger, onShareArtifact, onResizeStart,
-    hoverCite, setHoverCite, flashCite, bubbleEl }:
+  { msg, streaming, onEvidence, onPinArtifact, onPinCitation, onShareArtifact, onResizeStart,
+    hoverCite, setHoverCite, flashCite }:
   {
     msg: Msg | null; streaming: boolean;
     onEvidence: (c: Citation) => void;
     onPinArtifact?: (a: Artifact) => void;
     onShareArtifact?: (a: Artifact) => void;
     onPinCitation?: (c: Citation) => void;
-    onPinLedger?: (row: Record<string, unknown>, c: Citation | null) => void;
     onResizeStart: (e: ReactMouseEvent) => void;
     hoverCite: number | null;
     setHoverCite: (n: number | null) => void;
     flashCite: { n: number; ts: number } | null;   // [n] clicked in prose → scroll+flash here
-    bubbleEl?: () => HTMLElement | null;
   },
 ) {
   const arts = msg?.artifacts ?? [];
@@ -167,7 +106,6 @@ export function ContextPanel(
   const others = cites.filter((c) => !usedKeys.has(`${c.source}|${c.url}`));
   const tools = uniqueTools(msg?.tools);
   const hasAny = arts.length || cites.length || tools.length;
-  const ledger = (msg?.audit?.ledger ?? []) as LedgerRow[];
   const summary = trustSummary(msg);
 
   // 참고만 한 출처 fold — [n] 클릭이 그 안의 카드를 가리키면 펼친다.
@@ -255,10 +193,6 @@ export function ContextPanel(
                 desc="답변 속 [n] 번호와 1:1이에요 — 본문의 [n]을 누르면 그 카드로 와요." />
               <div className="ctx-cards">{used.map(card)}</div>
             </div>
-          )}
-          {msg && ledger.length > 0 && (
-            <LedgerSection msg={msg} rows={ledger} onEvidence={onEvidence} onPinLedger={onPinLedger}
-              hoverCite={hoverCite} setHoverCite={setHoverCite} bubbleEl={bubbleEl} />
           )}
           {others.length > 0 && (
             <details className="ctx-section ctx-more" data-testid="ctx-others" open={othersOpen}

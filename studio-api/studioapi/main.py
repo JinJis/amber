@@ -110,7 +110,8 @@ async def conversation_messages(conversation_id: str, user: User = Depends(curre
         return {"messages": [
             {"role": m.role, "content": m.content,
              "citations": json.loads(m.citations) if m.citations else [],
-             "artifacts": json.loads(m.artifacts) if m.artifacts else []}
+             "artifacts": json.loads(m.artifacts) if m.artifacts else [],
+             "audit": json.loads(m.audit) if m.audit else None}
             for m in rows
         ]}
 

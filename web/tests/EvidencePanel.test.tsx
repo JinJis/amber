@@ -1,10 +1,10 @@
 // LG — 근거 패널 v3: 판정 스트립, 수집 중(과정 타임라인 + 도착순 출처) → 완료(인용/참고 구분)
-// 2단계 플로우, 수치 원장, [n] linkify.
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+// 2단계 플로우, [n] linkify. 수치 원장은 본문 하이라이트로 이동(LG-4) — 패널에 원장 섹션 없음.
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ContextPanel, TrustStrip } from "../components/EvidencePanel";
 import { linkifyCitations } from "../components/Chat";
-import { contextLabel, occurrenceIndex, trustSummary } from "../lib/evidence";
+import { trustSummary } from "../lib/evidence";
 import type { Msg } from "../lib/types";
 
 afterEach(cleanup);
@@ -65,26 +65,12 @@ describe("근거 패널 v3 — 완료 뷰", () => {
     expect(proc.textContent).toContain("가격 스냅샷");
   });
 
-  it("수치 원장: 행마다 값·출처 [n]·파생 🧮, 미확인은 앰버 행", () => {
+  it("수치 원장 섹션은 패널에 없다 — LG-4: 원장은 본문 하이라이트로 이동", () => {
     render(<ContextPanel {...panelProps} msg={MSG} />);
-    expect(screen.getByTestId("ledger")).toBeInTheDocument();
-    const r0 = screen.getByTestId("lg-row-0");
-    expect(r0.textContent).toContain("391.0B");
-    expect(r0.textContent).toContain("[1] SEC EDGAR");
-    const r1 = screen.getByTestId("lg-row-1");
-    expect(r1.textContent).toContain("🧮");            // derived → computation marker
-    const r2 = screen.getByTestId("lg-row-2");
-    expect(r2.className).toContain("unsupported");
-    expect(r2.textContent).toContain("⚠ 미확인");
-  });
-
-  it("원장 행 클릭 → 해당 인용으로 onEvidence (미확인 행은 클릭 무시)", () => {
-    const onEvidence = vi.fn();
-    render(<ContextPanel {...panelProps} onEvidence={onEvidence} msg={MSG} />);
-    fireEvent.click(screen.getByTestId("lg-row-0"));
-    expect(onEvidence).toHaveBeenCalledWith(expect.objectContaining({ index: 1 }));
-    fireEvent.click(screen.getByTestId("lg-row-2"));
-    expect(onEvidence).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("ledger")).toBeNull();
+    expect(screen.queryByText(/수치 원장/)).toBeNull();
+    // 판정 스트립(감사 요약)은 그대로 헤드라인
+    expect(screen.getByTestId("trust-strip")).toBeInTheDocument();
   });
 
   it("개념 설명(수치·출처 없음)은 조용한 판정으로 강등", () => {
@@ -117,25 +103,6 @@ describe("근거 패널 v3 — 수집 중 뷰 (스트리밍)", () => {
     // 판정·원장·인용/참고 구분은 아직 없음 — 완료 시에만
     expect(screen.queryByTestId("trust-strip")).toBeNull();
     expect(screen.queryByTestId("ctx-used")).toBeNull();
-  });
-});
-
-describe("원장 헬퍼", () => {
-  it("contextLabel: 스팬 주변 문맥에서 마크다운·[n]을 걷어냄", () => {
-    const row = { raw: "391.0B", value: 391e9, span: [12, 18] as [number, number], supported: true };
-    const label = contextLabel("애플 **매출**은 391.0B [1]로 집계", row);
-    expect(label).toContain("매출");
-    expect(label).not.toContain("[1]");
-    expect(label).not.toContain("**");
-  });
-
-  it("occurrenceIndex: 같은 수치가 반복되면 n번째 발생을 가리킴", () => {
-    const rows = [
-      { raw: "5%", value: 5, supported: true }, { raw: "3%", value: 3, supported: true },
-      { raw: "5%", value: 5, supported: true },
-    ];
-    expect(occurrenceIndex(rows as any, 0)).toBe(0);
-    expect(occurrenceIndex(rows as any, 2)).toBe(1);
   });
 });
 

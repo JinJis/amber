@@ -1,9 +1,10 @@
 "use client";
 
-// ASK-6 탐구 엔트리 (v4). 접속 시 LLM 0회 — 뉴스 질문 피드는 10분 주기 백그라운드 캐시,
-// 종목 분석거리는 사용자가 종목을 "직접 눌렀을 때"만 온디맨드로 3개 준비(서버 캐시 공유).
+// ASK-6/9 탐구 엔트리 (v4). 접속 시 LLM 0회 — 뉴스 질문 피드는 10분 주기 백그라운드 캐시,
+// 종목 분석거리는 사용자가 종목을 "직접 눌렀을 때"만 온디맨드 생성: 소스별 후보 → 다양성
+// 큐레이션으로 3~5개(가격·공시·뉴스 나열이 아니라 밸류·수급·어닝·과거가 섞이게, ASK-9).
 //   · 히어로 — "오늘, 무엇을 분석할까요?" + 신뢰 한 줄(출처[n] · 전망 안 함)
-//   · 2단 레이아웃: [내 관심종목 파고들기 — 종목 칩 탭 → 분석 카드 3개] ⟷ [지금 뉴스에서]
+//   · 2단 레이아웃: [내 관심종목 파고들기 — 종목 칩 탭 → 분석 카드 3~5개] ⟷ [지금 뉴스에서]
 // 전역 규칙: 카드 탭 = 컴포저 채움(자동 전송 없음). 출처 탭 = 근거 뷰어. 미생성 = 정직한 공백.
 
 import { useEffect, useMemo, useState } from "react";
@@ -20,6 +21,9 @@ const KIND: Record<string, { i: string; t: string }> = {
   news_probe:       { i: "📰", t: "뉴스" },
   history_echo:     { i: "🕰️", t: "과거" },
   fundamental_shift:{ i: "📊", t: "재무" },
+  valuation:        { i: "💰", t: "밸류" },
+  ownership:        { i: "👥", t: "수급·보유" },
+  earnings:         { i: "📅", t: "어닝" },
   macro:            { i: "🌍", t: "거시" },
   micro:            { i: "🏭", t: "산업" },
   market:           { i: "📉", t: "시장" },
@@ -138,12 +142,12 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence }: {
 
       {/* 2단: 내 관심종목 파고들기 · 지금 뉴스에서 */}
       <div className="ask-cols">
-        {/* 왼쪽 — 내 관심종목 파고들기 (종목을 누르면 그 자리에서 3개 준비) */}
+        {/* 왼쪽 — 내 관심종목 파고들기 (종목을 누르면 그 자리에서 3~5개 큐레이션) */}
         <section className="ask-col" data-testid="ck-mine">
           <div className="ask-col-h">
             <span className="ask-col-t">🔎 내 관심종목 파고들기</span>
           </div>
-          <p className="ask-col-desc">궁금한 종목을 누르면 <b>최신 공시·가격·뉴스</b>에서 추린 분석거리 3개를 바로 준비해드려요.</p>
+          <p className="ask-col-desc">궁금한 종목을 누르면 <b>공시·가격·뉴스·밸류에이션·수급·어닝</b>을 훑어 오늘 가장 눌러볼 만한 분석거리 3~5개를 추려드려요.</p>
 
           {tickers.length > 0 ? (
             <>
@@ -179,11 +183,11 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence }: {
                   {loadingKey === sel ? (
                     <div className="tk-loading" data-testid="tk-loading">
                       <span className="tl-spin" aria-hidden />
-                      {selTicker.name}의 최신 공시·가격·뉴스를 훑는 중…
+                      {selTicker.name}의 공시·가격·뉴스·밸류에이션·수급을 훑는 중…
                     </div>
                   ) : selCards && selCards.length > 0 ? (
                     <div className="qc-list">
-                      {selCards.slice(0, 3).map((c, i) => (
+                      {selCards.slice(0, 5).map((c, i) => (
                         <QCard key={i} c={c} name={selTicker.name} onPick={onPick} onEvidence={onEvidence} />
                       ))}
                     </div>

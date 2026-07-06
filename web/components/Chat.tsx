@@ -15,6 +15,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { remarkCjkEmphasis } from "../lib/markdown";
 import { ContextPanel, evidenceOf, uniqueTools } from "./EvidencePanel";
+import { annotateNumerals, type LedgerRow } from "../lib/evidence";
 import { SourceViewer } from "./SourceViewer";
 import { ArtifactCard } from "./ArtifactCard";
 import { Button, Chip, GuardrailLabel, Mascot, FreshnessDot } from "./ui";
@@ -48,16 +49,17 @@ export function splitFigures(md: string, streaming?: boolean): { text?: string; 
 }
 
 // The article body: markdown segments interleaved with the REAL artifact cards (blog
-// figures, center-aligned). Unknown/duplicate figure numbers are dropped silently — old
+// figures, center-aligned). Audited numerals get wrapped first (annotateNumerals → the
+// yellow LG-4 highlights). Unknown/duplicate figure numbers are dropped silently — old
 // conversations without persisted artifacts degrade to plain prose, never raw markers.
-export function AnswerArticle({ content, artifacts, streaming, mdComponents, onEvidence, onPin, onShare }: {
-  content: string; artifacts?: Artifact[]; streaming?: boolean;
+export function AnswerArticle({ content, artifacts, ledger, streaming, mdComponents, onEvidence, onPin, onShare }: {
+  content: string; artifacts?: Artifact[]; ledger?: LedgerRow[]; streaming?: boolean;
   mdComponents: ReturnType<typeof makeMdComponents>;
   onEvidence?: (c: Citation) => void;
   onPin?: (a: Artifact) => void;
   onShare?: (a: Artifact) => void;
 }) {
-  const segs = splitFigures(content, streaming);
+  const segs = splitFigures(annotateNumerals(content, streaming ? undefined : ledger), streaming);
   const seen = new Set<number>();
   return (
     <div className="md article">
@@ -83,10 +85,57 @@ export function AnswerArticle({ content, artifacts, streaming, mdComponents, onE
   );
 }
 
-function makeMdComponents(
+// LG-4: 본문 속 수치 원장 — the audited numeral, highlighted in the prose. Hover → a small
+// popup with the 원자료 대조 result (출처 [n]·as_of·파생 🧮·📌담기); click → the source/derivation.
+function NumHighlight({ row, cit, children, setHoverCite, onEvidence, onPinLedger }: {
+  row: LedgerRow; cit: Citation | null; children: React.ReactNode;
+  setHoverCite: (n: number | null) => void;
+  onEvidence?: (c: Citation) => void;
+  onPinLedger?: (row: Record<string, unknown>, c: Citation | null) => void;
+}) {
+  const [pinned, setPinned] = useState(false);
+  const derived = !!cit?.computation;
+  return (
+    <span className={`num-hl ${row.supported ? "" : "warn"}`} data-testid="num-hl"
+      role={cit ? "button" : undefined} tabIndex={cit ? 0 : undefined}
+      onMouseEnter={() => cit?.index != null && setHoverCite(cit.index)}
+      onMouseLeave={() => setHoverCite(null)}
+      onClick={cit ? (e) => { e.stopPropagation(); onEvidence?.(cit); } : undefined}>
+      {children}
+      <span className="num-tip" role="tooltip" onClick={(e) => e.stopPropagation()}>
+        {row.supported ? (
+          <>
+            <span className="nt-line nt-ok">✓ 원자료 대조 확인{derived ? " · 🧮 계산으로 도출" : ""}</span>
+            <span className="nt-line">
+              {cit ? <>[{cit.index}] {cit.source}{cit.as_of ? ` · ${cit.as_of}` : ""}</> : "차트·표 데이터와 일치"}
+            </span>
+            {cit && <span className="nt-hint">{derived ? "클릭하면 계산 과정" : "클릭하면 원문"}</span>}
+            {onPinLedger && (
+              <button type="button" className="nt-pin" disabled={pinned}
+                onClick={(e) => { e.stopPropagation(); onPinLedger(row as unknown as Record<string, unknown>, cit); setPinned(true); }}>
+                {pinned ? "✓ 노트북" : "📌 노트북에 담기"}
+              </button>
+            )}
+          </>
+        ) : (
+          <span className="nt-line nt-warn">⚠ 이번 턴 자료와 대조되지 않은 수치예요</span>
+        )}
+      </span>
+    </span>
+  );
+}
+
+export type NumCtx = {
+  rows: LedgerRow[]; citations: Citation[];
+  onEvidence?: (c: Citation) => void;
+  onPinLedger?: (row: Record<string, unknown>, c: Citation | null) => void;
+};
+
+export function makeMdComponents(
   hoverCite: number | null,
   setHoverCite: (n: number | null) => void,
   onCiteClick: (n: number) => void,
+  num?: NumCtx,
 ) {
   return {
     a: (props: any) => {
@@ -98,6 +147,17 @@ function makeMdComponents(
             onMouseEnter={() => setHoverCite(n)} onMouseLeave={() => setHoverCite(null)}
             onClick={(e) => { e.stopPropagation(); onCiteClick(n); }}
             title="근거 패널에서 이 출처 보기">[{n}]</button>
+        );
+      }
+      const nm = String(props.href || "").match(/^#num-(\d+)$/);
+      if (nm && num) {
+        const row = num.rows[Number(nm[1])];
+        if (!row) return <span>{props.children}</span>;
+        const cit = row.citation_idx != null
+          ? num.citations.find((c) => c.index === row.citation_idx) ?? null : null;
+        return (
+          <NumHighlight row={row} cit={cit} setHoverCite={setHoverCite}
+            onEvidence={num.onEvidence} onPinLedger={num.onPinLedger}>{props.children}</NumHighlight>
         );
       }
       return <a {...props} target="_blank" rel="noreferrer" />;
@@ -218,7 +278,6 @@ export default function Chat({ name, features }: { name: string; features: Featu
   // LG-3: [n] ↔ 근거 패널 two-way link. hover mirrors; click scrolls+flashes the card.
   const [hoverCite, setHoverCite] = useState<number | null>(null);
   const [flashCite, setFlashCite] = useState<{ n: number; ts: number } | null>(null);
-  const bubbleRefs = useRef(new Map<number, HTMLDivElement>());   // msg idx → answer bubble el
   // ENT-1: the empty-state composer placeholder rotates today's REAL questions (from the desk feed).
   const [todayQs, setTodayQs] = useState<string[]>([]);
   const [phIdx, setPhIdx] = useState(0);
@@ -270,12 +329,13 @@ export default function Chat({ name, features }: { name: string; features: Featu
       const r = await fetch(`/api/conversations/${id}/messages`);
       if (!r.ok) { setLoadError(id); return; }  // IMP-5: silent blank thread → visible banner
       const msgs = ((await r.json()).messages ?? []) as
-        { role: string; content: string; citations?: Citation[]; artifacts?: Artifact[] }[];
+        { role: string; content: string; citations?: Citation[]; artifacts?: Artifact[]; audit?: Msg["audit"] }[];
       setMessages(msgs.map((m) => ({
         role: m.role === "assistant" ? "assistant" : "user",
         content: m.content,
         citations: m.citations ?? [],
         artifacts: m.artifacts ?? [],   // persisted → inline {{figure:N}} cards survive reload
+        audit: m.audit ?? undefined,    // persisted → 판정 + 본문 수치 하이라이트 survive reload
         used: (m.citations ?? []).map((c) => c.index).filter((n): n is number => n != null),
       })));
       // resume an in-flight answer: if this conversation is still generating, tail its run live
@@ -693,11 +753,14 @@ export default function Chat({ name, features }: { name: string; features: Featu
                       onClick={() => setFocusIdx(i)}
                       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setFocusIdx(i); } }}
                     >
-                      <div className="bubble" ref={(el) => { if (el) bubbleRefs.current.set(i, el); }}>
+                      <div className="bubble">
                         {m.content
                           ? <AnswerArticle content={m.content} artifacts={m.artifacts}
+                              ledger={(m.audit?.ledger ?? []) as LedgerRow[]}
                               streaming={busy && i === messages.length - 1}
-                              mdComponents={makeMdComponents(panelIdx === i ? hoverCite : null, setHoverCite, citeClickFor(i))}
+                              mdComponents={makeMdComponents(panelIdx === i ? hoverCite : null, setHoverCite, citeClickFor(i),
+                                { rows: (m.audit?.ledger ?? []) as LedgerRow[], citations: m.citations ?? [],
+                                  onEvidence: setViewer, onPinLedger: pinLedger })}
                               onEvidence={setViewer} onPin={pinArtifact} onShare={(a) => setShareArt(a)} />
                           : (busy && !(m.thinking?.length) ? "…" : "")}
                       </div>
@@ -803,14 +866,12 @@ export default function Chat({ name, features }: { name: string; features: Featu
           hoverCite={hoverCite}
           setHoverCite={setHoverCite}
           flashCite={flashCite}
-          bubbleEl={() => bubbleRefs.current.get(panelIdx) ?? null}
           msg={panelMsg}
           streaming={panelStreaming}
           onEvidence={setViewer}
           onPinArtifact={pinArtifact}
           onShareArtifact={(a) => setShareArt(a)}
           onPinCitation={pinCitation}
-          onPinLedger={pinLedger}
           onResizeStart={startCtxResize}
         />
       )}

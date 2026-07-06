@@ -78,7 +78,8 @@ def test_chat_stream_proxies_and_persists(monkeypatch):
         'data: {"type":"token","text":"AAPL closed at 185. {{figure:1}}"}\n\n'
         'data: {"type":"citation","tool":"yahoo__prices","source":"Yahoo Finance"}\n\n'
         'data: {"type":"done","citations":[{"tool":"yahoo__prices","source":"Yahoo Finance"}],'
-        '"artifacts":[{"kind":"timeseries","title":"AAPL 종가"}],"refused":false}\n\n'
+        '"artifacts":[{"kind":"timeseries","title":"AAPL 종가"}],'
+        '"audit":{"checked":1,"supported":1,"unsupported":[],"ledger":[{"raw":"185","value":185.0,"span":[15,18],"citation_idx":1,"supported":true}]},"refused":false}\n\n'
     ).encode()
     respx.post("http://ae.test/agent/chat").mock(return_value=httpx.Response(200, content=sse, headers={"content-type": "text/event-stream"}))
 
@@ -97,6 +98,8 @@ def test_chat_stream_proxies_and_persists(monkeypatch):
     assert "AAPL" in asst["content"] and asst["citations"]
     # 인라인 그림 계약: 아티팩트가 메시지에 보존된다 → 다시 열어도 {{figure:N}} 자리가 살아있다
     assert asst["artifacts"] and asst["artifacts"][0]["title"] == "AAPL 종가"
+    # LG-4: 감사(원장)도 보존 → 다시 열어도 판정 스트립 + 본문 수치 하이라이트가 살아있다
+    assert asst["audit"]["checked"] == 1 and asst["audit"]["ledger"][0]["raw"] == "185"
 
 
 # --- title derivation -----------------------------------------------------

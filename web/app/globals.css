@@ -154,19 +154,6 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 .ct-meta { display: flex; gap: 10px; align-items: center; font-size: 10px; color: var(--muted); }
 .ct-f { display: inline-flex; align-items: center; gap: 3px; }
 /* ③ 수치 원장 */
-.ledger { display: flex; flex-direction: column; }
-.lg-row { display: flex; align-items: baseline; gap: 8px; padding: 5px 6px; font-size: 11px;
-  border-bottom: 1px dotted var(--line-3); border-radius: 5px; cursor: pointer; }
-.lg-row:last-child { border-bottom: none; }
-.lg-row:hover, .lg-row.hot { background: var(--panel-3); }
-.lg-row.unsupported { background: #FBF6E9; cursor: default; }
-.lg-val { min-width: 72px; font-weight: 700; color: var(--text); text-align: right; }
-.lg-ctx { flex: 1; color: var(--muted); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; }
-.lg-src { color: var(--text-2); font-size: 10px; white-space: nowrap; }
-.lg-warn { color: #A9791A; }
-.lg-open { color: var(--muted); }
-/* [n] ↔ 카드 */
 .ctx-card-wrap { border-radius: 8px; transition: box-shadow .12s, background .12s; }
 .ctx-card-wrap.hot { background: var(--panel-3); box-shadow: 0 0 0 2px var(--ink); }
 .ctx-card-wrap.flash { animation: cite-flash 1.6s ease-out; }
@@ -176,7 +163,6 @@ a { color: var(--text); text-decoration-color: var(--muted); }
   color: var(--accent-fg, #3A5BC7); cursor: pointer; border-radius: 3px; font-variant-numeric: tabular-nums; }
 .cite-ref:hover, .cite-ref.hot { background: var(--ink); color: var(--on-ink); }
 /* 본문 수치 하이라이트 (CSS Custom Highlight API) */
-::highlight(ledger-hot) { background: #F3E3AE; color: inherit; }
 .ctxpane .artifacts { margin: 0; }
 .ctxpane .ctx-more > summary { cursor: pointer; list-style: revert; }
 .ctxpane .ctx-more > summary.ctx-label { margin-bottom: 0; }
@@ -859,6 +845,29 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .msg.assistant .md.article table { margin: 12px 0; }
 .msg.assistant .md.article blockquote { border-left: 3px solid var(--accent);
   margin: 12px 0; padding: 4px 0 4px 12px; color: var(--text-2); }
+/* LG-4: 본문 속 수치 원장 — 검증된 숫자는 노랗게, hover → 원자료 대조 팝업 */
+.num-hl { position: relative; background: var(--mark); border-radius: 3px; padding: 0 3px;
+  font-variant-numeric: tabular-nums; transition: background .12s; }
+.num-hl[role="button"] { cursor: pointer; }
+.num-hl:hover { background: #F3DD8F; }
+.num-hl.warn { background: #FBE9D6; box-shadow: inset 0 -1.5px 0 #E0A24E; }
+.num-tip { display: none; position: absolute; bottom: calc(100% + 8px); left: 50%;
+  transform: translateX(-50%); z-index: 40; min-width: 190px; max-width: 300px; width: max-content;
+  padding: 8px 11px; border-radius: 9px; background: var(--ink); color: #EDEDEF;
+  font-size: 11px; line-height: 1.55; font-weight: 400; white-space: normal; text-align: left;
+  box-shadow: 0 8px 24px rgba(0,0,0,.28); }
+.num-hl:hover .num-tip, .num-hl:focus-visible .num-tip { display: inline-block; }
+.num-tip::after { content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  border: 6px solid transparent; border-top-color: var(--ink); }
+.nt-line { display: block; }
+.nt-ok { color: #8FDDAF; font-weight: 600; }
+.nt-warn { color: #F2C36B; font-weight: 600; }
+.nt-hint { display: block; margin-top: 2px; color: rgba(237,237,239,.6); font-size: 10px; }
+.nt-pin { margin-top: 6px; font-size: 10px; background: rgba(255,255,255,.1); color: inherit;
+  border: 1px solid rgba(255,255,255,.28); border-radius: 999px; padding: 2px 9px; cursor: pointer; }
+.nt-pin:hover { background: rgba(255,255,255,.2); }
+.nt-pin:disabled { opacity: .6; cursor: default; }
+
 /* {{figure:N}} 자리에 렌더링되는 실제 차트·표 — 본문 속 그림 (center-align) */
 .inline-figure { margin: 16px auto 20px; width: 100%; max-width: 660px; }
 .inline-figure .artifact { width: 100%; margin: 0; }
@@ -1501,9 +1510,6 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
   padding: 5px 8px; background: var(--panel); color: var(--text); }
 .nb-ledger { font-size: 12px; color: var(--text); }
 .nb-lg-src { color: var(--muted); font-size: 10.5px; }
-.lg-pin { background: none; border: none; cursor: pointer; font-size: 10px; padding: 0 2px;
-  opacity: 0; transition: opacity .1s; }
-.lg-row:hover .lg-pin { opacity: 1; }
 /* 담기 시트 */
 .nbp { background: var(--panel); border: 1px solid var(--line-2); border-radius: 13px; padding: 16px;
   width: min(430px, 92vw); display: flex; flex-direction: column; gap: 10px; }

@@ -160,6 +160,9 @@ class Message(Base):
     # the turn's rendered charts/tables (JSON list) — so reopened conversations keep their
     # inline {{figure:N}} artifacts (the answer body references them by 1-based position).
     artifacts: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
+    # the QT-2 number audit (JSON {checked, supported, unsupported, ledger}) — so reopened
+    # conversations keep the 판정 strip + the in-prose numeral highlights (LG-4).
+    audit: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

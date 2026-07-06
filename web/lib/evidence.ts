@@ -1,5 +1,6 @@
-// LG (수치 원장) — pure helpers for the evidence panel. Kept DOM-free so vitest covers the
-// logic without rendering: trust summary (판정 헤더), ledger row shaping, prose context labels.
+// LG — pure helpers for the trust layer. Kept DOM-free so vitest covers the logic without
+// rendering: trust summary (판정 헤더), evidence partition, and the in-prose numeral
+// annotation (LG-4: the ledger lives inside the answer body as highlighted numerals).
 
 import type { Citation, Msg } from "./types";
 
@@ -53,65 +54,23 @@ export function trustSummary(msg: Msg | null): TrustSummary {
   };
 }
 
-/** A short human label for a ledger row: the words around its span in the ORIGINAL markdown,
- *  with markdown syntax and anchors stripped. "…의 매출은 391.0B 로 전년…" → "매출은 … 로 전년". */
-export function contextLabel(content: string | undefined, row: LedgerRow, width = 26): string {
-  if (!content || !row.span) return "";
-  const [s, e] = row.span;
-  const before = content.slice(Math.max(0, s - width), s);
-  const after = content.slice(e, e + width);
-  const clean = (t: string) =>
-    t.replace(/\[\d+(?:,\s*\d+)*\]/g, " ")      // [n] anchors
-      .replace(/[*_`#>|]/g, " ")                 // markdown syntax
-      .replace(/\s+/g, " ")
-      .trim();
-  const b = clean(before);
-  const a = clean(after);
-  const head = b ? (b.length > width - 6 ? "…" + b.slice(-(width - 6)) : b) : "";
-  const tail = a ? (a.length > 12 ? a.slice(0, 12) + "…" : a) : "";
-  return [head, "◯", tail].filter(Boolean).join(" ").trim();
-}
-
-/** How many ledger rows BEFORE `i` share the same raw string — the nth-occurrence index used
- *  to find the right numeral in the rendered prose when a figure repeats. */
-export function occurrenceIndex(rows: LedgerRow[], i: number): number {
-  let n = 0;
-  for (let j = 0; j < i; j++) if (rows[j].raw === rows[i].raw) n++;
-  return n;
-}
-
-// --- prose-side highlight (LG-3) — CSS Custom Highlight API, zero DOM mutation -------------
-// Finds the nth occurrence of `raw` in the bubble's text nodes and highlights it. Degrades to
-// a no-op where the API is unavailable; never touches React-owned DOM.
-export function highlightNumeral(bubble: HTMLElement | null, raw: string, nth = 0): boolean {
-  try {
-    const H = (window as any).Highlight;
-    const registry = (CSS as any)?.highlights;
-    if (!bubble || !H || !registry) return false;
-    const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT);
-    let seen = 0;
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      const text = node.textContent || "";
-      let from = 0;
-      let at = text.indexOf(raw, from);
-      while (at !== -1) {
-        if (seen === nth) {
-          const range = document.createRange();
-          range.setStart(node, at);
-          range.setEnd(node, at + raw.length);
-          registry.set("ledger-hot", new H(range));
-          (node.parentElement as HTMLElement | null)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-          return true;
-        }
-        seen++;
-        from = at + raw.length;
-        at = text.indexOf(raw, from);
-      }
-    }
-  } catch { /* best-effort only */ }
-  return false;
-}
-
-export function clearNumeralHighlight(): void {
-  try { (CSS as any)?.highlights?.delete("ledger-hot"); } catch { /* no-op */ }
+/** LG-4 — the ledger lives IN the prose now: wrap each audited numeral in a markdown link
+ *  `[raw](#num-i)` (i = ledger row index) so the renderer turns it into a highlighted,
+ *  hoverable span with the 원자료-대조 popup. Inserts from the END so earlier spans stay
+ *  valid; a row whose span no longer matches the text is skipped (defensive — e.g. a
+ *  reloaded message whose content drifted). */
+export function annotateNumerals(md: string, rows: LedgerRow[] | undefined): string {
+  if (!md || !rows?.length) return md;
+  const tagged = rows
+    .map((r, i) => ({ r, i }))
+    .filter(({ r }) => Array.isArray(r.span) && r.span.length === 2)
+    .sort((a, b) => b.r.span![0] - a.r.span![0]);
+  let out = md;
+  for (const { r, i } of tagged) {
+    const [s, e] = r.span!;
+    const slice = out.slice(s, e);
+    if (slice.trim() !== r.raw.trim()) continue;
+    out = `${out.slice(0, s)}[${slice}](#num-${i})${out.slice(e)}`;
+  }
+  return out;
 }

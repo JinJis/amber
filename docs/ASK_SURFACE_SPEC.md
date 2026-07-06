@@ -188,3 +188,26 @@
   미지/중복 번호는 드랍. `.md.article` 타이포(h2 보더·1.78 행간·인용 블록) 적용.
 - **영속화**: `messages.artifacts`(JSON, 경량 마이그레이션) — 대화를 다시 열어도 인라인
   그림이 살아있다. [n]·근거 패널·수치 원장은 그대로 (패널 = 감사/모아보기, 본문 = 읽기 경험).
+
+---
+
+## ASK-9 / LG-4 (2026-07-06) — 질문거리 다양화 · 본문 수치 하이라이트
+
+### ASK-9 — 티커 질문거리: 소스별 후보 → 큐레이션
+문제: 온디맨드 3카드가 늘 가격/공시/뉴스 — 획일적이고 재미가 없었다.
+- gather 확대(`_ticker_plan`): 가격·공시·뉴스에 더해 밸류에이션 스냅샷(sec_edgar/opendart
+  metrics_snapshot)·내부자 거래(insider_trades)·KR 수급(kis investor_flow)·US 컨센서스/어닝
+  (fmp)·낙폭/변동성(market_history drawdowns·vol_context) — 전부 tools-guarded.
+- 2단계 합성(한 번의 Gemini 호출, `_CURATE_SCHEMA`): candidates(소스별 2~3개 후보) →
+  picks(큐레이션 인덱스). 규칙: 같은 kind 2개 이상 금지(서버 `_curate`도 재검증), 뻔한 것보다
+  의외·모순·변화 지점 우선. kind 확장: valuation·ownership·earnings (+이모지 💰👥📅).
+- limit 3→5 (studio-api 온디맨드 limit=5, UI slice 5).
+
+### LG-4 — 수치 원장이 본문 속으로
+- 패널의 '수치 원장' 섹션 삭제. audit ledger의 span으로 본문 수치를 `[raw](#num-i)`로 감싸
+  (`annotateNumerals`, 뒤→앞 삽입·불일치 스킵) 노란 하이라이트 렌더. hover → 팝업(✓ 원자료
+  대조·[n] 출처·as_of·🧮 파생·📌 노트북 담기·클릭→원문/계산과정); 미확인 수치는 앰버 ⚠.
+- 판정(TrustStrip)은 패널에 유지. `messages.audit` 컬럼으로 영속화 — 재열람에도 하이라이트 유지.
+- 합성 프롬프트 컨셉 전환: '조회된 데이터베이스에는 없습니다' 류 시스템-티 나열 금지. 정성
+  서사는 애널리스트 지식으로 풍부하게(인용 없이), 구체 수치만 자료 인용 [n] — "LLM의 답변력 +
+  검증된 수치"가 차별점.
