@@ -138,3 +138,13 @@ def test_composite_korean_numerals_merge_into_one_figure():
     # non-adjacent or ascending units never merge (5억 vs 3조 are separate claims)
     two = extract_numbers("작년 5억, 올해 3조를 벌었다.")
     assert len(two) == 2
+
+
+def test_figure_markers_are_structure_not_claims():
+    # {{figure:N}} 인라인 그림 마커의 숫자는 수치 주장이 아니다 — 블랭킹은 같은 길이의
+    # 공백이라 span은 여전히 원문 좌표를 가리킨다.
+    text = "매출은 5.2% 늘었다 [1].\n\n{{figure:1}}\n\n영업이익률은 12.4%였다 [2]."
+    nums = extract_numbers(text)
+    assert [n["raw"] for n in nums] == ["5.2%", "12.4%"]
+    s, e = nums[1]["span"]
+    assert text[s:e] == "12.4%"

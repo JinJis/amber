@@ -23,9 +23,11 @@ _NUM_RE = re.compile(
 )
 _SCALE = {"조": 1e12, "억": 1e8, "만": 1e4, "B": 1e9, "M": 1e6, "K": 1e3}
 
-# numerals that are structure, not claims: [n] anchors, years/dates, list markers, 분기/차 ordinals
+# numerals that are structure, not claims: [n] anchors, {{figure:N}} inline-figure markers,
+# years/dates, list markers, 분기/차 ordinals
 _DATEY = re.compile(r"\d{4}[-./년]\s?\d{1,2}([-./월]\s?\d{1,2}일?)?|\d{4}년|\d{1,2}월(\s?\d{1,2}일)?|\d{1,2}일\b")
 _ANCHOR = re.compile(r"\[\d+(?:,\s*\d+)*\]")
+_FIGURE = re.compile(r"\{\{figure:\d+\}\}")
 _QUARTER = re.compile(r"\d[QØ분]|Q\d|\d분기|\d단계|\d위\b|\d개\b|\d가지|\d건\b|\d년|\d개월|\d주\b|\d거래일")
 
 
@@ -34,9 +36,10 @@ def extract_numbers(text: str) -> list[dict]:
     count-ish ordinals (3가지, 2분기, 60건, 20거래일) are structure, not figures — skipped."""
     if not text:
         return []
-    # replace [n] anchors with SAME-LENGTH whitespace so every span still indexes the
-    # ORIGINAL text — the ledger (LG-1) hands these spans to the UI for prose highlighting.
+    # replace [n] anchors + {{figure:N}} markers with SAME-LENGTH whitespace so every span still
+    # indexes the ORIGINAL text — the ledger (LG-1) hands these spans to the UI for highlighting.
     cleaned = _ANCHOR.sub(lambda m: " " * len(m.group(0)), text)
+    cleaned = _FIGURE.sub(lambda m: " " * len(m.group(0)), cleaned)
     out: list[dict] = []
     for m in _NUM_RE.finditer(cleaned):
         s, e = m.span()

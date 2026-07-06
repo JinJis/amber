@@ -75,9 +75,10 @@ def test_chat_stream_proxies_and_persists(monkeypatch):
     _mock_control_plane()
     sse = (
         'data: {"type":"tool","name":"yahoo__prices","args":{}}\n\n'
-        'data: {"type":"token","text":"AAPL closed at 185."}\n\n'
+        'data: {"type":"token","text":"AAPL closed at 185. {{figure:1}}"}\n\n'
         'data: {"type":"citation","tool":"yahoo__prices","source":"Yahoo Finance"}\n\n'
-        'data: {"type":"done","citations":[{"tool":"yahoo__prices","source":"Yahoo Finance"}],"refused":false}\n\n'
+        'data: {"type":"done","citations":[{"tool":"yahoo__prices","source":"Yahoo Finance"}],'
+        '"artifacts":[{"kind":"timeseries","title":"AAPL 종가"}],"refused":false}\n\n'
     ).encode()
     respx.post("http://ae.test/agent/chat").mock(return_value=httpx.Response(200, content=sse, headers={"content-type": "text/event-stream"}))
 
@@ -94,6 +95,8 @@ def test_chat_stream_proxies_and_persists(monkeypatch):
     assert "user" in roles and "assistant" in roles
     asst = next(m for m in msgs if m["role"] == "assistant")
     assert "AAPL" in asst["content"] and asst["citations"]
+    # 인라인 그림 계약: 아티팩트가 메시지에 보존된다 → 다시 열어도 {{figure:N}} 자리가 살아있다
+    assert asst["artifacts"] and asst["artifacts"][0]["title"] == "AAPL 종가"
 
 
 # --- title derivation -----------------------------------------------------

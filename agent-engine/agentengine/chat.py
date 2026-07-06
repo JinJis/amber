@@ -164,15 +164,29 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                 c["confidence_why"] = sc.get("why")
         return note
 
+    def _figures_block() -> str:
+        # The charts/tables THIS turn rendered, numbered by their position in art_objs — the
+        # synthesis model places each inline with {{figure:N}} (the UI swaps it for the card).
+        lines = []
+        for i, a in enumerate(art_objs, 1):
+            bits = [f"{{{{figure:{i}}}}}", getattr(a, "kind", None) or "chart",
+                    getattr(a, "title", None) or ""]
+            if getattr(a, "source", None):
+                bits.append(f"출처 {a.source}")
+            lines.append(" · ".join(b for b in bits if b))
+        return "\n".join(lines)
+
     async def _synthesize(tools_arg, history_arg, system_arg):
         # REAL streaming of the final answer (gemini) — yields token events as the responder
         # generates them. Fallback/stub path char-chunks a one-shot result (newline-preserving).
         nonlocal final_text
         sources = number_sources(citations)
+        figures = _figures_block()
         if hasattr(planner, "stream_final") and (bk or settings.llm_backend) == "gemini":
             got = False
             async for delta in planner.stream_final(task, tools_arg, history_arg, system_arg,
-                                                     conversation=messages, sources=sources):
+                                                     conversation=messages, sources=sources,
+                                                     figures=figures):
                 got = True
                 final_text += delta
                 yield {"type": "token", "text": delta}
@@ -182,7 +196,8 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                     yield {"type": "token", "text": ch}
         else:
             dec = await planner.plan(task, tools_arg, history_arg, system_arg,
-                                     conversation=messages, force_final=True, sources=sources)
+                                     conversation=messages, force_final=True, sources=sources,
+                                     figures=figures)
             for ch in _chunks(dec.final or fallback_answer(citations)):
                 final_text += ch
                 yield {"type": "token", "text": ch}
@@ -420,6 +435,14 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
         used_idx = [c.get("index") for c in citations if c.get("used")] or [c.get("index") for c in citations]
         yield {"type": "token", "text": " " + anchor_markers(used_idx)}
     used = [c.get("index") for c in citations if c.get("used")]
+
+    # Inline-figure fallback: the article contract says every rendered chart/table appears in
+    # the body. If the model placed no {{figure:N}} at all, append the markers at the end so
+    # the figures still land inline (the UI swaps each marker for the real artifact card).
+    if art_objs and final_text and "{{figure:" not in final_text:
+        tail = "\n\n" + "\n\n".join(f"{{{{figure:{i}}}}}" for i in range(1, len(art_objs) + 1))
+        final_text += tail
+        yield {"type": "token", "text": tail}
 
     # QT-2: the number audit (publish trust floor) — every numeral in the prose must trace to a
     # value a tool returned THIS turn (deterministic extraction+matching, no LLM). Skipped for

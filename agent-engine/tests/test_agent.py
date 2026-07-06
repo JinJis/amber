@@ -37,7 +37,7 @@ def _fake_planner(tool, args):
 
     class _FP:
         async def plan(self, task, tools, history, system=None, conversation=None,
-                       force_final=False, sources=None):
+                       force_final=False, sources=None, figures=None):
             if history or force_final:
                 return Decision(final="AAPL was 100 [1].")
             return Decision(tool=tool, args=args)
@@ -934,7 +934,7 @@ async def test_run_agent_anchors_answer_when_model_omits(monkeypatch):
 
     class _NoAnchorPlanner:
         async def plan(self, task, tools, history, system=None, conversation=None,
-                       force_final=False, sources=None):
+                       force_final=False, sources=None, figures=None):
             if history or force_final:
                 return Decision(final="AAPL was 100.")   # NO [n] anchor → the loop must add one
             return Decision(tool="yahoo__prices", args={"ticker": "AAPL", "interval": "day",
@@ -1022,7 +1022,7 @@ async def test_run_agent_recovers_from_stuck_planner(monkeypatch):
 
     class StuckPlanner:
         async def plan(self, task, tools, history, system=None, conversation=None,
-                       force_final=False, sources=None):
+                       force_final=False, sources=None, figures=None):
             if force_final:
                 return Decision(final="")  # empty even when forced → exercises the fallback
             return Decision(tool="yahoo__prices", args={"ticker": "AAPL"})
@@ -1086,7 +1086,7 @@ async def test_run_subagent_gathers_evidence(monkeypatch):
             self.n = 0
 
         async def plan_batch(self, task, tools, history, system=None, conversation=None,
-                             force_final=False, sources=None):
+                             force_final=False, sources=None, figures=None):
             if force_final or self.n >= 1:
                 return [Decision(final="공시 리스크 정리")]
             self.n += 1
@@ -1130,7 +1130,7 @@ async def test_chat_stream_a2a_decomposes_and_combines(monkeypatch):
     def _planner_for(tool, arg):
         class P:
             def __init__(self): self.n = 0
-            async def plan_batch(self, task, tools, history, system=None, conversation=None, force_final=False, sources=None):
+            async def plan_batch(self, task, tools, history, system=None, conversation=None, force_final=False, sources=None, figures=None):
                 if force_final or self.n >= 1:
                     return [Decision(final="요약")]
                 self.n += 1
@@ -1143,7 +1143,7 @@ async def test_chat_stream_a2a_decomposes_and_combines(monkeypatch):
     monkeypatch.setattr(O, "get_planner", lambda _b=None: next(seq))
     # the COMBINER planner (used by chat.get_planner) writes the final answer
     class Combiner:
-        async def plan(self, task, tools, history, system=None, conversation=None, force_final=False, sources=None):
+        async def plan(self, task, tools, history, system=None, conversation=None, force_final=False, sources=None, figures=None):
             return Decision(final="엔비디아 종합: 주가와 리스크를 함께 봤어요 [1]")
         async def plan_batch(self, *a, **k): return [await self.plan(*a, **k)]
     monkeypatch.setattr(C, "get_planner", lambda _b=None: Combiner())
@@ -1188,7 +1188,7 @@ async def test_chat_stream_real_token_streaming(monkeypatch):
         def __init__(self):
             self.n = 0
 
-        async def plan_batch(self, task, tools, history, system=None, conversation=None, force_final=False, sources=None):
+        async def plan_batch(self, task, tools, history, system=None, conversation=None, force_final=False, sources=None, figures=None):
             if force_final or self.n >= 1:
                 return [Decision(final="(unused)")]
             self.n += 1
@@ -1197,7 +1197,7 @@ async def test_chat_stream_real_token_streaming(monkeypatch):
         async def plan(self, *a, **k):
             return (await self.plan_batch(*a, **k))[0]
 
-        async def stream_final(self, task, tools, history, system=None, conversation=None, sources=None):
+        async def stream_final(self, task, tools, history, system=None, conversation=None, sources=None, figures=None):
             for piece in ["## 제목\n\n", "첫 문장. ", "둘째 [1]"]:
                 yield piece
 
@@ -1234,7 +1234,7 @@ async def test_chat_stream_runs_batch_in_parallel(monkeypatch):
             self.rounds = 0
 
         async def plan_batch(self, task, tools, history, system=None, conversation=None,
-                             force_final=False, sources=None):
+                             force_final=False, sources=None, figures=None):
             if force_final or self.rounds >= 1:
                 return [Decision(final="주가와 공시를 함께 확인했어요 [1]")]
             self.rounds += 1
@@ -1384,7 +1384,7 @@ async def test_chat_stream_respects_allowed_tools(monkeypatch):
 
     class _AllowedOnly:
         async def plan(self, task, tools, history, system=None, conversation=None,
-                       force_final=False, sources=None):
+                       force_final=False, sources=None, figures=None):
             assert set(tools) == {"sec_edgar__company_facts"}  # price tool never offered
             if history or force_final:
                 return Decision(final="AAPL [1].")
@@ -2058,3 +2058,65 @@ def test_vol_context_artifact_carries_ribbon_field():
     art = A._artifacts(tool, {"data": data})[0]
     assert art.vol_context and art.vol_context["windows"]["20"]["percentile"] == 74.4
     assert art.vol_context["level"]["current"] == 14.2       # VIX level rides too
+
+
+@respx.mock
+async def test_inline_figure_markers_prompt_and_fallback(monkeypatch):
+    # 인라인 그림 계약(아티클 답변): 합성 모델은 이번 턴의 차트·표 목록(Figures 블록)을 받고,
+    # {{figure:N}}을 하나도 배치하지 않으면 글 끝에 마커가 자동으로 이어붙는다 — 그림은
+    # 반드시 본문에 등장한다. 감사(QT-2)는 마커 속 숫자를 수치 주장으로 세지 않는다.
+    import agentengine.chat as C
+    from agentengine.agent import TaskIntake
+    from agentengine.planner import Decision
+    from agentengine.chat import stream_chat
+
+    _gw(monkeypatch)
+    _catalog()
+    respx.route(method="GET", url__regex=r"http://gw\.test/prices").mock(
+        return_value=httpx.Response(200, json={"ticker": "AAPL", "prices": [{"time": "2024-01-02", "close": 185.6}]},
+                                    headers={"x-connector": "yahoo"}))
+
+    seen: dict = {}
+
+    class P:
+        def __init__(self):
+            self.n = 0
+
+        async def plan_batch(self, task, tools, history, system=None, conversation=None,
+                             force_final=False, sources=None, figures=None):
+            if force_final or self.n >= 1:
+                return [Decision(final="(unused)")]
+            self.n += 1
+            return [Decision(tool="yahoo__prices",
+                             args={"ticker": "AAPL", "interval": "day",
+                                   "start_date": "2024-01-02", "end_date": "2024-01-05", "market": "US"})]
+
+        async def plan(self, *a, **k):
+            return (await self.plan_batch(*a, **k))[0]
+
+        async def stream_final(self, task, tools, history, system=None, conversation=None,
+                               sources=None, figures=None):
+            seen["figures"] = figures
+            yield "종가는 185.6달러였다 [1]."   # 마커를 하나도 배치하지 않음 → 폴백 발동
+
+    async def _intake(_t, _b=None, conversation=None):
+        return TaskIntake(steps=2, needs_data=True)
+
+    async def _no_refine(*a, **k):
+        return (None, {})
+
+    monkeypatch.setattr(C, "analyze_task", _intake)
+    monkeypatch.setattr(C, "refine_evidence", _no_refine)
+    monkeypatch.setattr(C, "get_planner", lambda _b=None: P())
+    monkeypatch.setattr(C.settings, "llm_backend", "gemini")
+
+    events = [e async for e in stream_chat([{"role": "user", "content": "AAPL 주가 차트"}], "vgk_x")]
+    # ① 합성 프롬프트에 Figures 블록이 전달됐다 (기존 아티팩트 번호 그대로)
+    assert seen["figures"] and "{{figure:1}}" in seen["figures"] and "timeseries" in seen["figures"]
+    # ② 모델이 마커를 안 넣었으므로 글 끝에 {{figure:1}}이 자동으로 흐른다
+    prose = "".join(e["text"] for e in events if e["type"] == "token")
+    assert prose.rstrip().endswith("{{figure:1}}")
+    done = events[-1]
+    assert done["type"] == "done" and done["artifacts"]
+    # ③ QT-2 감사: 마커 속 '1'은 수치 주장이 아니다 (미확인 0건)
+    assert done["audit"] and done["audit"]["unsupported"] == []

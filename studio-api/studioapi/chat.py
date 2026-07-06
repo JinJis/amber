@@ -71,6 +71,7 @@ async def drive_run(run: Run, user: User, conv_id: str, payload: dict) -> None:
     browser connection — leaving the chat doesn't stop this."""
     text_parts: list[str] = []
     citations: list[dict] = []
+    artifacts: list[dict] = []
     async with httpx.AsyncClient(timeout=None) as client:
         async with client.stream(
             "POST", f"{settings.agent_engine_url}/agent/chat",
@@ -88,11 +89,13 @@ async def drive_run(run: Run, user: User, conv_id: str, payload: dict) -> None:
                     text_parts.append(ev.get("text", ""))
                 elif ev.get("type") == "done":
                     citations = ev.get("citations") or citations
+                    artifacts = ev.get("artifacts") or artifacts
 
     with SessionLocal() as db:
         db.add(Message(
             conversation_id=conv_id, role="assistant",
             content="".join(text_parts), citations=json.dumps(citations, ensure_ascii=False),
+            artifacts=json.dumps(artifacts, ensure_ascii=False),
         ))
         db.commit()
     # final marker so a tail learns the (already-known) conversation id and can stop

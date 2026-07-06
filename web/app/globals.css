@@ -847,6 +847,23 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .msg.user .bubble { background: var(--ink); border: 1px solid var(--ink); color: #EDEDEF;
   padding: 10px 14px; border-radius: 15px; border-bottom-right-radius: 5px; max-width: 80%; white-space: pre-wrap; }
 .msg.assistant .bubble { background: transparent; border: none; box-shadow: none; padding: 0; max-width: 100%; }
+
+/* ── 아티클 답변 — 전문 리서치 노트처럼 읽히는 본문 타이포 + 인라인 그림 ─────────── */
+.msg.assistant .md.article { font-size: 14px; line-height: 1.78; color: var(--text); }
+.msg.assistant .md.article p { margin: 0 0 13px; }
+.msg.assistant .md.article h1 { font-size: 19px; margin: 20px 0 10px; letter-spacing: -.015em; }
+.msg.assistant .md.article h2 { font-size: 16.5px; margin: 24px 0 10px; letter-spacing: -.01em;
+  padding-bottom: 6px; border-bottom: 1px solid var(--line-3); }
+.msg.assistant .md.article h3 { font-size: 14.5px; margin: 18px 0 8px; }
+.msg.assistant .md.article ul, .msg.assistant .md.article ol { margin: 8px 0 13px; }
+.msg.assistant .md.article table { margin: 12px 0; }
+.msg.assistant .md.article blockquote { border-left: 3px solid var(--accent);
+  margin: 12px 0; padding: 4px 0 4px 12px; color: var(--text-2); }
+/* {{figure:N}} 자리에 렌더링되는 실제 차트·표 — 본문 속 그림 (center-align) */
+.inline-figure { margin: 16px auto 20px; width: 100%; max-width: 660px; }
+.inline-figure .artifact { width: 100%; margin: 0; }
+.inline-figure .artifact-head { flex-wrap: wrap; row-gap: 6px; }
+.inline-figure .srcprev { margin-bottom: 0; }
 /* inline evidence cards woven directly under the answer (Live Context panel removed) */
 .answer-sources { width: 100%; margin-top: 4px; }
 .answer-sources .as-label { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }

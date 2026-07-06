@@ -30,18 +30,33 @@ from agentengine.gemini_io import (  # noqa: F401
 logger = logging.getLogger(__name__)
 
 
-# The responder prompt. The whole point: a rich answer that MIXES our sourced evidence with
-# the model's own analyst expertise — not a terse restatement of fetched rows. Hard rules keep
-# it trustworthy: every NUMBER/specific fact comes from a source and is cited; the model may
-# (and should) add qualitative context/definitions/interpretation; no forecast/advice; no
-# fabricated figures; no tool names or raw URLs in the prose.
+# The responder prompt. The whole point: a rich RESEARCH-NOTE answer (전문 블로그 글) that MIXES
+# our sourced evidence with the model's own analyst expertise — not a terse restatement of
+# fetched rows. The figures the turn produced ({{figure:N}}, see the Figures block in the system
+# instruction) are placed INLINE so charts/tables read as part of the article, not a side panel.
+# Hard rules keep it trustworthy: every NUMBER/specific fact comes from a source and is cited;
+# no forecast/advice; no fabricated figures; no tool names or raw URLs in the prose.
 _SYNTHESIS_PROMPT = (
-    "당신은 금융 리서치 애널리스트입니다. 사용자의 질문에 같은 언어로, 직접적이고 간결하게 답하세요.\n"
-    "분량은 질문에 비례합니다:\n"
-    "- 단순한 사실/수치 질문(예: '환율', 'Fed 기준금리 추이')에는 핵심만 1~3문장으로. 묻지 않은 역사 "
-    "강의·배경 설명·머리말·반복은 넣지 마세요.\n"
-    "- 사용자가 '자세히/분석/이유'를 요청했거나 본질적으로 복잡한 질문일 때만 더 길게, 필요한 만큼만 설명하세요.\n"
-    "원칙:\n"
+    "당신은 금융 리서치 데스크의 시니어 애널리스트입니다. 사용자의 질문에 같은 언어로, 잘 짜인 "
+    "리서치 노트 — 전문 투자 블로그의 글 — 형식으로 답하세요. 데이터가 이야기의 주인공입니다.\n"
+    "\n"
+    "글의 구성 (수집된 자료가 여럿일 때):\n"
+    "- 리드: 첫 1~2문장에서 질문의 핵심 답을 바로 제시하세요 (두괄식). 인사말·서론·질문 반복 금지.\n"
+    "- 본문: '## 소제목'으로 자연스럽게 2~4개 섹션을 나누고, 각 섹션은 데이터 → 그 데이터가 말해주는 것 → "
+    "맥락(정의·비교·역사적 크기감) 순으로 문단을 이어가세요. 수치를 나열하지 말고 흐름·비교·규모가 "
+    "읽히는 문장으로 풀어내세요. 서로 다른 자료가 같은 방향을 가리키는지/어긋나는지 짚어주면 좋습니다.\n"
+    "- 필요하면 비교표(마크다운 표)를 쓰고, 표 아래에 근거 [n]을 명시하세요.\n"
+    "- 마무리: '이번에 확인된 것' 2~3줄 요약 + 자료로 더 파볼 만한 다음 질문 방향 한 줄 "
+    "(전망이 아니라 '무엇을 더 보면 되는지').\n"
+    "- 분량: 자료가 풍부하면 아끼지 마세요 — 깊이 있는 글이 우리 서비스의 가치입니다. 반대로 단순한 "
+    "사실/수치 질문(예: '환율 얼마야')에는 헤딩 없이 핵심만 1~3문장으로 짧게 끝내세요.\n"
+    "\n"
+    "그림 배치 — 시스템의 'Figures' 목록이 있을 때 (이번 턴에 실제로 그려진 차트·표):\n"
+    "- 해당 데이터를 다룬 문단 '바로 다음 줄'에 {{figure:N}}을 단독 줄로 넣으세요. 그 자리에 실제 "
+    "차트/표가 본문 그림으로 렌더링됩니다. '아래 차트에서 보듯 …'처럼 그림을 본문이 가리키게 쓰세요.\n"
+    "- 목록에 있는 번호만, 각 번호는 최대 1번. 글과 무관한 그림은 배치하지 않아도 됩니다.\n"
+    "\n"
+    "원칙 (모두 필수):\n"
     "- 구체적 수치·날짜·사실은 위에 제공된 자료에서만 가져오고 문장 끝에 [n]으로 인용하세요. 시스템 'Sources' "
     "목록의 정확한 번호만 쓰고, 새 번호를 만들거나 순서를 바꾸지 마세요. 자료에 없는 수치는 절대 지어내지 마세요.\n"
     "- 완결성: 질문이 여러 항목을 요구하면(예: '물가·고용·성장·금리', '매출과 EPS', '연도별') 각 항목을 "
@@ -49,8 +64,8 @@ _SYNTHESIS_PROMPT = (
     "질문에 답하기 전에 요구된 항목 목록을 속으로 체크리스트로 만들어 하나씩 확인하세요.\n"
     "- 인용 밀도: 수치·날짜·고유 사실이 담긴 '모든' 문장에 [n]을 붙이세요 — 문단당 하나가 아니라 문장 단위로. "
     "표를 쓸 경우 표 아래에 근거 [n]을 명시하세요.\n"
-    "- 맥락·해석을 덧붙일 때도 간결하게. 수치 나열이 아니라 핵심 의미만 짚으세요.\n"
-    "- 자료가 부족하면 솔직히 밝히고, 무엇을 더 보면 되는지 한 줄로 안내하세요.\n"
+    "- 해석은 자료가 실제로 보여주는 범위까지만. 자료가 부족하면 솔직히 밝히고, 무엇을 더 보면 되는지 "
+    "한 줄로 안내하세요.\n"
     "- 가격 예측·목표가·매수/매도 의견 금지. 면책 문구·내부 도구명(예: opendart__income_statements)·"
     "원문 URL은 본문에 쓰지 마세요([n]만 — 링크는 출처 카드에 표시됩니다).\n"
     "- 밸류에이션(DCF/DDM/RIM)·백테스트 결과를 쓸 때: 사용한 가정·보유·기간을 명시하고, 문단 끝에 "
@@ -61,7 +76,7 @@ _SYNTHESIS_PROMPT = (
     "기간을 본문에 명시하세요. '~할 확률', '반등할 것', '앞으로 ~할 수 있다' 같은 미래 주장 표현은 금지 — "
     "'상승 마감 비율(과거)'처럼 기록임을 드러내는 표현만 쓰세요. 해당 단락 끝에 "
     "'과거 기록 · 전망 아님'을 붙이세요.\n"
-    "마크다운을 쓰되, 짧은 답에는 헤딩·불릿을 남용하지 말고 자연스러운 문단으로 쓰세요."
+    "마크다운을 쓰되, 짧은 답에는 헤딩·불릿·그림 배치를 남용하지 말고 자연스러운 문단으로 쓰세요."
 )
 
 
@@ -91,9 +106,10 @@ class GeminiPlanner:
 
     async def plan(self, task: str, tools: dict, history: list, system: str | None = None,
                    conversation: list | None = None, force_final: bool = False,
-                   sources: str | None = None) -> Decision:
+                   sources: str | None = None, figures: str | None = None) -> Decision:
         # single-decision view (run_agent / callers that don't fan out): the first call.
-        decisions = await self._run(task, tools, history, system, conversation, force_final, sources)
+        decisions = await self._run(task, tools, history, system, conversation, force_final,
+                                    sources, figures)
         return decisions[0]
 
     async def plan_batch(self, task: str, tools: dict, history: list, system: str | None = None,
@@ -103,7 +119,8 @@ class GeminiPlanner:
         # caller), or a single final Decision. This is what enables parallel multi-source gather.
         return await self._run(task, tools, history, system, conversation, force_final, sources)
 
-    def _build_system_instruction(self, system: str | None, sources: str | None) -> str:
+    def _build_system_instruction(self, system: str | None, sources: str | None,
+                                  figures: str | None = None) -> str:
         from datetime import datetime
 
         current_date = datetime.now().strftime("%Y-%m-%d")
@@ -144,17 +161,26 @@ class GeminiPlanner:
                 "\n\nSources (cite ONLY with these exact bracketed numbers; do not invent or reorder):\n"
                 + sources
             )
+        if figures:
+            # the charts/tables THIS turn actually rendered — the model places each inline in the
+            # article with a bare {{figure:N}} line (the UI swaps it for the real artifact).
+            system_instruction += (
+                "\n\nFigures (place inline with {{figure:N}} on its own line, right after the "
+                "paragraph that discusses it; use ONLY these numbers, each at most once):\n"
+                + figures
+            )
         return system_instruction
 
     async def stream_final(self, task: str, tools: dict, history: list, system: str | None = None,
-                           conversation: list | None = None, sources: str | None = None):
+                           conversation: list | None = None, sources: str | None = None,
+                           figures: str | None = None):
         """REAL token streaming of the final synthesis (responder model). Yields text deltas
         as Gemini generates them — so the answer appears incrementally, not all at once. Each
         `next()` on the sync stream is offloaded so the event loop stays free."""
         import asyncio
         from google.genai import types
 
-        system_instruction = self._build_system_instruction(system, sources)
+        system_instruction = self._build_system_instruction(system, sources, figures)
         contents = _to_gemini_contents(conversation, history, task)
         contents.append(types.Content(role="user", parts=[types.Part.from_text(text=_SYNTHESIS_PROMPT)]))
         config = types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.3)
@@ -178,11 +204,11 @@ class GeminiPlanner:
 
     async def _run(self, task: str, tools: dict, history: list, system: str | None = None,
                    conversation: list | None = None, force_final: bool = False,
-                   sources: str | None = None) -> list[Decision]:
+                   sources: str | None = None, figures: str | None = None) -> list[Decision]:
         import asyncio
         from google.genai import types
 
-        system_instruction = self._build_system_instruction(system, sources)
+        system_instruction = self._build_system_instruction(system, sources, figures)
         contents = _to_gemini_contents(conversation, history, task)
 
         if force_final:

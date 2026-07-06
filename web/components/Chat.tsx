@@ -32,6 +32,57 @@ export function linkifyCitations(md: string): string {
   return md.replace(/\[(\d{1,3})\](?!\()/g, "[[$1]](#cite-$1)");
 }
 
+// ARTICLE: the answer body is a research note with figures INLINE — the synthesis model
+// places {{figure:N}} markers (1-based into the turn's artifacts) where each chart/table
+// belongs in the prose. Split the markdown into text/figure segments. While streaming, a
+// half-arrived marker at the tail ("{{figu…") is hidden so it never flashes as raw text.
+export function splitFigures(md: string, streaming?: boolean): { text?: string; fig?: number }[] {
+  const src = streaming ? md.replace(/\{\{[^}]*$/, "") : md;
+  const parts = src.split(/\{\{figure:(\d{1,2})\}\}/g);
+  const out: { text?: string; fig?: number }[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 1) out.push({ fig: Number(parts[i]) });
+    else if (parts[i]) out.push({ text: parts[i] });
+  }
+  return out;
+}
+
+// The article body: markdown segments interleaved with the REAL artifact cards (blog
+// figures, center-aligned). Unknown/duplicate figure numbers are dropped silently — old
+// conversations without persisted artifacts degrade to plain prose, never raw markers.
+export function AnswerArticle({ content, artifacts, streaming, mdComponents, onEvidence, onPin, onShare }: {
+  content: string; artifacts?: Artifact[]; streaming?: boolean;
+  mdComponents: ReturnType<typeof makeMdComponents>;
+  onEvidence?: (c: Citation) => void;
+  onPin?: (a: Artifact) => void;
+  onShare?: (a: Artifact) => void;
+}) {
+  const segs = splitFigures(content, streaming);
+  const seen = new Set<number>();
+  return (
+    <div className="md article">
+      {segs.map((s, k) => {
+        if (s.text != null) {
+          return (
+            <ReactMarkdown key={k} remarkPlugins={[remarkGfm, remarkCjkEmphasis]} components={mdComponents}>
+              {linkifyCitations(s.text)}
+            </ReactMarkdown>
+          );
+        }
+        const a = s.fig != null && !seen.has(s.fig) ? artifacts?.[s.fig - 1] : undefined;
+        if (!a || s.fig == null) return null;
+        seen.add(s.fig);
+        return (
+          <figure key={k} className="inline-figure" data-testid={`fig-${s.fig}`}
+            onClick={(e) => e.stopPropagation()}>
+            <ArtifactCard a={a} onPin={onPin} onShare={onShare} onEvidence={onEvidence} />
+          </figure>
+        );
+      })}
+    </div>
+  );
+}
+
 function makeMdComponents(
   hoverCite: number | null,
   setHoverCite: (n: number | null) => void,
@@ -218,11 +269,13 @@ export default function Chat({ name, features }: { name: string; features: Featu
     try {
       const r = await fetch(`/api/conversations/${id}/messages`);
       if (!r.ok) { setLoadError(id); return; }  // IMP-5: silent blank thread → visible banner
-      const msgs = ((await r.json()).messages ?? []) as { role: string; content: string; citations?: Citation[] }[];
+      const msgs = ((await r.json()).messages ?? []) as
+        { role: string; content: string; citations?: Citation[]; artifacts?: Artifact[] }[];
       setMessages(msgs.map((m) => ({
         role: m.role === "assistant" ? "assistant" : "user",
         content: m.content,
         citations: m.citations ?? [],
+        artifacts: m.artifacts ?? [],   // persisted → inline {{figure:N}} cards survive reload
         used: (m.citations ?? []).map((c) => c.index).filter((n): n is number => n != null),
       })));
       // resume an in-flight answer: if this conversation is still generating, tail its run live
@@ -642,9 +695,10 @@ export default function Chat({ name, features }: { name: string; features: Featu
                     >
                       <div className="bubble" ref={(el) => { if (el) bubbleRefs.current.set(i, el); }}>
                         {m.content
-                          ? <div className="md"><ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkEmphasis]}
-                              components={makeMdComponents(panelIdx === i ? hoverCite : null, setHoverCite, citeClickFor(i))}>
-                              {linkifyCitations(m.content)}</ReactMarkdown></div>
+                          ? <AnswerArticle content={m.content} artifacts={m.artifacts}
+                              streaming={busy && i === messages.length - 1}
+                              mdComponents={makeMdComponents(panelIdx === i ? hoverCite : null, setHoverCite, citeClickFor(i))}
+                              onEvidence={setViewer} onPin={pinArtifact} onShare={(a) => setShareArt(a)} />
                           : (busy && !(m.thinking?.length) ? "…" : "")}
                       </div>
                       {(() => {

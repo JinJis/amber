@@ -134,6 +134,7 @@
 | ASK-5 | ask-feed 파이프라인+첫 화면 | studio-api·agent-engine·web | 유닛(캐시 upsert·서명 스킵·조립) + eval 시나리오(ask-feed 카드에 미출처 수치 0) |
 | ASK-6 | 온보딩 v2 | web | vitest: 3종목 미만 진행 불가, 알림 스텝 부재 |
 | ASK-7 | 근거 패널 v3 + 엔트리 v4 | studio-api·agent-engine·web | 유닛(패널 2단계 플로우·온디맨드 캐시 TTL·news_feed 전용 리프레셔) |
+| ASK-8 | 아티클 답변 (인라인 그림) | agent-engine·studio-api·web | 유닛(Figures 블록 전달·마커 폴백·감사 블랭킹·마커 분할 렌더·아티팩트 영속화) |
 
 전 태스크: 클린 빌드 + tiny 유니버스(eval_us/eval_kr)로 검증 (memory 규칙).
 
@@ -167,3 +168,23 @@
   백그라운드 리프레셔가 도는 스코프는 **news_feed 하나뿐**.
 - `GET /ask-feed` 응답: `{groups, tickers[{market,ticker,name,groups}], news_feed[], news_generated_at}`
   (tickers에 cards 없음 — pending 개념 삭제).
+
+---
+
+## ASK-8 (2026-07-06) — 아티클 답변: 근거가 본문에 흐른다
+
+문제: 근거(차트·표·출처)는 패널에만 있고 본문은 짧은 각주([n]) 요약 — 뉴스 요약형 챗봇 대비
+길이·깊이가 빈약해 보이고, 우리 강점(실데이터 + provenance)이 본문에서 안 보였다.
+
+- **합성**: `_SYNTHESIS_PROMPT`(planner.py)가 리서치 노트 형식을 지시 — 두괄식 리드,
+  `## 소제목` 2~4 섹션(데이터→의미→맥락), 비교표, '이번에 확인된 것' 마무리, 자료가 풍부하면
+  충분히 긴 글. 단순 수치 질문은 여전히 1~3문장 (분량은 질문에 비례).
+- **인라인 그림 계약**: 시스템 명령의 `Figures` 블록(이번 턴 art_objs, 1-based)을 보고 모델이
+  해당 문단 뒤에 `{{figure:N}}`을 단독 줄로 배치. 하나도 배치하지 않으면 chat.py가 글 끝에
+  마커를 자동 폴백(그림은 반드시 본문에 등장). audit(QT-2)는 마커를 같은 길이 공백으로
+  블랭킹 — 마커 숫자는 수치 주장이 아니고 span 좌표도 보존.
+- **웹 렌더**: `splitFigures()`가 본문을 마커 기준 분할, 마커 자리에 실제 `ArtifactCard`를
+  `figure.inline-figure`(center-align, max 660px)로 렌더. 스트리밍 중 반쯤 도착한 마커는 숨김,
+  미지/중복 번호는 드랍. `.md.article` 타이포(h2 보더·1.78 행간·인용 블록) 적용.
+- **영속화**: `messages.artifacts`(JSON, 경량 마이그레이션) — 대화를 다시 열어도 인라인
+  그림이 살아있다. [n]·근거 패널·수치 원장은 그대로 (패널 = 감사/모아보기, 본문 = 읽기 경험).

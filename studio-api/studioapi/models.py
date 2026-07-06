@@ -157,6 +157,9 @@ class Message(Base):
     role: Mapped[str] = mapped_column(String(16))
     content: Mapped[str] = mapped_column(Text)
     citations: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
+    # the turn's rendered charts/tables (JSON list) — so reopened conversations keep their
+    # inline {{figure:N}} artifacts (the answer body references them by 1-based position).
+    artifacts: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

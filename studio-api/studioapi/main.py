@@ -108,7 +108,9 @@ async def conversation_messages(conversation_id: str, user: User = Depends(curre
             select(Message).where(Message.conversation_id == conversation_id).order_by(Message.id)
         ).scalars().all()
         return {"messages": [
-            {"role": m.role, "content": m.content, "citations": json.loads(m.citations) if m.citations else []}
+            {"role": m.role, "content": m.content,
+             "citations": json.loads(m.citations) if m.citations else [],
+             "artifacts": json.loads(m.artifacts) if m.artifacts else []}
             for m in rows
         ]}
 

@@ -84,6 +84,12 @@ def _add_missing_columns() -> None:
             # M-DESK: last visit timestamp for the desk feed's "since last visit" windows
             if "last_seen_at" not in ucols:
                 conn.execute(text(f"ALTER TABLE users ADD COLUMN last_seen_at {ts}"))
+    # inline figures: the turn's artifacts persisted on the assistant message
+    if "messages" in names:
+        mcols = {c["name"] for c in inspector.get_columns("messages")}
+        with engine.begin() as conn:
+            if "artifacts" not in mcols:
+                conn.execute(text("ALTER TABLE messages ADD COLUMN artifacts TEXT"))
     # IMP-13: share expiry on existing share_links tables
     if "share_links" in names:
         scols = {c["name"] for c in inspector.get_columns("share_links")}
