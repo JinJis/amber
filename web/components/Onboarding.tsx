@@ -12,7 +12,6 @@
 // ask-feed 첫 화면이 관심종목에서 나오므로, 등록이 곧 온보딩이다.
 
 import { useMemo, useState } from "react";
-import type { Features } from "@/lib/features";
 import { PRESETS } from "@/lib/presets";
 import { FIX_CITATIONS, FIX_FOLLOWUPS, FIX_QCARDS, FIX_TRUST } from "@/lib/onboardingFixtures";
 import { Button } from "./ui";
@@ -38,7 +37,7 @@ function Preview({ children, testid }: { children: React.ReactNode; testid: stri
   );
 }
 
-export default function Onboarding({ onDone }: { features?: Features; onDone: () => void }) {
+export default function Onboarding({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState(0);
   const key = STEPS[step];
   const last = step === STEPS.length - 1;

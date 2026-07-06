@@ -30,9 +30,11 @@ from pydantic import BaseModel
 from agentengine.config import settings
 from agentengine.deskfeed import (
     DeskCard,
+    _CARD_ITEM,
     _gather,
+    _loads_obj,
     _now_iso,
-    _SNIPPET_CHARS,
+    _snippets,
     _SYNTH_SCHEMA,
 )
 from agentengine.client import PlatformClient
@@ -174,19 +176,8 @@ _NEWS_PROMPT = """당신은 리서치 데스크의 시황·거시 에디터입�
 
 
 # ASK-9: the ticker scope answers in TWO fields — every per-source candidate + the curator's
-# picks — so the model provably generates per-source before curating for diversity.
-_CARD_ITEM = {
-    "type": "object",
-    "properties": {
-        "kind": {"type": "string"},
-        "question": {"type": "string"},
-        "query": {"type": "string"},   # 실행용 명령문 — 컴포저에 들어가는 텍스트 (question은 표시용)
-        "hook": {"type": "string"},
-        "sources": {"type": "array", "items": {"type": "integer"}},
-        "ticker": {"type": "string"},
-    },
-    "required": ["kind", "question", "hook", "sources"],
-}
+# picks — so the model provably generates per-source before curating for diversity. The card
+# item shape (_CARD_ITEM) is shared with desk-feed.
 _CURATE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -195,23 +186,6 @@ _CURATE_SCHEMA = {
     },
     "required": ["candidates", "picks"],
 }
-
-
-def _loads_obj(raw: str) -> dict:
-    """Robust JSON object pull (flash models don't always honor strict JSON mode)."""
-    import re as _re
-    try:
-        obj = json.loads(raw)
-        return obj if isinstance(obj, dict) else {}
-    except (ValueError, TypeError):
-        m = _re.search(r"\{.*\}", raw or "", _re.S)
-        if m:
-            try:
-                obj = json.loads(m.group(0))
-                return obj if isinstance(obj, dict) else {}
-            except (ValueError, TypeError):
-                return {}
-    return {}
 
 
 async def _gen_json(prompt: str, schema: dict) -> dict:
@@ -261,14 +235,6 @@ def _curate(obj: dict, limit: int) -> list[dict]:
         if len(out) >= limit:
             break
     return out
-
-
-def _snippets(gathered: list[dict]) -> str:
-    return "\n".join(
-        f"[{g['idx']}] {g['why']} · 출처 {g['citation'].source} · 도구 {g['tool']}\n"
-        f"{json.dumps(g['data'], ensure_ascii=False, default=str)[:_SNIPPET_CHARS]}"
-        for g in gathered
-    )
 
 
 async def build_ask_feed(req: AskFeedRequest, api_key: str | None) -> dict:

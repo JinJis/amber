@@ -10,238 +10,34 @@ import NotebookView from "./NotebookView";
 import { NotebookPicker, type PinPayload } from "./NotebookPicker";
 import CockpitEntry from "./CockpitEntry";
 import Watchlists, { Watchlist } from "./Watchlists";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { remarkCjkEmphasis } from "../lib/markdown";
 import { ContextPanel, evidenceOf, uniqueTools } from "./EvidencePanel";
-import { annotateNumerals, type LedgerRow } from "../lib/evidence";
+import { type LedgerRow } from "../lib/evidence";
 import { SourceViewer } from "./SourceViewer";
-import { ArtifactCard } from "./ArtifactCard";
 import { Button, Chip, GuardrailLabel, Mascot, FreshnessDot } from "./ui";
 import type { Features } from "../lib/features";
 import { FeaturesProvider } from "../lib/features-context";
+// 답변 본문 렌더링 클러스터 + 스트림 파트는 chat/ 하위로 분리(FE-2). 테스트가
+// `../components/Chat`에서 임포트하므로 아래 심볼들은 그대로 재익스포트한다.
+import { AnswerArticle, linkifyCitations, makeMdComponents, splitFigures, type NumCtx } from "./chat/answer";
+import { ClarifyChips, SubAgentCards, ThinkingLive } from "./chat/parts";
+export { AnswerArticle, linkifyCitations, makeMdComponents, splitFigures };
+export type { NumCtx };
 // Chat / SSE-event + Artifact/Citation shapes now live in lib/types.ts (FE-01).
 import type {
-  Artifact, Citation, Clarify, ClarifyOption, Msg, SubAgent, Think, ToolUse,
+  Artifact, Citation, ClarifyOption, Msg, SubAgent, ToolUse,
 } from "../lib/types";
 
-// LG-3: bare [n] markers become links (#cite-n) — but never a [n] that is already a
-// markdown link. The renderer turns them into live refs: hover ↔ panel-card highlight,
-// click → scroll+flash that card in the 근거 패널 (the footnote becomes a remote control).
-export function linkifyCitations(md: string): string {
-  return md.replace(/\[(\d{1,3})\](?!\()/g, "[[$1]](#cite-$1)");
-}
-
-// ARTICLE: the answer body is a research note with figures INLINE — the synthesis model
-// places {{figure:N}} markers (1-based into the turn's artifacts) where each chart/table
-// belongs in the prose. Split the markdown into text/figure segments. While streaming, a
-// half-arrived marker at the tail ("{{figu…") is hidden so it never flashes as raw text.
-export function splitFigures(md: string, streaming?: boolean): { text?: string; fig?: number }[] {
-  const src = streaming ? md.replace(/\{\{[^}]*$/, "") : md;
-  const parts = src.split(/\{\{figure:(\d{1,2})\}\}/g);
-  const out: { text?: string; fig?: number }[] = [];
-  for (let i = 0; i < parts.length; i++) {
-    if (i % 2 === 1) out.push({ fig: Number(parts[i]) });
-    else if (parts[i]) out.push({ text: parts[i] });
-  }
-  return out;
-}
-
-// The article body: markdown segments interleaved with the REAL artifact cards (blog
-// figures, center-aligned). Audited numerals get wrapped first (annotateNumerals → the
-// yellow LG-4 highlights). Unknown/duplicate figure numbers are dropped silently — old
-// conversations without persisted artifacts degrade to plain prose, never raw markers.
-export function AnswerArticle({ content, artifacts, ledger, streaming, mdComponents, onEvidence, onPin, onShare }: {
-  content: string; artifacts?: Artifact[]; ledger?: LedgerRow[]; streaming?: boolean;
-  mdComponents: ReturnType<typeof makeMdComponents>;
-  onEvidence?: (c: Citation) => void;
-  onPin?: (a: Artifact) => void;
-  onShare?: (a: Artifact) => void;
-}) {
-  const segs = splitFigures(annotateNumerals(content, streaming ? undefined : ledger), streaming);
-  const seen = new Set<number>();
-  return (
-    <div className="md article">
-      {segs.map((s, k) => {
-        if (s.text != null) {
-          return (
-            <ReactMarkdown key={k} remarkPlugins={[remarkGfm, remarkCjkEmphasis]} components={mdComponents}>
-              {linkifyCitations(s.text)}
-            </ReactMarkdown>
-          );
-        }
-        const a = s.fig != null && !seen.has(s.fig) ? artifacts?.[s.fig - 1] : undefined;
-        if (!a || s.fig == null) return null;
-        seen.add(s.fig);
-        return (
-          <figure key={k} className="inline-figure" data-testid={`fig-${s.fig}`}
-            onClick={(e) => e.stopPropagation()}>
-            <ArtifactCard a={a} onPin={onPin} onShare={onShare} onEvidence={onEvidence} />
-          </figure>
-        );
-      })}
-    </div>
-  );
-}
-
-// LG-4: 본문 속 수치 원장 — the audited numeral, highlighted in the prose. Hover → a small
-// popup with the 원자료 대조 result (출처 [n]·as_of·파생 🧮·📌담기); click → the source/derivation.
-function NumHighlight({ row, cit, children, setHoverCite, onEvidence, onPinLedger }: {
-  row: LedgerRow; cit: Citation | null; children: React.ReactNode;
-  setHoverCite: (n: number | null) => void;
-  onEvidence?: (c: Citation) => void;
-  onPinLedger?: (row: Record<string, unknown>, c: Citation | null) => void;
-}) {
-  const [pinned, setPinned] = useState(false);
-  const derived = !!cit?.computation;
-  return (
-    <span className={`num-hl ${row.supported ? "" : "warn"}`} data-testid="num-hl"
-      role={cit ? "button" : undefined} tabIndex={cit ? 0 : undefined}
-      onMouseEnter={() => cit?.index != null && setHoverCite(cit.index)}
-      onMouseLeave={() => setHoverCite(null)}
-      onClick={cit ? (e) => { e.stopPropagation(); onEvidence?.(cit); } : undefined}>
-      {children}
-      <span className="num-tip" role="tooltip" onClick={(e) => e.stopPropagation()}>
-        {row.supported ? (
-          <>
-            <span className="nt-line nt-ok">✓ 원자료 대조 확인{derived ? " · 🧮 계산으로 도출" : ""}</span>
-            <span className="nt-line">
-              {cit ? <>[{cit.index}] {cit.source}{cit.as_of ? ` · ${cit.as_of}` : ""}</> : "차트·표 데이터와 일치"}
-            </span>
-            {cit && <span className="nt-hint">{derived ? "누르면 계산 과정을 볼 수 있어요" : "누르면 원문을 볼 수 있어요"}</span>}
-            {onPinLedger && (
-              <button type="button" className="nt-pin" disabled={pinned}
-                onClick={(e) => { e.stopPropagation(); onPinLedger(row as unknown as Record<string, unknown>, cit); setPinned(true); }}>
-                {pinned ? "✓ 노트북" : "📌 노트북에 담기"}
-              </button>
-            )}
-          </>
-        ) : (
-          <span className="nt-line nt-warn">⚠ 이번 답변의 자료에서는 확인하지 못한 숫자예요</span>
-        )}
-      </span>
-    </span>
-  );
-}
-
-export type NumCtx = {
-  rows: LedgerRow[]; citations: Citation[];
-  onEvidence?: (c: Citation) => void;
-  onPinLedger?: (row: Record<string, unknown>, c: Citation | null) => void;
-};
-
-export function makeMdComponents(
-  hoverCite: number | null,
-  setHoverCite: (n: number | null) => void,
-  onCiteClick: (n: number) => void,
-  num?: NumCtx,
-) {
+// Map a citation-carrying SSE event (streamed `citation` or the `done` list) to a Citation.
+// cadence/category ride along so a pinned widget knows if it can carry an alert; table +
+// evidence_image_url let the source card reach the original filing/page.
+function toCitation(ev: any): Citation {
   return {
-    a: (props: any) => {
-      const m = String(props.href || "").match(/^#cite-(\d+)$/);
-      if (m) {
-        const n = Number(m[1]);
-        return (
-          <button type="button" className={`cite-ref mono ${hoverCite === n ? "hot" : ""}`}
-            onMouseEnter={() => setHoverCite(n)} onMouseLeave={() => setHoverCite(null)}
-            onClick={(e) => { e.stopPropagation(); onCiteClick(n); }}
-            title="근거 패널에서 이 출처를 볼 수 있어요">[{n}]</button>
-        );
-      }
-      const nm = String(props.href || "").match(/^#num-(\d+)$/);
-      if (nm && num) {
-        const row = num.rows[Number(nm[1])];
-        if (!row) return <span>{props.children}</span>;
-        const cit = row.citation_idx != null
-          ? num.citations.find((c) => c.index === row.citation_idx) ?? null : null;
-        return (
-          <NumHighlight row={row} cit={cit} setHoverCite={setHoverCite}
-            onEvidence={num.onEvidence} onPinLedger={num.onPinLedger}>{props.children}</NumHighlight>
-        );
-      }
-      return <a {...props} target="_blank" rel="noreferrer" />;
-    },
+    tool: ev.tool, source: ev.source, url: ev.url, index: ev.index, kind: ev.kind,
+    doc_type: ev.doc_type, as_of: ev.as_of, freshness: ev.freshness,
+    cadence: ev.cadence, category: ev.category,
+    snippet: ev.snippet, ticker: ev.ticker, page: ev.page,
+    table: ev.table, evidence_image_url: ev.evidence_image_url, used: ev.used,
   };
-}
-
-// PH-THINK: the live reasoning stream — foldable so it doesn't stack up. COLLAPSED (default)
-// shows only the latest step (spinning); click to EXPAND the full analyze→fetch→found→synthesize
-// trace. The latest one spins, earlier ones are checked.
-function ThinkingLive({ steps }: { steps: Think[] }) {
-  const [open, setOpen] = useState(false);
-  if (!steps.length) return null;
-  const latest = steps[steps.length - 1];
-  return (
-    <div className={`thinking-live ${open ? "open" : ""}`} aria-live="polite">
-      <button type="button" className="tl-bar" onClick={() => setOpen((o) => !o)}
-        aria-expanded={open} title={open ? "접기" : "분석 과정 전체 보기"}>
-        <span className="tl-chev">{open ? "▾" : "▸"}</span>
-        <span className="tl-bar-lbl">분석 과정 · {steps.length}단계</span>
-      </button>
-      {open
-        ? steps.map((s, j) => {
-            const last = j === steps.length - 1;
-            return (
-              <div key={j} className={`tl-step ${last ? "active" : "done"}`}>
-                <span className="tl-ic">{last ? <span className="tl-spin" /> : "✓"}</span>{s.text}
-              </div>
-            );
-          })
-        : (
-          <div className="tl-step active">
-            <span className="tl-ic"><span className="tl-spin" /></span>{latest.text}
-          </div>
-        )}
-    </div>
-  );
-}
-
-// CLARIFY-WITH-OPTIONS: render the agent's choices as chips. Single-pick → click runs it;
-// multi-pick → toggle several then confirm. Picks compose a refined follow-up question.
-function ClarifyChips(
-  { clarify, disabled, onSubmit }:
-  { clarify: Clarify; disabled?: boolean; onSubmit: (labels: string[]) => void },
-) {
-  const [sel, setSel] = useState<Set<number>>(new Set());
-  const toggle = (i: number) =>
-    setSel((prev) => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
-  return (
-    <div className="clarify">
-      <div className="clarify-opts">
-        {clarify.options.map((o, i) => (
-          <button key={i} type="button" disabled={disabled}
-            className={`clarify-chip ${clarify.multi && sel.has(i) ? "on" : ""}`}
-            title={o.description || undefined}
-            onClick={() => (clarify.multi ? toggle(i) : onSubmit([o.label]))}>
-            <span className="clarify-label">{o.label}</span>
-            {o.description ? <span className="clarify-desc">{o.description}</span> : null}
-          </button>
-        ))}
-      </div>
-      {clarify.multi && (
-        <Button size="sm" disabled={disabled || sel.size === 0}
-          onClick={() => onSubmit([...sel].sort((a, b) => a - b).map((i) => clarify.options[i].label))}>
-          선택한 내용으로 진행 →
-        </Button>
-      )}
-    </div>
-  );
-}
-
-// A2A: live cards for the sub-agents researching each facet of a complex request in parallel.
-function SubAgentCards({ subs }: { subs: SubAgent[] }) {
-  if (!subs.length) return null;
-  return (
-    <div className="subagents">
-      {subs.map((s) => (
-        <div key={s.id} className={`subagent ${s.status}`}>
-          <span className="sa-ic">{s.status === "done" ? "✓" : <span className="tl-spin" />}</span>
-          <span className="sa-title">{s.title}</span>
-          {s.status === "done" && <span className="sa-meta">{s.sources ?? 0} 근거</span>}
-        </div>
-      ))}
-    </div>
-  );
 }
 
 
@@ -460,17 +256,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
         if (!dup) a.artifacts = [...(a.artifacts || []), ev.artifact as Artifact];
       }
       else if (ev.type === "citation") {
-        const cite: Citation = {
-          tool: ev.tool, source: ev.source, url: ev.url, index: ev.index, kind: ev.kind,
-          doc_type: ev.doc_type, as_of: ev.as_of, freshness: ev.freshness,
-          // periodicity + category of the source datasource — rides along so the pinned widget
-          // knows whether it can carry a notification bot (cadence != one_shot).
-          cadence: ev.cadence, category: ev.category,
-          snippet: ev.snippet, ticker: ev.ticker, page: ev.page,
-          // carry the extracted table + the /evidence params (market/accession/concept/value/cik)
-          // the in-app filing viewer opens from; else the source card can't reach the original.
-          table: ev.table, evidence_image_url: ev.evidence_image_url,
-        };
+        const cite = toCitation(ev);
         const dup = (a.citations || []).some((c) => c.source === cite.source && c.url === cite.url);
         if (!dup) a.citations = [...(a.citations || []), cite];
       }
@@ -483,13 +269,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
         // PH-PROV3d: the done list is authoritative — its citations carry the evidence
         // image re-anchored on the figure the answer actually cited. Replace the streamed set.
         if (Array.isArray(ev.citations) && ev.citations.length) {
-          a.citations = ev.citations.map((c: any) => ({
-            tool: c.tool, source: c.source, url: c.url, index: c.index, kind: c.kind,
-            doc_type: c.doc_type, as_of: c.as_of, freshness: c.freshness,
-            cadence: c.cadence, category: c.category,
-            snippet: c.snippet, ticker: c.ticker, page: c.page,
-            table: c.table, evidence_image_url: c.evidence_image_url, used: c.used,
-          }));
+          a.citations = ev.citations.map(toCitation);
         }
         // PH-VIZ-2: the done list carries the chart artifacts enriched with sourced
         // event markers + price lines (added after later tool results landed).

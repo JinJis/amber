@@ -202,10 +202,22 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                 final_text += ch
                 yield {"type": "token", "text": ch}
 
+    async def _emit_synthesis(tools_arg, history_arg, system_arg, note="답변을 작성하는 중…"):
+        # the "답변을 작성하는 중…" thinking line + the streamed answer — the exact pair the
+        # loop emits at every finalize site (the A2A combiner passes its own `note`).
+        yield {"type": "thinking", "phase": "synthesize", "text": note}
+        async for ev in _synthesize(tools_arg, history_arg, system_arg):
+            yield ev
+
+    async def _emit_verify():
+        # the cross-check thinking line shown just before synthesis at the two sites that
+        # refine — emitted ONLY there (other finalize sites deliberately skip it).
+        if citations and (bk or settings.llm_backend) == "gemini" and not refined:
+            yield {"type": "thinking", "phase": "verify", "text": "근거를 교차검증하는 중…"}
+
     # Conceptual / definitional question → answer from expertise, no tools, streamed.
     if not intake.needs_data:
-        yield {"type": "thinking", "phase": "synthesize", "text": "답변을 작성하는 중…"}
-        async for ev in _synthesize({}, [], system):
+        async for ev in _emit_synthesis({}, [], system):
             yield ev
         sev = await _followups_event(task, final_text, [], bk, conversation=messages)
         if sev:
@@ -277,10 +289,9 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
             # combine: ONE rich synthesis weaving every facet, citing the unified sources. Pass the
             # full sub-agent `history` (the actual tool results) so the deep synthesis model grounds
             # on real evidence, not just the per-facet notes.
-            yield {"type": "thinking", "phase": "synthesize", "text": "하위 분석을 종합해 답변을 작성하는 중…"}
             notes = "\n".join(f"- [{r.title}] {r.note or '근거 수집 완료'}" for r in results if r)
             system_c = ((system or "") + f"\n\n[하위 분석 결과]\n{notes}").strip()
-            async for ev in _synthesize({}, history, system_c):  # streamed combiner
+            async for ev in _emit_synthesis({}, history, system_c, "하위 분석을 종합해 답변을 작성하는 중…"):
                 yield ev
             answered = True
 
@@ -289,11 +300,10 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
             decisions = await _plan_batch(is_last)
             # finalize when forced, or when the model returned prose instead of tool calls
             if is_last or (decisions and decisions[0].final is not None):
-                if citations and (bk or settings.llm_backend) == "gemini" and not refined:
-                    yield {"type": "thinking", "phase": "verify", "text": "근거를 교차검증하는 중…"}
+                async for ev in _emit_verify():
+                    yield ev
                 await _maybe_refine()  # grounds the synthesis + scores source confidence
-                yield {"type": "thinking", "phase": "synthesize", "text": "답변을 작성하는 중…"}
-                async for ev in _synthesize(tools, history, system):  # real streaming
+                async for ev in _emit_synthesis(tools, history, system):  # real streaming
                     yield ev
                 answered = True
                 break
@@ -309,11 +319,10 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
             # an identical batch as last step means the model is stuck — synthesize now
             sig = "|".join(sorted(s for s in (call_sig(d) for d in batch) if s))
             if sig and sig == last_sig:
-                if not refined and citations and (bk or settings.llm_backend) == "gemini":
-                    yield {"type": "thinking", "phase": "verify", "text": "근거를 교차검증하는 중…"}
+                async for ev in _emit_verify():
+                    yield ev
                 await _maybe_refine()
-                yield {"type": "thinking", "phase": "synthesize", "text": "답변을 작성하는 중…"}
-                async for ev in _synthesize(tools, history, system):
+                async for ev in _emit_synthesis(tools, history, system):
                     yield ev
                 answered = True
                 break
@@ -332,8 +341,7 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                 yield {"type": "thinking", "phase": "fetch", "text": f"{label} 살펴보는 중…", "tool": d.tool}
             if not valid:  # nothing runnable → synthesize from what we have
                 await _maybe_refine()
-                yield {"type": "thinking", "phase": "synthesize", "text": "답변을 작성하는 중…"}
-                async for ev in _synthesize(tools, history, system):
+                async for ev in _emit_synthesis(tools, history, system):
                     yield ev
                 answered = True
                 break
@@ -380,8 +388,7 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                        "text": (f"✓ {label} · 근거 {added}건 확보" if ok else f"· {label}에서 새 근거를 찾지 못함")}
                 history.append((d, result))
         if not answered:
-            yield {"type": "thinking", "phase": "synthesize", "text": "답변을 작성하는 중…"}
-            async for ev in _synthesize(tools, history, system):
+            async for ev in _emit_synthesis(tools, history, system):
                 yield ev
     except Exception as e:
         logger.exception("Error in stream_chat loop")

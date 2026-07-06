@@ -640,15 +640,6 @@ select.input { appearance: none; }
 .tab { background: none; border: none; color: var(--muted); padding: 8px 4px; margin-right: 10px;
   cursor: pointer; font-size: 14px; border-bottom: 2px solid transparent; font-family: inherit; }
 .tab.on { color: var(--text); border-bottom-color: var(--ink); }
-.newprompt { margin-bottom: 12px; }
-.prompt-list { display: flex; flex-direction: column; gap: 10px; }
-.prompt-card { background: var(--panel-2); border: 1px solid var(--line); border-radius: 11px; padding: 12px 14px; }
-.pc-head { display: flex; align-items: center; gap: 8px; }
-.cat { font-size: 11px; color: var(--muted); border: 1px solid var(--line-2); border-radius: 999px; padding: 1px 8px; }
-.pc-desc { color: var(--muted); font-size: 13px; margin-top: 4px; }
-.pc-body { color: var(--text-2); font-size: 13px; margin-top: 8px; line-height: 1.5; white-space: pre-wrap;
-  background: var(--panel-3); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; max-height: 96px; overflow-y: auto; }
-.pc-actions { display: flex; gap: 8px; margin-top: 10px; }
 
 /* Claude-like single centered conversation column */
 .chat { flex: 1; overflow-y: auto; padding: 28px 18px; display: flex; flex-direction: column; align-items: center; gap: 22px; background: var(--panel-3); }
@@ -1294,8 +1285,6 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .onb-progress { margin-left: auto; display: flex; gap: 6px; }
 .onb-dot { width: 26px; height: 4px; border-radius: 999px; background: var(--line-2); }
 .onb-dot.on { background: var(--ink); }
-.onb-skip { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; font-family: inherit; }
-.onb-skip:hover { color: var(--text); }
 .onb-step { padding: 26px 24px 8px; min-height: 240px; }
 .onb-k { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; color: var(--muted); }
 .onb-step h2 { margin: 6px 0 16px; font-size: 20px; }

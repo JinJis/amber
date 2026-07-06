@@ -156,25 +156,23 @@ async def _gather(client: PlatformClient, tools: dict[str, dict],
     return out
 
 
-_SYNTH_SCHEMA = {
+# One card's JSON shape — shared by desk-feed AND ask-feed (askfeed imports it). question is
+# the display invite; query is the composer command; both feed builders drop unsourced cards.
+_CARD_ITEM = {
     "type": "object",
     "properties": {
-        "cards": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "kind": {"type": "string"},
-                    "question": {"type": "string"},
-                    "query": {"type": "string"},   # 실행용 명령문 (컴포저 프리필)
-                    "hook": {"type": "string"},
-                    "sources": {"type": "array", "items": {"type": "integer"}},
-                    "ticker": {"type": "string"},
-                },
-                "required": ["kind", "question", "hook", "sources"],
-            },
-        }
+        "kind": {"type": "string"},
+        "question": {"type": "string"},
+        "query": {"type": "string"},   # 실행용 명령문 (컴포저 프리필)
+        "hook": {"type": "string"},
+        "sources": {"type": "array", "items": {"type": "integer"}},
+        "ticker": {"type": "string"},
     },
+    "required": ["kind", "question", "hook", "sources"],
+}
+_SYNTH_SCHEMA = {
+    "type": "object",
+    "properties": {"cards": {"type": "array", "items": _CARD_ITEM}},
     "required": ["cards"],
 }
 
@@ -204,21 +202,37 @@ _SYNTH_PROMPT = """당신은 리서치 데스크의 아침 브리핑 편집자�
 """
 
 
-def _parse_cards(raw: str) -> list[dict]:
-    """Robust JSON pull — flash models don't always honor strict JSON mode (same pattern as
-    enrichment._loads_followups)."""
+def _loads_obj(raw: str) -> dict:
+    """Robust JSON object pull — flash models don't always honor strict JSON mode: try a clean
+    parse, else grab the first ``{...}`` block. Shared by both feed builders."""
     try:
         obj = json.loads(raw)
-        return obj.get("cards", []) if isinstance(obj, dict) else []
+        return obj if isinstance(obj, dict) else {}
     except (ValueError, TypeError):
         m = re.search(r"\{.*\}", raw or "", re.S)
         if m:
             try:
                 obj = json.loads(m.group(0))
-                return obj.get("cards", []) if isinstance(obj, dict) else []
+                return obj if isinstance(obj, dict) else {}
             except (ValueError, TypeError):
-                return []
-    return []
+                return {}
+    return {}
+
+
+def _parse_cards(raw: str) -> list[dict]:
+    """The flat ``{"cards": [...]}`` shape (desk-feed / news_feed)."""
+    cards = _loads_obj(raw).get("cards", [])
+    return cards if isinstance(cards, list) else []
+
+
+def _snippets(gathered: list[dict]) -> str:
+    """The evidence snippets block fed to every synthesis prompt: one line per gathered source
+    with its index, why, source, tool, and a truncated JSON dump."""
+    return "\n".join(
+        f"[{g['idx']}] {g['why']} · 출처 {g['citation'].source} · 도구 {g['tool']}\n"
+        f"{json.dumps(g['data'], ensure_ascii=False, default=str)[:_SNIPPET_CHARS]}"
+        for g in gathered
+    )
 
 
 async def _synthesize(req: DeskFeedRequest, gathered: list[dict]) -> list[dict]:
@@ -232,14 +246,9 @@ async def _synthesize(req: DeskFeedRequest, gathered: list[dict]) -> list[dict]:
         "시장": req.markets or [],
         "마지막 방문": req.since,
     }
-    snippets = "\n".join(
-        f"[{g['idx']}] {g['why']} · 출처 {g['citation'].source} · 도구 {g['tool']}\n"
-        f"{json.dumps(g['data'], ensure_ascii=False, default=str)[:_SNIPPET_CHARS]}"
-        for g in gathered
-    )
     prompt = _SYNTH_PROMPT.format(limit=max(3, min(req.limit, 8)),
                                   context=json.dumps(context, ensure_ascii=False),
-                                  snippets=snippets or "(없음)")
+                                  snippets=_snippets(gathered) or "(없음)")
     cfg = types.GenerateContentConfig(
         temperature=0.3, max_output_tokens=2048, response_mime_type="application/json",
         response_schema=_SYNTH_SCHEMA, thinking_config=types.ThinkingConfig(thinking_budget=0),

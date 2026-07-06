@@ -67,40 +67,24 @@ def _add_missing_columns() -> None:
     ts = "TIMESTAMP" if dialect == "postgresql" else "DATETIME"      # SQLAlchemy DateTime → TIMESTAMP on PG
     bool_default = "false" if dialect == "postgresql" else "0"
     inspector = inspect(engine)
-    names = inspector.get_table_names()
-    if "pinned_artifacts" in names:
-        existing = {c["name"] for c in inspector.get_columns("pinned_artifacts")}
-        add = {"board_id": "VARCHAR(48)", "x": "INTEGER", "y": "INTEGER", "w": "INTEGER", "h": "INTEGER"}
+    names = set(inspector.get_table_names())
+
+    def add_cols(table: str, cols: dict[str, str]) -> None:
+        """ADD COLUMN each missing column of ``table`` (skip absent table / present columns)."""
+        if table not in names:
+            return
+        have = {c["name"] for c in inspector.get_columns(table)}
         with engine.begin() as conn:
-            for col, decl in add.items():
-                if col not in existing:
-                    conn.execute(text(f"ALTER TABLE pinned_artifacts ADD COLUMN {col} {decl}"))
-    if "users" in names:
-        ucols = {c["name"] for c in inspector.get_columns("users")}
-        with engine.begin() as conn:
-            # F1: onboarding flag on users (default = not yet onboarded)
-            if "onboarded" not in ucols:
-                conn.execute(text(f"ALTER TABLE users ADD COLUMN onboarded BOOLEAN DEFAULT {bool_default}"))
-            # M-DESK: last visit timestamp for the desk feed's "since last visit" windows
-            if "last_seen_at" not in ucols:
-                conn.execute(text(f"ALTER TABLE users ADD COLUMN last_seen_at {ts}"))
-    # inline figures + number audit: persisted on the assistant message
-    if "messages" in names:
-        mcols = {c["name"] for c in inspector.get_columns("messages")}
-        with engine.begin() as conn:
-            if "artifacts" not in mcols:
-                conn.execute(text("ALTER TABLE messages ADD COLUMN artifacts TEXT"))
-            if "audit" not in mcols:
-                conn.execute(text("ALTER TABLE messages ADD COLUMN audit TEXT"))
-    # IMP-13: share expiry on existing share_links tables
-    if "share_links" in names:
-        scols = {c["name"] for c in inspector.get_columns("share_links")}
-        with engine.begin() as conn:
-            if "expires_at" not in scols:
-                conn.execute(text(f"ALTER TABLE share_links ADD COLUMN expires_at {ts}"))
-            # SH-2b: base64 OG card image
-            if "og_image" not in scols:
-                conn.execute(text("ALTER TABLE share_links ADD COLUMN og_image TEXT"))
+            for col, decl in cols.items():
+                if col not in have:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {decl}"))
+
+    add_cols("pinned_artifacts",
+             {"board_id": "VARCHAR(48)", "x": "INTEGER", "y": "INTEGER", "w": "INTEGER", "h": "INTEGER"})
+    add_cols("users", {  # F1 onboarding flag · M-DESK last-visit window
+        "onboarded": f"BOOLEAN DEFAULT {bool_default}", "last_seen_at": ts})
+    add_cols("messages", {"artifacts": "TEXT", "audit": "TEXT"})  # inline figures + number audit
+    add_cols("share_links", {"expires_at": ts, "og_image": "TEXT"})  # IMP-13 expiry · SH-2b OG image
 
 
 def init_db() -> None:

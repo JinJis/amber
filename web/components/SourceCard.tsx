@@ -156,21 +156,3 @@ export function SourceCard({ c, onExpand, onPin, hideTitle }: { c: Citation; onE
     </div>
   );
 }
-
-// Compact inline chip used under a message ([n] + source + freshness dot).
-const KIND_ICON: Record<string, string> = { filing: "📄", news: "📰", metric: "📊", data: "📎" };
-export function CiteChip({ c }: { c: Citation }) {
-  const icon = (c.kind && KIND_ICON[c.kind]) || "📎";
-  const body = (
-    <>
-      {c.index ? <span className="cnum">[{c.index}]</span> : null}
-      <span aria-hidden>{icon}</span> {c.source || "출처"}
-      <FreshnessDot f={c.freshness} />
-    </>
-  );
-  return c.url ? (
-    <a className="cite-chip" href={c.url} target="_blank" rel="noreferrer" title={c.snippet || c.url}>{body}</a>
-  ) : (
-    <span className="cite-chip" title={c.snippet || ""}>{body}</span>
-  );
-}
