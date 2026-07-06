@@ -150,30 +150,38 @@ async def get_ask_feed(user: User = Depends(current_user)) -> dict:
 
 
 def _assemble(db: Session, email: str) -> dict:
-    items = db.execute(
-        select(WatchlistItem.market, WatchlistItem.ticker, WatchlistItem.name)
+    # Each ticker carries the watchlist GROUP(s) it belongs to — the entry screen filters by group
+    # (관심그룹), not by individual ticker. A ticker in two groups appears under both filters.
+    rows = db.execute(
+        select(Watchlist.name, WatchlistItem.market, WatchlistItem.ticker, WatchlistItem.name)
         .join(Watchlist, WatchlistItem.watchlist_id == Watchlist.id)
         .where(Watchlist.user_email == email)
-        .order_by(WatchlistItem.market, WatchlistItem.ticker)
+        .order_by(Watchlist.name, WatchlistItem.market, WatchlistItem.ticker)
     ).all()
-    seen: set[str] = set()
-    tickers, pending = [], []
-    for market, ticker, name in items:
+    groups: list[str] = []
+    by_ticker: dict[str, dict] = {}
+    for group, market, ticker, name in rows:
+        if group not in groups:
+            groups.append(group)
         key = _scope_key(market, ticker)
-        if key in seen:
-            continue
-        seen.add(key)
+        entry = by_ticker.setdefault(key, {"market": market, "ticker": ticker,
+                                           "name": name or ticker, "groups": []})
+        if group not in entry["groups"]:
+            entry["groups"].append(group)
+
+    tickers, pending = [], []
+    for key, entry in by_ticker.items():
         row = db.get(AskFeedCache, key)
         if row is None:
-            pending.append({"market": market, "ticker": ticker, "name": name or ticker})
+            pending.append(entry)
             continue
         payload = json.loads(row.payload)
-        tickers.append({"market": market, "ticker": ticker, "name": name or ticker,
-                        "cards": payload.get("cards") or [],
+        tickers.append({**entry, "cards": payload.get("cards") or [],
                         "generated_at": payload.get("generated_at")})
     hot = db.get(AskFeedCache, "hot_trend")
     hot_payload = json.loads(hot.payload) if hot else None
     return {
+        "groups": groups,
         "tickers": tickers,
         "pending": pending,
         "hot_trend": (hot_payload or {}).get("cards") or [],

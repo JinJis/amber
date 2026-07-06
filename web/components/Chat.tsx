@@ -538,7 +538,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
       <nav className="rail">
         <div className="rail-brand"><span className="mascot" aria-hidden /><span className="wordmark">ValueGraph</span></div>
         <button className="rail-new" onClick={newChat}>
-          <span className="ic">✎</span><span>물어보기</span>
+          <span className="ic">✎</span><span>탐구 시작하기</span>
         </button>
         {features.dashboard && (
           <button className={`rail-item ${view === "dashboard" ? "on" : ""}`} onClick={() => setView("dashboard")}>
@@ -591,7 +591,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
               <div className="desk-id">
                 <Mascot />
                 <FreshnessDot f="fresh" />
-                <span className="explore-title">물어보기<span className="explore-sub"> — 출처와 함께 답합니다</span></span>
+                <span className="explore-title">탐구<span className="explore-sub"> — 출처와 함께 분석합니다</span></span>
               </div>
               <div className="agentbar">
                 <Button variant="ghost" size="sm" onClick={() => setLibrary(true)} title="프롬프트 라이브러리">프롬프트</Button>
@@ -606,6 +606,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
                   <CockpitEntry
                     onPick={(q) => { setInput(q); inputRef.current?.focus(); }}
                     onQuestions={setTodayQs}
+                    onEvidence={setViewer}
                   />
                 </div>
               )}
