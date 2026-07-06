@@ -1,6 +1,6 @@
 /**
  * Small shared React hooks (FE-04) — the fetch / async-op / debounce patterns the modal surfaces
- * (PromptLibrary, Watchlists, AgentBuilder, AlertSheet) each re-implemented.
+ * (Watchlists, AgentBuilder, AlertSheet) each re-implemented.
  */
 "use client";
 

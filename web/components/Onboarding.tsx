@@ -1,23 +1,42 @@
 "use client";
 
-// 온보딩 v2 (ASK-6) — three steps that explain the product and guarantee a non-empty first
-// screen: ① 소개(제품 약속 3문장) → ② 관심종목 등록(필수, 최소 3종목 — 물어보기 첫 화면이
-// 이 종목들로 채워진다) → ③ 착륙. The alerts/board steps are gone (FLAG-1 dead branches).
-// No skip: the ask-feed entry is watchlist-derived, so an empty watchlist means an empty
-// product — registration IS the onboarding.
+// 온보딩 v3 (ONB-3) — 서비스를 말로 설명하지 않고 "직접 보여주는" 6스텝.
+//   ① intro    — 정체성: 등록한 종목을 진짜 데이터(SEC EDGAR·8-K·어닝콜·재무제표·DART)로
+//                딥 리서치, 뉴스와 교차검증해 지어낸 숫자를 거른다 (할루시네이션 방지)
+//   ② evidence — 근거 패널 프리뷰: 하이라이트 수치 + 판정 스트립 + 실제 SourceCard 3종
+//   ③ cards    — 종목 탭 → 큐레이션된 분석거리 카드 프리뷰 (실제 QCard)
+//   ④ chain    — 꼬리물기 리서치: 답 뒤에 이어지는 후속 질문 칩 프리뷰
+//   ⑤ watch    — 관심종목 등록 (필수, 최소 3종목 — min-3 게이트)
+//   ⑥ land     — 착륙
+// 프리뷰는 진짜 컴포넌트 + 가짜 데이터 + "예시 화면" 배지 (무날조 원칙). 스킵 없음:
+// ask-feed 첫 화면이 관심종목에서 나오므로, 등록이 곧 온보딩이다.
 
 import { useMemo, useState } from "react";
 import type { Features } from "@/lib/features";
 import { PRESETS } from "@/lib/presets";
+import { FIX_CITATIONS, FIX_FOLLOWUPS, FIX_QCARDS, FIX_TRUST } from "@/lib/onboardingFixtures";
 import { Button } from "./ui";
+import { QCard } from "./QCard";
+import { SourceCard } from "./SourceCard";
+import { TrustStrip } from "./EvidencePanel";
 
-type StepKey = "intro" | "watch" | "land";
+type StepKey = "intro" | "evidence" | "cards" | "chain" | "watch" | "land";
 type Pick = { market: string; ticker: string; name?: string };
 
 const MIN_TICKERS = 3;
-const STEPS: StepKey[] = ["intro", "watch", "land"];
+const STEPS: StepKey[] = ["intro", "evidence", "cards", "chain", "watch", "land"];
 
 const keyOf = (p: Pick) => `${p.market}:${p.ticker}`;
+
+// 프리뷰 래퍼 — 진짜 컴포넌트를 만질 수 없는 "예시 화면"으로 감싼다.
+function Preview({ children, testid }: { children: React.ReactNode; testid: string }) {
+  return (
+    <div className="onb-preview" data-testid={testid} aria-hidden>
+      <span className="onb-demo-badge mono">예시 화면</span>
+      {children}
+    </div>
+  );
+}
 
 export default function Onboarding({ onDone }: { features?: Features; onDone: () => void }) {
   const [step, setStep] = useState(0);
@@ -92,33 +111,91 @@ export default function Onboarding({ onDone }: { features?: Features; onDone: ()
 
         {key === "intro" && (
           <div className="onb-step" data-testid="onb-intro">
-            <div className="onb-k">STEP 1 · 소개</div>
-            <h2>당신의 리서치 데스크</h2>
+            <div className="onb-k">1 / {STEPS.length} · 어떤 서비스인가요</div>
+            <h2>궁금한 종목, 진짜 데이터로 파고드는 리서치 데스크예요</h2>
             <div className="onb-promises">
               <div className="onb-promise">
-                <span className="onb-pi">[n]</span>
-                <div><b>물어보면, 출처와 함께 답합니다</b>
-                  <p>모든 숫자가 공시·시세·통계의 원본 기록에 [n]으로 연결됩니다 — 근거 없는 수치는 애초에 표시되지 않아요.</p></div>
+                <span className="onb-pi">🔎</span>
+                <div><b>등록한 종목을 깊이 리서치해요</b>
+                  <p>관심종목을 등록해두면, 최신 데이터를 계속 살피면서 오늘 파볼 만한 리서치 포인트를 먼저 추천해드려요.</p></div>
               </div>
               <div className="onb-promise">
-                <span className="onb-pi">✎</span>
-                <div><b>물어볼 거리를 먼저 준비해둡니다</b>
-                  <p>관심종목을 등록하면, 새 공시·가격·뉴스에서 나온 오늘의 질문거리가 첫 화면에 미리 채워져요.</p></div>
+                <span className="onb-pi">[n]</span>
+                <div><b>모든 답은 실제 기록에서 출발해요</b>
+                  <p>SEC EDGAR·8-K·어닝콜·재무제표·DART 공시 같은 <b>원자료</b>를 직접 보여드리고, 뉴스 등 여러 데이터와
+                    <b> 교차검증</b>해서 AI가 지어낸 숫자를 걸러내요.</p></div>
               </div>
               <div className="onb-promise">
                 <span className="onb-pi">⏳</span>
-                <div><b>전망은 하지 않습니다</b>
-                  <p>과거 기록과 현재 데이터만 다룹니다. 예측·목표가·매수 조언은 이 데스크의 일이 아니에요 — 그게 신뢰의 조건입니다.</p></div>
+                <div><b>전망이나 매수 조언은 하지 않아요</b>
+                  <p>과거 기록과 현재 데이터까지만 다뤄요. 예측·목표가가 없는 게 이 데스크를 믿을 수 있는 이유예요.</p></div>
               </div>
             </div>
           </div>
         )}
 
+        {key === "evidence" && (
+          <div className="onb-step" data-testid="onb-evidence">
+            <div className="onb-k">2 / {STEPS.length} · 근거</div>
+            <h2>답변 옆엔 늘 이런 근거가 붙어요</h2>
+            <Preview testid="onb-preview-evidence">
+              <p className="onb-fake-answer">
+                삼성전자 1분기 매출은 <span className="num-hl">79.1조</span>
+                <button type="button" className="cite-ref mono">[1]</button>로 전년 대비{" "}
+                <span className="num-hl">12%</span> 늘었어요.
+              </p>
+              <TrustStrip s={FIX_TRUST} />
+              <div className="onb-srcs">
+                {FIX_CITATIONS.map((c, i) => <SourceCard key={i} c={c} />)}
+              </div>
+            </Preview>
+            <p className="onb-caption">노란 숫자에 마우스를 올리면 원자료와 바로 대조돼요. 공시 원문·뉴스·데이터 표까지
+              어디서 온 숫자인지 끝까지 확인할 수 있어요.</p>
+          </div>
+        )}
+
+        {key === "cards" && (
+          <div className="onb-step" data-testid="onb-cards">
+            <div className="onb-k">3 / {STEPS.length} · 리서치 포인트</div>
+            <h2>종목을 누르면, 오늘 볼만한 분석거리를 추려드려요</h2>
+            <Preview testid="onb-preview-cards">
+              <div className="tk-row">
+                <span className="tk-chip on"><span className="tk-name">삼성전자</span><span className="tk-mkt mono">KR</span></span>
+              </div>
+              <div className="qc-list">
+                {FIX_QCARDS.map((c, i) => (
+                  <QCard key={i} c={c} name="삼성전자" onPick={() => {}} />
+                ))}
+              </div>
+            </Preview>
+            <p className="onb-caption">공시·가격·뉴스·밸류에이션·수급을 훑어서 지금 가장 눌러볼 만한 것만 골라요.
+              카드를 누르면 그대로 질문이 시작돼요.</p>
+          </div>
+        )}
+
+        {key === "chain" && (
+          <div className="onb-step" data-testid="onb-chain">
+            <div className="onb-k">4 / {STEPS.length} · 꼬리물기</div>
+            <h2>답이 끝나면, 다음 질문이 이어져요</h2>
+            <Preview testid="onb-preview-chain">
+              <p className="onb-fake-answer onb-fade">…매출 성장의 대부분은 반도체 부문에서 나왔고, 영업이익률은 두 분기 연속 개선됐어요 <button type="button" className="cite-ref mono">[2]</button></p>
+              <div className="fu-label">이어서 더 파고들기</div>
+              <div className="fu-list">
+                {FIX_FOLLOWUPS.map((q, i) => (
+                  <button key={i} type="button" className="fu-chip">{q} <span className="fu-arrow">→</span></button>
+                ))}
+              </div>
+            </Preview>
+            <p className="onb-caption">한 번의 질문이 리서치 흐름이 되도록, 답변을 읽고 나면 다음으로 파볼 갈래를
+              제안해드려요 — 꼬리에 꼬리를 무는 리서치.</p>
+          </div>
+        )}
+
         {key === "watch" && (
           <div className="onb-step" data-testid="onb-watch">
-            <div className="onb-k">STEP 2 · 관심종목 <b>(필수)</b></div>
+            <div className="onb-k">5 / {STEPS.length} · 관심종목 <b>(필수)</b></div>
             <h2>지켜볼 종목을 골라주세요</h2>
-            <p className="onb-note">물어보기 첫 화면이 이 종목들의 질문거리로 채워집니다 — 최소 {MIN_TICKERS}종목.</p>
+            <p className="onb-note">방금 본 리서치 포인트가 이 종목들로 채워져요 — 최소 {MIN_TICKERS}종목이 필요해요.</p>
             <div className="onb-row">
               {([["KR", "🇰🇷 한국"], ["US", "🇺🇸 미국"], ["both", "둘 다"]] as const).map(([v, l]) => (
                 <button key={v} className={`onb-pick ${market === v ? "on" : ""}`} onClick={() => setMarket(v)}>{l}</button>
@@ -133,7 +210,7 @@ export default function Onboarding({ onDone }: { features?: Features; onDone: ()
                 </button>
               ))}
             </div>
-            <input className="input onb-search" value={query} placeholder="종목 검색해서 추가 — 예: 삼성전자, NVDA"
+            <input className="input onb-search" value={query} placeholder="종목 이름으로 찾기 — 예: 삼성전자, NVDA"
               onChange={(e) => search(e.target.value)} />
             {results.length > 0 && (
               <div className="onb-results">
@@ -154,20 +231,20 @@ export default function Onboarding({ onDone }: { features?: Features; onDone: ()
               </div>
             )}
             <p className="onb-note onb-count" data-testid="onb-count">
-              {picks.size < MIN_TICKERS ? `${picks.size}/${MIN_TICKERS} 선택됨 — ${MIN_TICKERS - picks.size}개 더 골라주세요` : `${picks.size}종목 선택됨 ✓`}
+              {picks.size < MIN_TICKERS ? `${picks.size}/${MIN_TICKERS} 선택 — ${MIN_TICKERS - picks.size}개만 더 골라주세요` : `${picks.size}종목 선택 완료 ✓`}
             </p>
           </div>
         )}
 
         {key === "land" && (
           <div className="onb-step" data-testid="onb-land">
-            <div className="onb-k">STEP 3 · 시작</div>
-            <h2>데스크가 준비를 시작합니다</h2>
+            <div className="onb-k">6 / {STEPS.length} · 시작</div>
+            <h2>데스크가 준비를 시작해요</h2>
             <div className="onb-landing">
               <div className="onb-land-row"><b>관심종목</b> {[...picks.values()].map((p) => p.name || p.ticker).join(" · ")}</div>
-              <div className="onb-land-bot">✎ 물어보기 첫 화면에 이 종목들의 질문거리가 곧 채워져요 · 모든 답에 출처 첨부</div>
+              <div className="onb-land-bot">✎ 첫 화면에 이 종목들의 리서치 포인트가 곧 채워져요 · 모든 답에는 출처가 붙어요</div>
             </div>
-            <p className="onb-note">질문거리는 몇 분 안에 준비됩니다 — 그동안 무엇이든 바로 물어보세요.</p>
+            <p className="onb-note">리서치 포인트는 몇 분 안에 준비돼요 — 그동안 무엇이든 바로 물어보세요.</p>
           </div>
         )}
 
@@ -175,7 +252,7 @@ export default function Onboarding({ onDone }: { features?: Features; onDone: ()
           {step > 0 ? <Button variant="ghost" onClick={() => setStep((s) => s - 1)} disabled={busy}>이전</Button> : <span />}
           {!last
             ? <Button onClick={() => setStep((s) => s + 1)} disabled={busy || (key === "watch" && picks.size < MIN_TICKERS)}>다음 →</Button>
-            : <Button onClick={finish} disabled={busy}>{busy ? "준비 중…" : "물어보기 시작 →"}</Button>}
+            : <Button onClick={finish} disabled={busy}>{busy ? "준비하고 있어요…" : "시작하기 →"}</Button>}
         </div>
       </div>
     </div>

@@ -16,7 +16,6 @@ from studioapi.config import settings
 from studioapi.db import init_db
 from studioapi.main import app
 from studioapi.models import Agent, User
-from studioapi.prompts import seed_community_prompts
 
 client = TestClient(app)
 SVC = "dev-service-token"
@@ -25,7 +24,6 @@ SVC = "dev-service-token"
 def setup_module(_module):
     init_db()
     seed_templates()
-    seed_community_prompts()
 
 
 def _cfg(monkeypatch):
@@ -491,74 +489,6 @@ def test_chat_with_agent_sends_spec_and_records_agent(monkeypatch):
     conv = client.get("/conversations", headers=_hdr(email)).json()["conversations"][0]
     assert conv["agent_id"] == "tpl_desk"
 
-
-# --- F2: prompt library ---------------------------------------------------
-@respx.mock
-def test_community_prompts_seeded(monkeypatch):
-    _cfg(monkeypatch)
-    _mock_control_plane()
-    cat = client.get("/prompts/community", headers=_hdr("p1@u.com")).json()["prompts"]
-    ids = {p["id"] for p in cat}
-    assert {"cpr_earnings", "cpr_macro_rates"} <= ids
-    one = next(p for p in cat if p["id"] == "cpr_earnings")
-    assert one["community"] and one["editable"] is False and one["body"]
-
-
-@respx.mock
-def test_prompt_create_list_update_delete(monkeypatch):
-    _cfg(monkeypatch)
-    _mock_control_plane()
-    email = "p2@u.com"
-    created = client.post("/prompts", headers=_hdr(email), json={
-        "title": "내 요약 프롬프트", "body": "{TICKER} 실적 요약해줘", "category": "리서치",
-    }).json()
-    pid = created["id"]
-    assert created["editable"] and created["community"] is False
-    # personal library lists it; community catalog does not
-    assert pid in {p["id"] for p in client.get("/prompts", headers=_hdr(email)).json()["prompts"]}
-    assert pid not in {p["id"] for p in client.get("/prompts/community", headers=_hdr(email)).json()["prompts"]}
-    # update + delete
-    upd = client.patch(f"/prompts/{pid}", headers=_hdr(email), json={"title": "수정됨"})
-    assert upd.json()["title"] == "수정됨"
-    assert client.delete(f"/prompts/{pid}", headers=_hdr(email)).status_code == 200
-    assert client.get(f"/prompts/{pid}", headers=_hdr(email)).status_code == 404
-
-
-@respx.mock
-def test_import_community_prompt_is_editable_copy_and_idempotent(monkeypatch):
-    _cfg(monkeypatch)
-    _mock_control_plane()
-    email = "p3@u.com"
-    imp = client.post("/prompts/cpr_earnings/import", headers=_hdr(email)).json()
-    assert imp["editable"] and imp["source_id"] == "cpr_earnings" and imp["id"] != "cpr_earnings"
-    assert imp["body"]  # copied content
-    # it now lives in the personal library
-    mine = {p["id"] for p in client.get("/prompts", headers=_hdr(email)).json()["prompts"]}
-    assert imp["id"] in mine
-    # importing again returns the same copy (no duplicates)
-    again = client.post("/prompts/cpr_earnings/import", headers=_hdr(email)).json()
-    assert again["id"] == imp["id"]
-
-
-@respx.mock
-def test_community_prompt_not_editable(monkeypatch):
-    _cfg(monkeypatch)
-    _mock_control_plane()
-    h = _hdr("p4@u.com")
-    assert client.patch("/prompts/cpr_earnings", headers=h, json={"title": "x"}).status_code == 404
-    assert client.delete("/prompts/cpr_earnings", headers=h).status_code == 404
-    # importing a non-community (or unknown) id 404s
-    assert client.post("/prompts/prm_nope/import", headers=h).status_code == 404
-
-
-@respx.mock
-def test_prompts_are_user_scoped(monkeypatch):
-    _cfg(monkeypatch)
-    _mock_control_plane()
-    p = client.post("/prompts", headers=_hdr("ann@u.com"), json={"title": "Ann", "body": "x"}).json()
-    bob_ids = {x["id"] for x in client.get("/prompts", headers=_hdr("bob2@u.com")).json()["prompts"]}
-    assert p["id"] not in bob_ids
-    assert client.get(f"/prompts/{p['id']}", headers=_hdr("bob2@u.com")).status_code == 404
 
 
 # --- U1: watchlists / @groups ---------------------------------------------

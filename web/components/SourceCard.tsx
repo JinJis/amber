@@ -28,7 +28,7 @@ export function ConfBadge({ c }: { c: Citation }) {
   const k = (c.confidence || "").toLowerCase();
   const m = CONF[k];
   if (!m) return null;
-  return <span className={`sp-conf ${m.cls}`} title={c.confidence_why || "근거의 질문 적합도"}>{m.label}</span>;
+  return <span className={`sp-conf ${m.cls}`} title={c.confidence_why || "이 근거가 질문에 얼마나 잘 맞는지예요"}>{m.label}</span>;
 }
 
 
@@ -76,9 +76,9 @@ export function SourceCard({ c, onExpand, onPin, hideTitle }: { c: Citation; onE
   const hasFiling = !!c.evidence_image_url && shape !== "web";
   const hasSourcePage = !hasFiling && !!c.url && /^https?:\/\//i.test(c.url);
   const evBadge = hasFiling
-    ? <span className="sp-ev-badge mono" title="클릭하면 원문 전체를 인앱에서 봅니다">📄 원문</span>
+    ? <span className="sp-ev-badge mono" title="누르면 원문 전체를 여기서 바로 볼 수 있어요">📄 원문</span>
     : hasSourcePage
-    ? <span className="sp-ev-badge mono" title="클릭하면 원문 사이트를 인앱에서 봅니다">🌐 원문</span>
+    ? <span className="sp-ev-badge mono" title="누르면 원문 사이트를 여기서 바로 볼 수 있어요">🌐 원문</span>
     : null;
   const open = c.url ? (
     <a className="sp-open" href={c.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
@@ -88,7 +88,7 @@ export function SourceCard({ c, onExpand, onPin, hideTitle }: { c: Citation; onE
   const foot = (
     <div className="sp-foot mono">
       <FreshnessDot f={c.freshness} />
-      <span>{shape === "web" ? "맥락정보" : c.as_of ? `as_of ${c.as_of}` : (fresh ?? "출처")}</span>
+      <span>{shape === "web" ? "맥락 정보" : c.as_of ? `as_of ${c.as_of}` : (fresh ?? "출처")}</span>
       <CadenceTag c={c.cadence} />
       <ConfBadge c={c} />
       {open}
@@ -101,7 +101,7 @@ export function SourceCard({ c, onExpand, onPin, hideTitle }: { c: Citation; onE
 
   return (
     <div className={`srcprev ${shape}`} role={onExpand ? "button" : undefined}
-      onClick={onExpand ? () => onExpand(c) : undefined} title={onExpand ? "클릭하면 원문 전체로 펼쳐집니다" : undefined}>
+      onClick={onExpand ? () => onExpand(c) : undefined} title={onExpand ? "누르면 원문 전체를 볼 수 있어요" : undefined}>
       {shape === "filing" && (
         <>
           <div className="sp-head">

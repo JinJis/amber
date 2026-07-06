@@ -91,7 +91,7 @@ export function NotebookPicker({ pin, onClose, onSaved }: {
           onChange={(e) => setNote(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") void save(); }} />
 
-        {error && <p className="share-blocked">담지 못했습니다 — 잠시 후 다시 시도해주세요.</p>}
+        {error && <p className="share-blocked">담지 못했어요 — 잠시 후 다시 시도해주세요.</p>}
         <div className="nbp-actions">
           <button className="chip" onClick={() => void save()} disabled={busy}>
             {busy ? "담는 중…" : "담기"}

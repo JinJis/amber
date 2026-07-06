@@ -101,7 +101,7 @@ export default function Watchlists(
     setErr(""); setBusy(true);
     try {
       const r = await fetch("/api/watchlists", { method: "POST", body: JSON.stringify({ name: nm }) });
-      if (!r.ok) { setErr((await r.json()).detail ?? "그룹을 만들 수 없습니다."); return; }
+      if (!r.ok) { setErr((await r.json()).detail ?? "그룹을 만들지 못했어요."); return; }
       const wl = await r.json();
       for (const it of items ?? []) {
         await fetch(`/api/watchlists/${wl.id}/items`, { method: "POST", body: JSON.stringify(it) }).catch(() => {});
@@ -116,7 +116,7 @@ export default function Watchlists(
     const name = prompt("그룹 이름 변경 (＝ @핸들)", active.name);
     if (!name || name === active.name) return;
     const r = await fetch(`/api/watchlists/${active.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
-    if (r.ok) changed(); else setErr((await r.json()).detail ?? "이름을 바꿀 수 없습니다.");
+    if (r.ok) changed(); else setErr((await r.json()).detail ?? "이름을 바꾸지 못했어요.");
   }
   async function deleteGroup() {
     if (!active || !confirm(`'${active.name}' 그룹을 삭제할까요?`)) return;
@@ -160,7 +160,7 @@ export default function Watchlists(
       {lists.length === 0 ? (
         // empty → recommended preset groups (one-tap, pre-filled) + 직접 만들기
         <div className="wl-empty">
-          <p className="muted-note">관심 그룹은 <b>탐색의 @호출 단위</b>예요. 추천 그룹을 한 번에 담거나 직접 만드세요.</p>
+          <p className="muted-note">관심 그룹을 만들면 <b>채팅에서 @이름으로</b> 바로 부를 수 있어요. 추천 그룹을 한 번에 담거나 직접 만들어보세요.</p>
           <div className="wl-presets">
             {PRESETS.map((p) => (
               <button key={p.id} type="button" className="wl-preset" disabled={busy} onClick={() => createGroup(p.name, p.items)}>
@@ -210,7 +210,7 @@ export default function Watchlists(
             {active && (
               <>
                 <div className="wl-dhead">
-                  <div className="wl-dtitle"><b className="mono">@{active.name}</b><span className="wl-dsub">{active.count}개 종목 · @호출 단위</span></div>
+                  <div className="wl-dtitle"><b className="mono">@{active.name}</b><span className="wl-dsub">{active.count}개 종목 · 채팅에서 @{active.name}</span></div>
                   <span className="grow" />
                   <Button variant="ghost" size="sm" onClick={() => setShowSearch((s) => !s)}>＋ 종목</Button>
                   <Button variant="ghost" size="sm" onClick={renameGroup}>이름 변경</Button>
@@ -260,7 +260,7 @@ export default function Watchlists(
         </div>
       )}
       <StandingList />
-      <p className="disclaimer">그룹 이름은 탐색에서 <span className="mono">@핸들</span> 로 사용됩니다.</p>
+      <p className="disclaimer">그룹 이름 그대로 채팅에서 <span className="mono">@이름</span>으로 부를 수 있어요.</p>
     </>
   );
 

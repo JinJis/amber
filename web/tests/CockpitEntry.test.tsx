@@ -30,7 +30,8 @@ function stubApis({ empty = false, tickerFail = false } = {}) {
           { market: "US", ticker: "NVDA", name: "NVIDIA", groups: ["빅테크"] },
         ],
         news_feed: [
-          { kind: "macro", question: "물가 흐름을 최근 추이로 같이 볼까요?", hook: "미 CPI 3.1%",
+          { kind: "macro", question: "물가 흐름을 최근 추이로 같이 볼까요?",
+            query: "미국 CPI 3.1%가 최근 물가 추이에서 어디쯤인지 살펴봐", hook: "미 CPI 3.1%",
             citations: [{ source: "FRED", url: "http://z", tool: "fred__macro_panel" }] },
         ],
         news_generated_at: "2026-07-06T00:00:00+00:00",
@@ -106,16 +107,18 @@ describe("CockpitEntry (ASK-6 v4)", () => {
     expect(screen.queryByTestId("tk-NVDA")).toBeNull();
   });
 
-  it("지금 뉴스에서: 백그라운드 캐시 카드 + 탭 → 채움; 질문은 플레이스홀더 콜백으로", async () => {
+  it("Macro Trends: 캐시 카드 + 탭 → 실행용 query가 컴포저로 (표시는 question)", async () => {
     stubApis();
     const onPick = vi.fn(); const onQuestions = vi.fn();
     render(<CockpitEntry onPick={onPick} onQuestions={onQuestions} />);
     const newsSec = await screen.findByTestId("ck-news");
+    expect(newsSec.textContent).toContain("Macro Trends");
     expect(newsSec.textContent).toContain("🌍");                    // macro 이모지
     expect(newsSec.textContent).toContain("미 CPI 3.1%");
-    expect(newsSec.textContent).toContain("10분마다 갱신");
+    expect(newsSec.textContent).toContain("5분마다 갱신");
     fireEvent.click(screen.getByText(/물가 흐름을 최근 추이로/));
-    expect(onPick).toHaveBeenCalledWith("물가 흐름을 최근 추이로 같이 볼까요?");
+    // F3: 컴포저에는 주체가 포함된 실행용 query가 들어간다 (표시용 question이 아니라)
+    expect(onPick).toHaveBeenCalledWith("미국 CPI 3.1%가 최근 물가 추이에서 어디쯤인지 살펴봐");
     await waitFor(() => expect(onQuestions).toHaveBeenCalledWith(["물가 흐름을 최근 추이로 같이 볼까요?"]));
   });
 

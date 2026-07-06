@@ -211,3 +211,30 @@
 - 합성 프롬프트 컨셉 전환: '조회된 데이터베이스에는 없습니다' 류 시스템-티 나열 금지. 정성
   서사는 애널리스트 지식으로 풍부하게(인용 없이), 구체 수치만 자료 인용 [n] — "LLM의 답변력 +
   검증된 수치"가 차별점.
+
+---
+
+## ASK-10 / ONB-3 (2026-07-06) — 실행 query · Macro Trends · 온보딩 v3 · 프롬프트 삭제
+
+### 카드 question/query 이원화
+카드 탭 시 컴포저에 표시용 question("~볼까요?")이 그대로 들어가 종목 맥락 없이 엉뚱한 답이
+나오던 문제. 카드 스키마에 `query`(실행 명령조 반말, "~살펴봐") 추가 — LLM이 둘 다 생성,
+ticker 스코프는 서버가 `이름(티커) ` 주체를 프로그래밍 주입(이미 포함 시 중복 없음, query
+누락 시 question 폴백). 뉴스/거시 카드는 프롬프트로 주체 포함 강제. 웹은 `c.query || c.question`.
+
+### Macro Trends (구 지금 뉴스에서/Hot Trend)
+- gather += `fred__macro_panel` US/KR (뉴스 헤드라인 × 거시지표 실제값), 5분 주기(300s).
+- 콜드스타트: `GET /ask-feed`가 캐시 부재/2×주기 초과 시 `refresh_once()`를 fire-and-forget
+  (single-flight + 60s 쿨다운) — 첫 방문자가 섹션을 채운다. 응답은 언제나 캐시 즉시.
+- 수동 실행: `POST /ask-feed/refresh`(X-Service-Token) + 어드민 Pipelines의
+  "🌍 Macro Trends" 카드(생성 시각·카드 수 + 지금 갱신 ▶).
+
+### 온보딩 v3 (6스텝, 실컴포넌트 프리뷰)
+intro(정체성: 진짜 데이터·교차검증·무전망) → evidence(SourceCard 3종+TrustStrip+수치
+하이라이트) → cards(QCard 픽스처) → chain(후속 질문 칩) → watch(필수 3+) → land.
+프리뷰 = 진짜 컴포넌트 + `web/lib/onboardingFixtures.ts` 가짜 데이터 + "예시 화면" 배지.
+QCard는 `web/components/QCard.tsx`로 추출(엔트리·온보딩 공용).
+
+### 삭제
+프롬프트 라이브러리 전체(웹 버튼/모달/{tickers} 자리채움/API 라우트, studio prompts.py·모델·
+시딩·테스트). idempotent_clone 패턴은 orm_helpers에 유지(분석가 클로닝용).

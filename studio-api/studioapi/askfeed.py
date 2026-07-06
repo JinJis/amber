@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 
 from studioapi.config import settings
 from studioapi.db import SessionLocal
-from studioapi.deps import current_user
+from studioapi.deps import ServiceDep, current_user
 from studioapi.models import AskFeedCache, User, Watchlist, WatchlistItem
 
 log = logging.getLogger("studioapi.askfeed")
@@ -129,12 +129,44 @@ def start(task_holder: list) -> None:
     log.info("ask-feed news refresher started (every %ss)", settings.ask_feed_refresh_seconds)
 
 
+# read-through 콜드스타트 가드: 캐시가 없거나 오래됐을 때 접속이 갱신을 킥한다.
+# single-flight(_kick_task) + 최소 간격(_kick_min_gap) — 갱신이 계속 실패해도(키 부재 등)
+# 접속마다 agent-engine을 두드리지 않는다.
+_kick_task: asyncio.Task | None = None
+_kick_at: datetime | None = None
+_KICK_MIN_GAP = timedelta(seconds=60)
+
+
 @router.get("/ask-feed", summary="ASK-6: the 물어보기 entry feed (one DB read, zero LLM)")
 async def get_ask_feed(user: User = Depends(current_user)) -> dict:
     """Assemble the caller's 물어보기 entry screen from cache — one DB read, zero LLM calls.
-    Tickers come WITHOUT cards; tapping one calls ``GET /ask-feed/ticker`` on demand."""
+    Tickers come WITHOUT cards; tapping one calls ``GET /ask-feed/ticker`` on demand.
+    Read-through: a missing/stale Macro Trends cache fires ONE background refresh (never
+    blocks the response) — the first visitor after a cold start populates the section."""
+    global _kick_task, _kick_at
     with SessionLocal() as db:
-        return _assemble(db, user.email)
+        out = _assemble(db, user.email)
+        row = db.get(AskFeedCache, _NEWS_SCOPE)
+    stale_after = timedelta(seconds=settings.ask_feed_refresh_seconds * 2)
+    stale = row is None or not row.generated_at or datetime.utcnow() - row.generated_at > stale_after
+    idle = _kick_task is None or _kick_task.done()
+    cooled = _kick_at is None or datetime.utcnow() - _kick_at > _KICK_MIN_GAP
+    if stale and idle and cooled:
+        # refresh_once opens its own httpx client + DB session → safe to fire-and-forget.
+        _kick_at = datetime.utcnow()
+        _kick_task = asyncio.create_task(refresh_once())
+    return out
+
+
+@router.post("/ask-feed/refresh", dependencies=[ServiceDep],
+             summary="Macro Trends 수동 갱신 (admin ops) — refresh_once를 즉시 1회 실행")
+async def ask_feed_refresh() -> dict:
+    """The admin console's '지금 갱신 ▶' — runs one refresher pass right now (signature-gated:
+    unchanged headlines/indicators spend no LLM call) and reports the cache state."""
+    out = await refresh_once()
+    with SessionLocal() as db:
+        p = _payload_of(db.get(AskFeedCache, _NEWS_SCOPE))
+    return {**out, "generated_at": p.get("generated_at"), "cards": len(p.get("cards") or [])}
 
 
 def _assemble(db: Session, email: str) -> dict:

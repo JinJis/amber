@@ -58,7 +58,8 @@ class DeskFeedRequest(BaseModel):
 
 class DeskCard(BaseModel):
     kind: str
-    question: str                                # tap → composer pre-fill (editable, never auto-send)
+    question: str                                # 표시용 (친근한 해요체 초대문)
+    query: str | None = None                     # 실행용 — tap 시 컴포저에 들어가는 명령문 (주체 포함)
     hook: str                                    # one-line sourced fact ("삼성전자 −3.2% · …")
     citations: list[Citation] = []
     deeplink: str | None = None
@@ -165,6 +166,7 @@ _SYNTH_SCHEMA = {
                 "properties": {
                     "kind": {"type": "string"},
                     "question": {"type": "string"},
+                    "query": {"type": "string"},   # 실행용 명령문 (컴포저 프리필)
                     "hook": {"type": "string"},
                     "sources": {"type": "array", "items": {"type": "integer"}},
                     "ticker": {"type": "string"},
@@ -186,6 +188,9 @@ _SYNTH_PROMPT = """당신은 리서치 데스크의 아침 브리핑 편집자�
 - question: 우리 도구로 사실을 조회해 답할 수 있는 구체적 질문 (한국어, 1문장). 반드시
   사실 조회형("무엇/얼마/추이/최근 공시 내용/원문 보기")으로. 해석·의견·전망을 요구하는
   표현("어떻게 해석할까", "어떻게 봐야 할까", "의미는", "전망은", "어떻게 될까")은 금지.
+- query: question과 같은 내용의 **실행 명령문** 한 문장 — 채팅 입력창에 들어가 에이전트에게
+  바로 시키는 텍스트. 반말 명령조("~살펴봐", "~정리해줘", "~보여줘")로 쓰고, 주체(종목명·지표명)를
+  문장 안에 반드시 포함할 것 (컨텍스트 없이 단독으로 이해돼야 함).
 - sources: hook의 근거 스니펫 인덱스 배열 — 근거 없는 카드는 만들지 말 것.
 - 톤은 기술적 호기심("주목할 변화", "확인해보기"). 절대 금지: 매수/매도/보유 조언, 전망,
   목표가, "기회", "추천" 류 표현, 그리고 질문에서의 해석·전망 요구.
@@ -332,8 +337,14 @@ async def build_desk_feed(req: DeskFeedRequest, api_key: str | None) -> dict:
             logger.warning("desk-feed card dropped (unsupported figures %s): %s",
                            hook_audit["unsupported"], rc.get("hook"))
             continue
+        # 실행용 query(없으면 question 폴백) — 카드에 종목이 있는데 문장에 빠졌으면 주입.
+        q = (rc.get("query") or "").strip() or (rc.get("question") or "").strip()
+        tkr = (rc.get("ticker") or cites[0].ticker or "").strip()
+        if q and tkr and tkr not in q:
+            q = f"{tkr} {q}"
         data_cards.append(DeskCard(
-            kind=kind, question=(rc.get("question") or "").strip(), hook=(rc.get("hook") or "").strip(),
+            kind=kind, question=(rc.get("question") or "").strip(), query=q,
+            hook=(rc.get("hook") or "").strip(),
             citations=cites, ticker=rc.get("ticker") or cites[0].ticker,
             deeplink=next((c.url for c in cites if c.url), None),
         ))

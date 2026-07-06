@@ -76,8 +76,8 @@ These hold across every service; breaking one fails review.
 | `control-plane` | 8010→8001 | `controlplane` | the **gateway** + tenants/keys/activations admin |
 | `rag` | 8002 | `rag` | provenance-first chunk→embed→retrieve→rerank |
 | `agent-engine` | 8003 | `agentengine` | guardrail→plan (Gemini)→tool loop→citations; `/agent/chat` SSE |
-| `studio-api` | 8004 | `studioapi` | Google user→tenant provisioning; conversations; **holds tenant key**; agents/prompts/(watchlists/briefs) |
-| `web` | 3000 | Next.js | chat UI + builder + prompt library; `/api/*` BFF (Auth.js session only) |
+| `studio-api` | 8004 | `studioapi` | Google user→tenant provisioning; conversations; **holds tenant key**; agents/(watchlists/briefs) |
+| `web` | 3000 | Next.js | chat UI + builder; `/api/*` BFF (Auth.js session only) |
 | `admin` | 8005 | — | out-of-band CRUD/ops console over service DBs (not in the request path) |
 | `mcp` | stdio | `mcpserver` | one tool per catalog resource, routed through the gateway |
 
@@ -89,10 +89,11 @@ Request flow (one chat turn): browser → web BFF (session) → studio-api (tena
   connector + manifest entry (an integrity test asserts every manifest path is a real route).
 - **Tenancy/entitlement/metering:** `control-plane/` (`controlplane`). Gateway is the enforcement point.
 - **Agent loop / planner / guardrails:** `agent-engine/` (`agentengine`). Planner via `AGENT_LLM_BACKEND`.
-- **Product data model** (users, conversations, agents, prompts, and the new **watchlists / standing
+- **Product data model** (users, conversations, agents, and the new **watchlists / standing
   analysts / briefs / pinned artifacts**): `studio-api/studioapi/models.py`. Extend here; mirror the
-  existing **prompt-import pattern** (`community` + `source_id` + idempotent clone) for analyst cloning.
-- **UI:** `web/` — chat, builder modal, prompt modal, BFF routes under `web/app/api/`. Read
+  **idempotent-clone pattern** (`orm_helpers.idempotent_clone` — `community` + `source_id`) for
+  analyst cloning. (The prompt library that originated it was removed 2026-07-06.)
+- **UI:** `web/` — chat, builder modal, BFF routes under `web/app/api/`. Read
   `/mnt/skills/public/frontend-design/SKILL.md` before UI work; **never render the graph with DOM nodes**
   (WebGL/R3F + instanced meshes); **no `localStorage`/`sessionStorage`** in preview/artifact contexts.
 

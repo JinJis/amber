@@ -132,6 +132,8 @@ def test_news_plan_is_news_first_and_marketwide():
     assert {a["market"] for _, a, _ in news_calls} == {"US", "KR"}   # both markets' headlines
     assert all("ticker" not in a for _, a, _ in news_calls)          # market-wide, not per-ticker
     assert "yahoo__asset_classes" in names                           # price context rides along
+    # Macro Trends: 실제 거시지표 최신값(FRED 패널)도 US·KR 모두 엮는다
+    assert [a["region"] for n, a, _ in plan if n == "fred__macro_panel"] == ["US", "KR"]
 
 
 async def test_news_feed_scope_uses_news_kinds(monkeypatch):
@@ -192,3 +194,36 @@ def test_curate_respects_picks_and_kind_diversity():
     # invalid/missing picks → fall back to the candidate list (still kind-guarded, limited)
     out2 = AF._curate({"candidates": cands, "picks": [99]}, limit=3)
     assert [c["question"] for c in out2] == ["q0", "q1", "q3"]
+
+
+async def test_query_field_subject_injection(monkeypatch):
+    # F3: 카드의 실행용 query — 종목 주체가 없으면 서버가 "이름(티커) " 프리픽스를 주입하고,
+    # 이미 있으면 그대로, query 누락이면 question으로 폴백(역시 주입).
+    gathered = [_g(1, "sec_edgar__filings", {"filings": [{"accession": "1", "date": "2026-07-03"}]},
+                   source="SEC EDGAR")]
+    monkeypatch.setattr(AF, "PlatformClient", lambda key: _FakeClient({"sec_edgar__filings": {}}, gathered))
+    monkeypatch.setattr(AF, "_ticker_plan", lambda tools, req: [("sec_edgar__filings", {}, "x")])
+
+    async def fake_gather(client, tools, plan):
+        return gathered
+    monkeypatch.setattr(AF, "_gather", fake_gather)
+
+    async def fake_curated(prompt):
+        return {"candidates": [
+            {"kind": "filing_deep", "question": "정정 공시에서 바뀐 내용 함께 살펴볼까요?",
+             "query": "정정 유상증자 공시에서 바뀐 내용을 원문과 함께 살펴봐",
+             "hook": "새 공시 접수 (2026-07-03)", "sources": [1]},
+            {"kind": "price_context", "question": "삼성전자 오늘 급등 이유 같이 알아볼까요?",
+             "query": "삼성전자 오늘 급등 배경을 공시·뉴스로 살펴봐",
+             "hook": "새 공시 접수 (2026-07-03)", "sources": [1]},
+            {"kind": "news_probe", "question": "이 뉴스 사실인지 볼까요?",
+             "hook": "새 공시 접수 (2026-07-03)", "sources": [1]},   # query 누락 → question 폴백
+        ], "picks": [0, 1, 2]}
+    monkeypatch.setattr(AF, "_synthesize_curated", fake_curated)
+
+    out = await build_ask_feed(AskFeedRequest(scope="ticker", market="KR", ticker="005930",
+                                              name="삼성전자"), api_key="k")
+    qs = {c["kind"]: c["query"] for c in out["cards"]}
+    assert qs["filing_deep"] == "삼성전자(005930) 정정 유상증자 공시에서 바뀐 내용을 원문과 함께 살펴봐"
+    assert qs["price_context"] == "삼성전자 오늘 급등 배경을 공시·뉴스로 살펴봐"   # 이미 포함 → 주입 없음
+    assert qs["news_probe"] == "삼성전자(005930) 이 뉴스 사실인지 볼까요?"          # 폴백 + 주입

@@ -23,8 +23,6 @@ from studioapi.orm_helpers import get_owned
 from studioapi.market import router as market_router
 from studioapi.notebooks import router as notebooks_router
 from studioapi.standing import router as standing_router
-from studioapi.prompts import router as prompts_router
-from studioapi.prompts import seed_community_prompts
 from studioapi.search import router as search_router
 from studioapi.templates import router as templates_router, seed_dashboard_templates
 from studioapi.askfeed import router as askfeed_router
@@ -46,7 +44,6 @@ setup_logging()
 async def lifespan(_: FastAPI):
     init_db()
     seed_templates()
-    seed_community_prompts()
     seed_dashboard_templates()
     tasks: list = []
     scheduler.start(tasks)  # background notification-alert dispatcher
@@ -151,7 +148,6 @@ app.include_router(alerts_router)
 app.include_router(channels_router)
 app.include_router(deliveries_router)
 app.include_router(templates_router)
-app.include_router(prompts_router)
 app.include_router(watchlists_router)
 app.include_router(deskfeed_router)
 app.include_router(askfeed_router)

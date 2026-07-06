@@ -91,7 +91,7 @@ export function SourceViewer({ c, onClose, onQuote }: {
             ) : shape === "data" && evInput ? (
               // an INPUT's own source page (filing cell highlighted) — back returns to the derivation
               <div className="sv-ev-input">
-                <button className="sv-act mono" onClick={() => setEvInput(null)}>← 도출 과정으로</button>
+                <button className="sv-act mono" onClick={() => setEvInput(null)}>← 계산 과정으로</button>
                 <FilingViewer c={evInput} />
               </div>
             ) : shape === "data" ? (
@@ -110,7 +110,7 @@ export function SourceViewer({ c, onClose, onQuote }: {
                 {c.snippet ? (
                   <div className="sv-data mono"><span className="sv-pin mono">{c.index ?? "1"}</span>{c.snippet}</div>
                 ) : null}
-                <p className="sv-data-note mono">{c.as_of ? `as_of ${c.as_of} · ` : ""}출처에서 추출·계산된 값 (셀 = 인용 근거)</p>
+                <p className="sv-data-note mono">{c.as_of ? `as_of ${c.as_of} · ` : ""}출처에서 가져오거나 계산한 값이에요 (표시된 셀이 인용 근거)</p>
               </article>
             ) : (
               <article className="sv-page">
@@ -119,7 +119,7 @@ export function SourceViewer({ c, onClose, onQuote }: {
                 <p className="sv-skel-l" /><p className="sv-skel-l" style={{ width: "88%" }} />
                 <div className="sv-quote">
                   <span className="sv-pin mono">{c.index ?? "1"}</span>
-                  {c.snippet || "인용된 원문 구절을 불러올 수 없습니다."}
+                  {c.snippet || "인용한 원문 구절을 불러오지 못했어요."}
                 </div>
                 <p className="sv-skel-l" style={{ width: "94%" }} /><p className="sv-skel-l" style={{ width: "70%" }} />
               </article>
@@ -129,11 +129,11 @@ export function SourceViewer({ c, onClose, onQuote }: {
           <aside className="sv-ctx">
             <div className="sv-ctx-h mono">이 원문을 인용한 곳</div>
             <div className="sv-ctx-card">
-              <div className="sv-ctx-snip">{c.snippet ? `“${c.snippet}”` : "이 답변이 인용한 출처입니다."}</div>
+              <div className="sv-ctx-snip">{c.snippet ? `“${c.snippet}”` : "이 답변이 인용한 출처예요."}</div>
               {c.index ? <div className="sv-ctx-n mono">인용 [{c.index}]</div> : null}
             </div>
             <div className="sv-ctx-meta mono">
-              <div><FreshnessDot f={c.freshness} /> 신선도 {fresh ?? "—"}</div>
+              <div><FreshnessDot f={c.freshness} /> {fresh ?? "—"}</div>
               {c.as_of ? <div>as_of {c.as_of}</div> : null}
               {c.ticker ? <div>{c.ticker}</div> : null}
               {c.page ? <div>{c.page}</div> : null}

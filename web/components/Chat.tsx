@@ -8,7 +8,6 @@ import { ShareSheet } from "./ShareSheet";
 import Onboarding from "./Onboarding";
 import NotebookView from "./NotebookView";
 import { NotebookPicker, type PinPayload } from "./NotebookPicker";
-import PromptLibrary from "./PromptLibrary";
 import CockpitEntry from "./CockpitEntry";
 import Watchlists, { Watchlist } from "./Watchlists";
 import ReactMarkdown from "react-markdown";
@@ -109,7 +108,7 @@ function NumHighlight({ row, cit, children, setHoverCite, onEvidence, onPinLedge
             <span className="nt-line">
               {cit ? <>[{cit.index}] {cit.source}{cit.as_of ? ` · ${cit.as_of}` : ""}</> : "차트·표 데이터와 일치"}
             </span>
-            {cit && <span className="nt-hint">{derived ? "클릭하면 계산 과정" : "클릭하면 원문"}</span>}
+            {cit && <span className="nt-hint">{derived ? "누르면 계산 과정을 볼 수 있어요" : "누르면 원문을 볼 수 있어요"}</span>}
             {onPinLedger && (
               <button type="button" className="nt-pin" disabled={pinned}
                 onClick={(e) => { e.stopPropagation(); onPinLedger(row as unknown as Record<string, unknown>, cit); setPinned(true); }}>
@@ -118,7 +117,7 @@ function NumHighlight({ row, cit, children, setHoverCite, onEvidence, onPinLedge
             )}
           </>
         ) : (
-          <span className="nt-line nt-warn">⚠ 이번 턴 자료와 대조되지 않은 수치예요</span>
+          <span className="nt-line nt-warn">⚠ 이번 답변의 자료에서는 확인하지 못한 숫자예요</span>
         )}
       </span>
     </span>
@@ -146,7 +145,7 @@ export function makeMdComponents(
           <button type="button" className={`cite-ref mono ${hoverCite === n ? "hot" : ""}`}
             onMouseEnter={() => setHoverCite(n)} onMouseLeave={() => setHoverCite(null)}
             onClick={(e) => { e.stopPropagation(); onCiteClick(n); }}
-            title="근거 패널에서 이 출처 보기">[{n}]</button>
+            title="근거 패널에서 이 출처를 볼 수 있어요">[{n}]</button>
         );
       }
       const nm = String(props.href || "").match(/^#num-(\d+)$/);
@@ -262,7 +261,6 @@ export default function Chat({ name, features }: { name: string; features: Featu
   const [categories, setCategories] = useState<Category[]>([]);
   const [agentId, setAgentId] = useState<string>(""); // "" = default agent
   const [builder, setBuilder] = useState<{ open: boolean; base: Agent | null }>({ open: false, base: null });
-  const [library, setLibrary] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // shell view + watchlists / @groups. Dashboard is home (when enabled); 탐색(explore) is the chat
@@ -431,28 +429,6 @@ export default function Chat({ name, features }: { name: string; features: Featu
   function pickHandle(h: string) {
     setInput((v) => v.replace(/@([^\s@]*)$/, `@${h} `));
     setMention([]);
-    inputRef.current?.focus();
-  }
-
-  // {tickers}/{ticker} placeholder fill — from a prompt-library import. Click a watchlist group
-  // or search a company; the chosen value replaces the first placeholder in the box.
-  const [tkQuery, setTkQuery] = useState("");
-  const [tkRes, setTkRes] = useState<{ ticker: string; name?: string; market?: string }[]>([]);
-  const hasPlaceholder = /\{tickers?\}/i.test(input);  // matches {TICKER}/{TICKERS}/{ticker}/{tickers}
-  async function searchTicker(q: string) {
-    setTkQuery(q);
-    if (!q.trim()) { setTkRes([]); return; }
-    try {
-      const [us, kr] = await Promise.all([
-        fetch(`/api/company/search?q=${encodeURIComponent(q)}&market=US&limit=4`).then((r) => (r.ok ? r.json() : { results: [] })),
-        fetch(`/api/company/search?q=${encodeURIComponent(q)}&market=KR&limit=4`).then((r) => (r.ok ? r.json() : { results: [] })),
-      ]);
-      setTkRes([...(us.results || []), ...(kr.results || [])].slice(0, 8));
-    } catch { setTkRes([]); }
-  }
-  function fillPlaceholder(v: string) {
-    setInput((s) => s.replace(/\{tickers?\}/i, v));
-    setTkQuery(""); setTkRes([]);
     inputRef.current?.focus();
   }
 
@@ -662,7 +638,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
           <span className="ic">📓</span><span className="lbl">노트</span>
         </button>
         <button className={`rail-item ${view === "watch" ? "on" : ""}`} onClick={() => setView("watch")}>
-          <span className="ic">⭐</span><span className="lbl">관심</span>
+          <span className="ic">⭐</span><span className="lbl">관심종목</span>
         </button>
         {features.alerts && (
           <button className={`rail-item ${view === "bot" ? "on" : ""}`} onClick={() => setView("bot")}>
@@ -704,10 +680,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
               <div className="desk-id">
                 <Mascot />
                 <FreshnessDot f="fresh" />
-                <span className="explore-title">탐구<span className="explore-sub"> — 출처와 함께 분석합니다</span></span>
-              </div>
-              <div className="agentbar">
-                <Button variant="ghost" size="sm" onClick={() => setLibrary(true)} title="프롬프트 라이브러리">프롬프트</Button>
+                <span className="explore-title">탐구<span className="explore-sub"> — 출처와 함께 분석해요</span></span>
               </div>
             </header>
 
@@ -726,7 +699,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
 
               {loadError && (
                 <div className="load-error" role="alert">
-                  이 대화를 불러오지 못했습니다.
+                  대화를 불러오지 못했어요.
                   <button className="chip" onClick={() => openConversation(loadError)}>다시 시도</button>
                 </div>
               )}
@@ -787,7 +760,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
                       onSubmit={(labels) => send(`${m.clarify!.origin} — ${labels.join(", ")}`)} />
                   )}
                   {m.role === "assistant" && m.refused && (
-                    <GuardrailLabel>매수/매도·목표가·전망·점수는 제공하지 않아요 — 가드레일에서 자동 거절됩니다.</GuardrailLabel>
+                    <GuardrailLabel>매수·매도, 목표가, 전망은 답하지 않아요 — 신뢰를 위해 항상 지키는 원칙이에요.</GuardrailLabel>
                   )}
                   {m.role === "assistant" && (m.suggestions?.length || 0) > 0 && (
                     <div className="followups">
@@ -801,7 +774,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
                         {m.standing_offer && (
                           <button type="button" className={`fu-chip standing ${standingDone.has(i) ? "on" : ""}`}
                             disabled={busy || standingDone.has(i)}
-                            title="이 데이터가 갱신되면 다음 방문 때 데스크에 알려드려요 (푸시 없음)"
+                            title="이 데이터가 업데이트되면 다음에 왔을 때 알려드려요"
                             onClick={() => void subscribeStanding(i, m)}>
                             {standingDone.has(i) ? "✓ 지켜보는 중 — 갱신되면 데스크에 알림" : "🔔 이 질문 계속 지켜보기"}
                           </button>
@@ -814,20 +787,6 @@ export default function Chat({ name, features }: { name: string; features: Featu
             </main>
 
             <footer className="composer">
-              {hasPlaceholder && (
-                <div className="tickerfill">
-                  <span className="tf-label">⌗ 종목 채우기</span>
-                  {handles.slice(0, 6).map((h) => (
-                    <button key={h} type="button" className="tf-chip group" onClick={() => fillPlaceholder("@" + h)}>@{h}</button>
-                  ))}
-                  <input className="tf-search" value={tkQuery} placeholder="종목 검색 (예: 삼성, AAPL)…"
-                    onChange={(e) => searchTicker(e.target.value)} />
-                  {tkRes.map((r, i) => (
-                    <button key={`${r.ticker}${i}`} type="button" className="tf-chip" title={r.name}
-                      onClick={() => fillPlaceholder(r.ticker)}>{r.ticker} · {(r.name || "").slice(0, 12)}</button>
-                  ))}
-                </div>
-              )}
               {mention.length > 0 && (
                 <div className="mention">
                   {mention.map((h, i) => (
@@ -845,7 +804,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
                   onBlur={() => setTimeout(() => setMention([]), 120)}
                   placeholder={messages.length === 0 && todayQs.length
                         ? `오늘: “${todayQs[phIdx % todayQs.length]}”`
-                        : "무엇이든 물어보거나 — /프롬프트 · @그룹 호출…"} disabled={busy} />
+                        : "무엇이든 물어보세요 — @그룹으로 관심종목을 부를 수 있어요"} disabled={busy} />
                 <Button disabled={busy || !input.trim()}>보내기</Button>
               </form>
               {(input.match(/@([^\s@]+)/g) ?? []).length > 0 && (
@@ -882,17 +841,6 @@ export default function Chat({ name, features }: { name: string; features: Featu
           categories={categories}
           onClose={() => setBuilder({ open: false, base: null })}
           onSaved={onSaved}
-        />
-      )}
-
-      {library && (
-        <PromptLibrary
-          onClose={() => setLibrary(false)}
-          onUse={(body) => {
-            setInput(body);
-            setLibrary(false);
-            setTimeout(() => inputRef.current?.focus(), 0);
-          }}
         />
       )}
 

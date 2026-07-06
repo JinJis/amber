@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import httpx
 from fastapi import FastAPI, Form, Request
+from sqlalchemy import text as sa_text
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -352,6 +353,34 @@ async def pipelines(request: Request, msg: str = ""):
         "</div></div>"
     )
 
+    # --- Macro Trends (ask-feed) 카드: studio DB의 news_feed 캐시 상태 + 수동 갱신 ---
+    mt_status, mt_meta = "아직 생성 전", ""
+    try:
+        eng = ENGINES.get("studio")
+        if eng is not None:
+            with eng.connect() as conn:
+                row = conn.execute(sa_text(
+                    "SELECT generated_at, payload FROM ask_feed_cache WHERE scope='news_feed'"
+                )).first()
+            if row:
+                import json as _json
+                n_cards = len((_json.loads(row[1]) or {}).get("cards") or [])
+                mt_status = f"카드 <b>{n_cards}</b>개"
+                mt_meta = f"<span class=pill>generated_at <b>{_esc(str(row[0])[:19])}</b></span>"
+    except Exception:  # noqa: BLE001 — 첫 부팅엔 테이블이 없을 수 있음
+        pass
+    macro_card = (
+        "<div class=card><h3>🌍 Macro Trends (ask-feed)</h3>"
+        f"<div class=flow><span class=pill>{mt_status}</span>{mt_meta}"
+        "<span class=pill>5분마다 자동 갱신</span></div>"
+        "<div class=sub>미국·한국 실시간 뉴스 + 거시지표(금리·물가·고용)에서 물어보기 첫 화면의 질문 카드를 "
+        "만들어요. 전 유저 공통 1행 캐시(studio <code>ask_feed_cache</code>, scope=news_feed) — 접속 시 "
+        "오래됐으면 자동으로 1회 갱신(read-through)되고, 여기서 즉시 돌릴 수도 있어요. 데이터가 그대로면 "
+        "(서명 동일) LLM 호출 없이 끝나요.</div>"
+        "<div class=opsrow><form class=ops method=post action=/ops/askfeed/refresh>"
+        "<button class=p>지금 갱신 ▶</button></form></div></div>"
+    )
+
     # --- per-pipeline visualization cards ---
     cards = "".join(_pipeline_card(p, cron_by_pid) for p in registry) or "<div class=empty>파이프라인 레지스트리를 불러오지 못했어요.</div>"
 
@@ -425,7 +454,7 @@ S&amp;P·코스피·코스닥 전체는 직접 입력란에 티커를 붙여넣�
     body = (_flash(msg)
             + "<p class=hint>모든 데이터 파이프라인을 한곳에서 — 무엇을 어떤 경로로 수집해 어디에 쌓는지, "
               "주기·상태·에러를 시각화합니다. 작업이 도는 동안 자동 새로고침됩니다.</p>"
-            + "<h2>큐 스케줄러</h2><div class=grid>" + queue_banner + "</div>"
+            + "<h2>큐 스케줄러</h2><div class=grid>" + queue_banner + macro_card + "</div>"
             + "<h2>파이프라인</h2><div class=grid>" + cards + "</div>"
             + backfill
             + f"<h2>수집 작업 {'· ⟳ live' if running else ''}</h2>" + jobs_html
@@ -823,6 +852,24 @@ async def ops_news(request: Request, market: str = Form("US"), tickers: str = Fo
         ok = r.status_code == 200
     label = f"{market}+{'+'.join(tick) if tick else 'market'}"
     return RedirectResponse(f"/pipelines?msg=news+ingest+{'started' if ok else 'failed'}+{label}", status_code=303)
+
+
+@app.post("/ops/askfeed/refresh")
+async def ops_askfeed_refresh(request: Request):
+    """Macro Trends 수동 갱신 — studio-api의 refresh_once를 즉시 1회 실행 (서명 동일 시 LLM 스킵)."""
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.post(f"{settings.studio_url}/ask-feed/refresh",
+                             headers={"X-Service-Token": settings.service_token}, timeout=90)
+            j = r.json() if r.status_code == 200 else {}
+        if r.status_code != 200:
+            msg = f"Macro Trends 갱신 실패 (HTTP {r.status_code})"
+        else:
+            msg = (f"Macro Trends {'갱신됨' if j.get('refreshed') else '변화 없음'} · "
+                   f"카드 {j.get('cards', '?')}개")
+    except Exception as exc:  # noqa: BLE001 — studio 미기동 등
+        msg = f"Macro Trends 갱신 실패: {type(exc).__name__}"
+    return RedirectResponse(f"/pipelines?msg={msg.replace(' ', '+')}", status_code=303)
 
 
 @app.post("/ops/selftest")

@@ -2,7 +2,7 @@
 
 `User` maps a Google-authenticated email to its platform tenant/project/key
 (held server-side, never sent to the browser). `Conversation`/`Message` store
-chat history. `Agent`/`Prompt` back the agent builder + prompt library.
+chat history. `Agent` backs the agent builder.
 `Watchlist`/`WatchlistItem` are the user's @groups (U1). `Integration` is the
 messenger seam (F3).
 """
@@ -184,24 +184,6 @@ class Agent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
-class Prompt(Base):
-    """A reusable prompt. ``community`` rows (``user_email is None``) are the
-    seeded public catalog; a user imports one to get an editable personal copy
-    (``source_id`` records where it came from)."""
-
-    __tablename__ = "prompts"
-    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: _uid("prm"))
-    user_email: Mapped[str | None] = mapped_column(index=True, nullable=True)  # null = community
-    title: Mapped[str] = mapped_column(String(200))
-    description: Mapped[str | None] = mapped_column(String(280), nullable=True)
-    body: Mapped[str] = mapped_column(Text)
-    category: Mapped[str | None] = mapped_column(String(48), nullable=True)
-    community: Mapped[bool] = mapped_column(Boolean, default=False)
-    source_id: Mapped[str | None] = mapped_column(String(48), nullable=True)  # imported-from community id
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-
-# --- U1: watchlists / @groups ---------------------------------------------
 class Watchlist(Base):
     """A user's named group of companies (the ``@handle`` that chat + the analyst
     builder tag). ``name`` is unique per user and doubles as the @-handle."""

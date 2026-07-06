@@ -9,25 +9,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Citation } from "@/lib/types";
+import { QCard, type AskCard } from "./QCard";
 
-type AskCard = { kind: string; question: string; hook: string; ticker?: string | null; market?: string | null;
-                 citations?: Citation[] };
 type TickerInfo = { market: string; ticker: string; name: string; groups: string[] };
-
-// per-kind emoji + short label — one warm mark per card.
-const KIND: Record<string, { i: string; t: string }> = {
-  filing_deep:      { i: "📄", t: "공시" },
-  price_context:    { i: "📈", t: "가격" },
-  news_probe:       { i: "📰", t: "뉴스" },
-  history_echo:     { i: "🕰️", t: "과거" },
-  fundamental_shift:{ i: "📊", t: "재무" },
-  valuation:        { i: "💰", t: "밸류" },
-  ownership:        { i: "👥", t: "수급·보유" },
-  earnings:         { i: "📅", t: "어닝" },
-  macro:            { i: "🌍", t: "거시" },
-  micro:            { i: "🏭", t: "산업" },
-  market:           { i: "📉", t: "시장" },
-};
 
 // ENT-4: capability chips per company — the product's real verbs, market-aware.
 export function capabilityChips(name: string, market: string): { label: string; q: string }[] {
@@ -43,35 +27,6 @@ export function capabilityChips(name: string, market: string): { label: string; 
     ? { label: "수급(외인·기관)", q: `${name} 외국인·기관 수급 어때?` }
     : { label: "거장 보유(13F)", q: `${name} 들고 있는 투자 거장 있어?` });
   return chips;
-}
-
-// One analysis card: the body fills the composer; the source chip opens the evidence viewer.
-function QCard({ c, name, onPick, onEvidence }: {
-  c: AskCard; name?: string; onPick: (q: string) => void; onEvidence?: (cit: Citation) => void;
-}) {
-  const k = KIND[c.kind] ?? { i: "•", t: "" };
-  const cit = c.citations?.[0];
-  return (
-    <div className="qc">
-      <button type="button" className="qc-main" onClick={() => onPick(c.question)}>
-        <div className="qc-top">
-          <span className="qc-emoji" aria-hidden>{k.i}</span>
-          {name ? <span className="qc-tkr">{name}</span> : null}
-          {k.t ? <span className="qc-kind">{k.t}</span> : null}
-        </div>
-        <div className="qc-q">{c.question}</div>
-        <div className="qc-hook">{c.hook}</div>
-      </button>
-      {cit?.source ? (
-        <button type="button" className="qc-src" title="근거 보기"
-          onClick={(e) => { e.stopPropagation(); onEvidence?.(cit); }}>
-          <span className="qc-src-dot" aria-hidden />
-          <span className="qc-src-name">{cit.source}</span>
-          <span className="qc-src-cta mono">근거 보기 →</span>
-        </button>
-      ) : null}
-    </div>
-  );
 }
 
 const tkKey = (t: { market: string; ticker: string }) => `${t.market}:${t.ticker}`;
@@ -140,14 +95,14 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence }: {
         <p className="ask-trust">모든 답에는 <b>출처[n]</b>가 붙고, <span className="ask-noforecast">전망은 하지 않아요</span>.</p>
       </div>
 
-      {/* 2단: 내 관심종목 파고들기 · 지금 뉴스에서 */}
+      {/* 2단: 내 관심종목 파고들기 · Macro Trends */}
       <div className="ask-cols">
         {/* 왼쪽 — 내 관심종목 파고들기 (종목을 누르면 그 자리에서 3~5개 큐레이션) */}
         <section className="ask-col" data-testid="ck-mine">
           <div className="ask-col-h">
             <span className="ask-col-t">🔎 내 관심종목 파고들기</span>
           </div>
-          <p className="ask-col-desc">궁금한 종목을 누르면 <b>공시·가격·뉴스·밸류에이션·수급·어닝</b>을 훑어 오늘 가장 눌러볼 만한 분석거리 3~5개를 추려드려요.</p>
+          <p className="ask-col-desc">궁금한 종목을 누르면 <b>공시·가격·뉴스·밸류에이션·수급·실적</b>을 훑어 오늘 가장 눌러볼 만한 분석거리 3~5개를 추려드려요.</p>
 
           {tickers.length > 0 ? (
             <>
@@ -213,14 +168,14 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence }: {
           )}
         </section>
 
-        {/* 오른쪽 — 지금 뉴스에서 (10분 주기 백그라운드 갱신) */}
+        {/* 오른쪽 — Macro Trends (뉴스+거시지표, 5분 주기 백그라운드 갱신 + read-through) */}
         {news.length > 0 && (
           <section className="ask-col" data-testid="ck-news">
             <div className="ask-col-h">
-              <span className="ask-col-t">📰 지금 뉴스에서</span>
-              <span className="ask-col-sub mono">10분마다 갱신</span>
+              <span className="ask-col-t">🌍 Macro Trends</span>
+              <span className="ask-col-sub mono">5분마다 갱신</span>
             </div>
-            <p className="ask-col-desc">실시간 뉴스에서 <b>중요한 소식</b>만 골라 질문으로 만들어뒀어요.</p>
+            <p className="ask-col-desc">실시간 뉴스와 <b>금리·물가·고용</b> 같은 거시 지표에서 지금 눌러볼 만한 질문만 골라뒀어요.</p>
             <div className="qc-list">
               {news.map((c, i) => <QCard key={i} c={c} onPick={onPick} onEvidence={onEvidence} />)}
             </div>

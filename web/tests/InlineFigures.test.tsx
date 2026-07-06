@@ -95,14 +95,14 @@ describe("NumHighlight (본문 하이라이트 + 팝업)", () => {
     expect(hls[0].textContent).toContain("391.0B");
     expect(hls[0].textContent).toContain("원자료 대조 확인");        // 팝업 내용 (hover 시 표시)
     expect(hls[0].textContent).toContain("[1] SEC EDGAR · 2026-06-30");
-    expect(hls[0].textContent).toContain("클릭하면 원문");
+    expect(hls[0].textContent).toContain("누르면 원문을 볼 수 있어요");
   });
 
   it("미확인 수치는 앰버(warn) + 경고 팝업, 클릭 불가", () => {
     render(<AnswerArticle mdComponents={mk()} content={annotateNumerals(CONTENT, ROWS as any)} />);
     const warn = screen.getAllByTestId("num-hl")[1];
     expect(warn.className).toContain("warn");
-    expect(warn.textContent).toContain("대조되지 않은 수치");
+    expect(warn.textContent).toContain("확인하지 못한 숫자");
     expect(warn.getAttribute("role")).toBeNull();
   });
 

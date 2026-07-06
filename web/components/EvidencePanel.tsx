@@ -150,12 +150,12 @@ export function ContextPanel(
 
   return (
     <aside className="ctxpane">
-      <div className="ctx-resize" onMouseDown={onResizeStart} title="드래그해서 패널 너비 조절" aria-hidden />
+      <div className="ctx-resize" onMouseDown={onResizeStart} title="끌어서 패널 너비를 조절할 수 있어요" aria-hidden />
       <div className="ctxpane-head">
         <span className="ctx-title">근거 패널</span>
         {streaming && <span className="ctx-live"><span className="tl-spin" />수집 중</span>}
       </div>
-      <span className="live-label">원자료와 출처만 보여줘요 — 예측·매매 의견은 제공하지 않습니다.</span>
+      <span className="live-label">원자료와 출처만 보여드려요 — 예측이나 매매 의견은 없어요.</span>
       {!hasAny ? (
         <div className="ctx-empty">
           {streaming
@@ -190,7 +190,7 @@ export function ContextPanel(
           {used.length > 0 && (
             <div className="ctx-section" data-testid="ctx-used">
               <SectionHead title="인용한 출처" count={used.length}
-                desc="답변 속 [n] 번호와 1:1이에요 — 본문의 [n]을 누르면 그 카드로 와요." />
+                desc="답변 속 [n] 번호와 1:1이에요 — 본문의 [n]을 누르면 그 카드로 이동해요." />
               <div className="ctx-cards">{used.map(card)}</div>
             </div>
           )}

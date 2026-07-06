@@ -15,6 +15,7 @@ import { FreshnessDot } from "./ui";
 export type DeskCard = {
   kind: string;
   question: string;
+  query?: string | null;   // 실행용 명령문 — tap 시 컴포저 프리필 (없으면 question 폴백)
   hook: string;
   citations?: Citation[];
   deeplink?: string | null;
@@ -145,7 +146,7 @@ export default function DeskHome({ onPick, onChanged, onShareBriefing }: {
             </div>
           </div>
         ) : (
-          <button key={i} type="button" className="df-card" onClick={() => onPick(c.question)}>
+          <button key={i} type="button" className="df-card" onClick={() => onPick(c.query || c.question)}>
             <div className="df-hook"><span className="df-ic">{ICONS[c.kind] ?? "•"}</span>{c.hook}</div>
             <div className="df-q">“{c.question}” <span className="df-arrow">→</span></div>
             {(c.citations?.length ?? 0) > 0 && (

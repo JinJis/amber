@@ -92,7 +92,7 @@ function TableArtifact(
       <div className="artifact-foot">
         <span className="artifact-src">
           {a.source || "출처"}{a.as_of ? <span className="mono"> · as of {a.as_of}</span> : null}
-          <span className="kpi-evlabel"> · 각 수치는 공시 원문에 인용</span>
+          <span className="kpi-evlabel"> · 수치는 모두 공시 원문에서 가져왔어요</span>
         </span>
       </div>
     </div>
@@ -135,7 +135,7 @@ function NarrativeArtifact(
         ))}
       </div>
       <div className="artifact-foot">
-        <span className="artifact-src">출처는 답변의 [n] 인용을 따릅니다 · 전망·매수의견 없음</span>
+        <span className="artifact-src">출처는 답변의 [n] 인용과 같아요 · 전망·매수 의견 없음</span>
       </div>
     </div>
   );
@@ -277,7 +277,7 @@ export function ArtifactCard(
   // No data yet (a freshly added / templated widget before refresh, or feed/calendar): draw an
   // honest gap with the trust line — never crash, never fabricate. The board card header owns ↻.
   if (xs.length === 0 && !hasCandles && !hasOverlays) {
-    if (bare) return <div className="artifact-empty">아직 데이터를 불러오지 않았어요{a.tool ? " — ↻ 로 가져옵니다." : "."}</div>;
+    if (bare) return <div className="artifact-empty">아직 데이터를 불러오지 않았어요{a.tool ? " — ↻ 를 누르면 가져와요." : "."}</div>;
     return (
       <div className="artifact">
         <div className="artifact-head">
@@ -290,7 +290,7 @@ export function ArtifactCard(
             </button>
           )}
         </div>
-        <div className="artifact-empty">아직 데이터를 불러오지 않았어요{a.tool ? " — ↻ 새로고침으로 출처에서 가져옵니다." : "."}</div>
+        <div className="artifact-empty">아직 데이터를 불러오지 않았어요{a.tool ? " — ↻ 새로고침을 누르면 출처에서 가져와요." : "."}</div>
         <div className="artifact-foot">
           <span className="artifact-src">{a.source || "출처"}{a.as_of ? <span className="mono"> · as of {a.as_of}</span> : null}</span>
           <FreshnessDot f={a.freshness ?? "gap"} />
@@ -408,7 +408,7 @@ export function ArtifactCard(
         )}
         <span className="artifact-src">
           {a.source || "출처"}{a.as_of ? <span className="mono"> · as of {a.as_of}</span> : null}
-          {a.has_gap ? <span className="artifact-gap"> · 일부 구간 공백</span> : null}
+          {a.has_gap ? <span className="artifact-gap"> · 일부 구간 자료 없음</span> : null}
         </span>
       </div>
     </div>

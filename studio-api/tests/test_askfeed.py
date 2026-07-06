@@ -119,6 +119,10 @@ def test_ask_feed_endpoint_zero_llm(monkeypatch):
     monkeypatch.setattr(httpx.AsyncClient, "post", _boom)
     with SessionLocal() as db:
         _mk_user(db, "zero@u.com")
+        # 신선한 캐시를 심어 read-through 킥도 일어나지 않는 평상시 상태로 (순서 독립)
+        db.merge(AskFeedCache(scope="news_feed", generated_at=datetime.utcnow(),
+                              payload=json.dumps({"cards": CARDS["cards"]})))
+        db.commit()
     r = client.get("/ask-feed", headers=_hdr("zero@u.com"))
     assert r.status_code == 200 and called["n"] == 0
     body = r.json()
@@ -187,3 +191,55 @@ def test_ticker_generation_failure_returns_honest_gap(monkeypatch):
                    headers=_hdr("gap@u.com"))
     assert r.status_code == 200
     assert r.json()["cards"] == []          # a gap, never fabricated content
+
+
+@respx.mock
+def test_manual_refresh_endpoint_service_guarded(monkeypatch):
+    """POST /ask-feed/refresh — admin ops 수동 갱신: 서비스 토큰 필수, refresh_once 1회 실행."""
+    monkeypatch.setattr(settings, "agent_engine_url", "http://ae.test")
+    with SessionLocal() as db:
+        _mk_user(db, "adm@u.com")
+    respx.post("http://ae.test/agent/ask-feed").mock(return_value=httpx.Response(200, json=CARDS))
+
+    r = client.post("/ask-feed/refresh")                    # no token → rejected
+    assert r.status_code == 401
+    r = client.post("/ask-feed/refresh", headers={"X-Service-Token": SVC})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["refreshed"] == 1 and body["cards"] == 1 and body["generated_at"]
+
+
+def test_read_through_kicks_refresh_once_on_stale_cache(monkeypatch):
+    """GET /ask-feed — 캐시가 없거나 오래되면 백그라운드 갱신을 1회만 킥(single-flight),
+    신선하면 킥하지 않는다. 응답은 언제나 캐시만으로 즉시."""
+    import studioapi.askfeed as SAF
+    calls = {"n": 0}
+
+    async def fake_refresh_once():
+        calls["n"] += 1
+        return {"scopes": 1, "refreshed": 0}
+    monkeypatch.setattr(SAF, "refresh_once", fake_refresh_once)
+    SAF._kick_task = None
+    SAF._kick_at = None
+
+    with SessionLocal() as db:
+        _mk_user(db, "rt@u.com")
+        row = db.get(AskFeedCache, "news_feed")
+        if row:  # 이전 테스트가 심었을 수 있음 → 확실히 오래된 상태로
+            row.generated_at = datetime.utcnow() - timedelta(hours=6)
+            db.commit()
+
+    r1 = client.get("/ask-feed", headers=_hdr("rt@u.com"))
+    r2 = client.get("/ask-feed", headers=_hdr("rt@u.com"))
+    assert r1.status_code == 200 and r2.status_code == 200
+    assert calls["n"] == 1                                  # single-flight: 두 접속에 킥 1회
+
+    # 신선한 캐시 → 킥 없음
+    with SessionLocal() as db:
+        db.merge(AskFeedCache(scope="news_feed", generated_at=datetime.utcnow(),
+                              payload=json.dumps({"cards": CARDS["cards"]})))
+        db.commit()
+    SAF._kick_task = None
+    SAF._kick_at = None
+    client.get("/ask-feed", headers=_hdr("rt@u.com"))
+    assert calls["n"] == 1

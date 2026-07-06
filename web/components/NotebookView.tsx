@@ -65,7 +65,7 @@ function BlockView({ b, onNote, onText, onMove, onDelete }: {
             </div>
           </div>
         ) : (
-          <div className="nb-text md" role="button" tabIndex={0} title="클릭해서 편집"
+          <div className="nb-text md" role="button" tabIndex={0} title="눌러서 수정할 수 있어요"
             onClick={() => setEditingText(true)}
             onKeyDown={(e) => { if (e.key === "Enter") setEditingText(true); }}>
             <ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkEmphasis]}>{String(b.payload.md ?? "")}</ReactMarkdown>
