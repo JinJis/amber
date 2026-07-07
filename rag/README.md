@@ -1,23 +1,30 @@
 # RAG Service
 
 Provenance-first retrieval over the platform's documents (filings, news, transcripts). The pipeline —
-**chunk → embed → vector store → retrieve → (optional) rerank** — keeps a **provenance envelope on every
-chunk** (source, doc_type, ticker, as_of, url, section…), so retrieved passages are citeable and
-consistent with the structured connector data.
+**structure-aware chunk → embed → hybrid retrieve (dense ∪ lexical, RRF) → rerank** — keeps a
+**provenance envelope on every chunk** (source, doc_type, ticker, as_of, url, section…), so retrieved
+passages are citeable and consistent with the structured connector data.
 
-Embedding / reranker / vector store are **pluggable backends selected by `.env`** — flip between
-**CPU-OSS / GCP / GPU** with no code change:
+**Embeddings are Gemini-only** — `gemini-embedding-2` via the Gemini API (`GOOGLE_API_KEY`), MRL-truncated
+to `RAG_EMBEDDING_DIM` (1536) and L2-normalized; documents and queries embed asymmetrically. The legacy
+hash / fastembed / sentence-transformers / TEI backends were removed.
 
-| Tier | `RAG_EMBEDDING_BACKEND` | What runs |
-|---|---|---|
-| CPU + open-source | `oss-cpu` | fastembed (ONNX) on CPU — e.g. `BAAI/bge-m3` (extra: `oss`) |
-| Google Cloud | `gcp` | Vertex AI `gemini-embedding-001` (extra: `gcp`) |
-| GPU instance | `oss-gpu` | sentence-transformers on CUDA (extra: `st`) |
-| GPU (served) | `tei` | a remote Text-Embeddings-Inference endpoint (`RAG_EMBEDDING_ENDPOINT`) |
-| dev / CI | `hash` | deterministic, dependency-free (default) |
+**Hybrid retrieval (RQ-1).** Each query runs a dense leg (cosine over embeddings) AND a lexical leg
+(Postgres FTS — a functional GIN index on `to_tsvector('simple', text)`, prefix tokens `tok:*` so Korean
+particles match), fused with Reciprocal Rank Fusion over a wide `RAG_CANDIDATE_K` (40) candidate pool,
+then reranked down to `RAG_TOP_K` (8). Exact identifiers (tickers, accession numbers, figures, Korean
+names) stay retrievable even when the embedding misses them. The lexical leg and the reranker each fail
+safe — an outage in either degrades to the other, never to a failed query.
 
-Reranker (`RAG_RERANKER_BACKEND`): `none` · `oss-cpu`/`oss-gpu` (BGE-reranker-v2-m3) · `tei` ·
-`gcp` (Vertex AI Ranking API). Vector store (`RAG_VECTOR_STORE`): `memory` (dev) · `pgvector` (prod).
+**Structure-aware chunking (RQ-2).** Chunks split on sentence boundaries (never mid-sentence), carry
+their enclosing heading as an `[Item 1A. Risk Factors]` prefix, keep table rows atomic (`cell | cell`),
+and preserve speaker turns whole in transcripts. Filing/DART sections break on real headings (Item N /
+제N장), so a hit points at a *named* region. Re-chunking replaces a document's chunks by `accession`
+(delete-then-insert) so shifting section boundaries never orphan stale chunks.
+
+Reranker (`RAG_RERANKER_BACKEND`): `none` · `gcp` (Vertex AI Ranking API). Vector store
+(`RAG_VECTOR_STORE`): `memory` (dev/CI — numpy cosine + token-overlap lexical) · `pgvector` (prod —
+HNSW ANN + GIN FTS).
 
 ## Run
 
