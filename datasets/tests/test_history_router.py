@@ -120,6 +120,29 @@ def test_regimes_seed_on_demand_and_filter():
     assert kr and all(x["market"] == "KR" for x in kr)
 
 
+def test_regime_hint_matches_containment_not_only_peak(caplog):
+    # 9·11-style regimes sit INSIDE a larger bear: their peak_hint is never an episode PEAK,
+    # but it falls within an episode's underwater span → the seed cross-check must accept it.
+    import logging
+    from app.store.history import seed_regimes
+    from app.store.models import DrawdownEpisode
+    init_db()
+    with SessionLocal() as db:
+        db.query(DrawdownEpisode).filter(DrawdownEpisode.ticker == "^GSPC").delete()
+        # one big dot-com episode: peak 2000-03-24 → recovery 2007-05-30 (contains 2001-09-10)
+        db.add(DrawdownEpisode(
+            market="US", ticker="^GSPC", threshold_pct=20.0, method_version="dd-v1",
+            peak_date=date(2000, 3, 24), peak_close=1527.46,
+            trough_date=date(2002, 10, 9), trough_close=776.76, depth_pct=-49.1,
+            decline_days=929, recovery_date=date(2007, 5, 30), recovery_days=1694,
+            is_open=False, source="test"))
+        db.commit()
+    with caplog.at_level(logging.WARNING, logger="app.store.history"):
+        seed_regimes()
+    assert not [r for r in caplog.records if "sept-11-2001" in r.getMessage()], \
+        "containment match must silence the sept-11 hint warning"
+
+
 def test_regime_compare_composition():
     # seed the covid regime's anchor (^GSPC) INSIDE its window (2020-02-19 ~ 2020-03-23)
     d0, prices = "2020-02-19", [3380, 3350, 3300, 3200, 3000, 2800, 2600, 2500, 2400, 2300, 2237, 2400, 2600]

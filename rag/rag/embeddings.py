@@ -23,6 +23,34 @@ from rag.config import settings
 
 _BATCH = 64  # texts per embed_content request
 
+# Transient Gemini API failures self-heal instead of failing the whole ingest request —
+# a single 503 UNAVAILABLE was surfacing as a 500 to callers (filing_text pipeline dropped
+# a ticker over it in the 2026-07 full-pipeline audit). Retry 429 + 5xx with backoff.
+_RETRYABLE = {429, 500, 502, 503, 504}
+_RETRIES = 3
+_BACKOFF_SECONDS = 2.0  # 2 → 4 → 8
+
+
+def _with_retry(call):
+    """Run a sync Gemini call, retrying transient APIErrors (runs inside asyncio.to_thread,
+    so time.sleep backoff is fine)."""
+    import logging
+    import time
+
+    from google.genai import errors
+
+    for attempt in range(_RETRIES + 1):
+        try:
+            return call()
+        except errors.APIError as exc:
+            code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+            if attempt >= _RETRIES or code not in _RETRYABLE:
+                raise
+            wait = _BACKOFF_SECONDS * (2 ** attempt)
+            logging.getLogger(__name__).warning(
+                "gemini embed transient %s — retry %d/%d in %.0fs", code, attempt + 1, _RETRIES, wait)
+            time.sleep(wait)
+
 
 def _normalize(vec: list[float]) -> list[float]:
     norm = math.sqrt(sum(x * x for x in vec))
@@ -67,7 +95,8 @@ class GeminiEmbedder:
                     cfg = types.EmbedContentConfig(
                         task_type="RETRIEVAL_QUERY" if query else "RETRIEVAL_DOCUMENT",
                         output_dimensionality=self.dim or None)
-                resp = self._client.models.embed_content(model=self.model, contents=contents, config=cfg)
+                resp = _with_retry(lambda: self._client.models.embed_content(
+                    model=self.model, contents=contents, config=cfg))
                 return [list(e.values) for e in resp.embeddings]
 
             vecs = await asyncio.to_thread(_run)

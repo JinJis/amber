@@ -23,7 +23,15 @@ from datetime import datetime, timezone
 from procrastinate import App, PsycopgConnector, RetryStrategy
 
 from app.config import settings
+from app.logging_config import setup_logging
 from app.pipelines import PIPELINE_BY_ID
+
+# The worker process is launched by the procrastinate CLI (`python -m procrastinate --app=app.queue.app
+# worker …`), which imports THIS module and never runs our FastAPI startup — so configure logging here
+# or the worker ignores LOG_LEVEL entirely (found during the 2026-07 full-pipeline error audit: DEBUG
+# applied to the web process but not to the process actually running the ingestion). Idempotent: the
+# handler is tagged, so the datasets web process calling setup_logging() again just replaces it.
+setup_logging()
 
 logger = logging.getLogger(__name__)
 

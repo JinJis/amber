@@ -100,12 +100,25 @@ def seed_regimes() -> int:
     with SessionLocal() as db:
         for r in REGIMES:
             peak_hint = date.fromisoformat(r["peak_hint"]) if r.get("peak_hint") else None
-            if peak_hint:
+            # rate_cycle regimes (테이퍼 탠트럼, 금리 사이클)의 힌트는 금리 이벤트 구간이지 주가
+            # 드로다운 피크가 아니다 — 에피소드 크로스체크는 drawdown류(kind != rate_cycle)에만.
+            if peak_hint and r.get("kind") != "rate_cycle":
+                # A hint checks out when a derived episode PEAKS near it, OR when it falls
+                # INSIDE an episode's underwater span — events like 9·11 or the 카드사태(2003)
+                # happen inside a larger bear (dot-com / IMF aftermath), so their hint can
+                # never be an episode peak; containment is the correct cross-check for those.
                 near = db.execute(select(DrawdownEpisode).where(
                     DrawdownEpisode.ticker == r["anchor_ticker"].upper(),
                     DrawdownEpisode.peak_date >= peak_hint - timedelta(days=30),
                     DrawdownEpisode.peak_date <= peak_hint + timedelta(days=30),
                 )).scalars().first()
+                if near is None:
+                    near = db.execute(select(DrawdownEpisode).where(
+                        DrawdownEpisode.ticker == r["anchor_ticker"].upper(),
+                        DrawdownEpisode.peak_date <= peak_hint,
+                        (DrawdownEpisode.recovery_date.is_(None))
+                        | (DrawdownEpisode.recovery_date >= peak_hint),
+                    )).scalars().first()
                 if near is None:
                     logger.warning("regime %s: no derived episode near peak hint %s for %s "
                                    "(bars not ingested yet, or dates need review)",
