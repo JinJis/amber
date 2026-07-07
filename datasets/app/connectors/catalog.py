@@ -332,6 +332,9 @@ CONNECTORS: list[ConnectorManifest] = [
                 params=[
                     ResourceParam(name="query", required=True, description="Natural-language query."),
                     ResourceParam(name="top_k", type="integer", description="Max passages."),
+                    ResourceParam(name="doc_type", description="문서 종류로 좁히기: filing(공시 본문) | "
+                                  "news(뉴스) | transcript(어닝콜) | presentation(발표자료) | "
+                                  "earnings(KR 잠정실적) | era_news(역사 국면 뉴스)."),
                     P_TICKER, P_MARKET,
                 ],
                 provenance=Provenance(source="Platform RAG (filings/news)", freshness=Freshness.periodic),

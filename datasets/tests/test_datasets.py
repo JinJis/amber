@@ -2635,8 +2635,11 @@ def test_html_to_docs_sections_filing_text():
             "<table><tr><td>Revenue</td><td>391,035</td></tr></table></body></html>")
     docs = _html_to_docs(html, "US", "AAPL", "0000320193-24-000123", "SEC EDGAR", "https://sec.gov/x")
     assert docs and docs[0]["accession"] == "0000320193-24-000123"
-    assert docs[0]["section"].startswith("s.") and docs[0]["doc_type"] == "filing"
+    # RQ-2: section is the real heading name (not a bare s.N counter), doc_id stays s.N-ordinal
+    assert docs[0]["section"] == "Item 7. MD&A" and docs[0]["doc_id"].endswith(":s.1")
+    assert docs[0]["doc_type"] == "filing"
     assert docs[0]["ticker"] == "AAPL" and docs[0]["market"] == "US"
     joined = " ".join(d["text"] for d in docs)
     assert "Net sales" in joined and "391,035" in joined
+    assert "Revenue | 391,035" in joined      # table row serialized atomically (RQ-2)
     assert "track()" not in joined  # <script> text excluded from the corpus

@@ -38,8 +38,9 @@ class Settings(BaseSettings):
     gcp_ranking_config: str = "default_ranking_config"
 
     # --- retrieval ---------------------------------------------------------
-    top_k: int = 8
-    rerank_top_n: int = 5
+    top_k: int = 8            # hits returned to the caller
+    candidate_k: int = 40     # RQ-1: wide hybrid candidate pool (dense+lexical) fed to the reranker
+    rerank_top_n: int = 5     # (legacy — the funnel now reranks candidates down to top_k)
     http_timeout_seconds: float = 60.0
 
 

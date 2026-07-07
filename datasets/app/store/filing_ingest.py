@@ -26,13 +26,58 @@ from app.store.news_ingest import _ingest_to_rag  # reuse the RAG /rag/ingest PO
 log = logging.getLogger(__name__)
 
 _MIN_CHARS = 50          # skip near-empty sections — not worth a chunk
-_SECTION_CHARS = 4000    # target section size; RAG sub-chunks within each
+_SECTION_CHARS = 6000    # max section size before a same-heading split (RAG sub-chunks within)
+
+# Section headings inside a filing — SEC "Item 1A. Risk Factors" / "PART II", KR 공시 "제N장·절".
+# Matching a heading starts a new SECTION so a hit points at a named region, not "s.7".
+_HEADING = re.compile(
+    r"^\s*(item\s+\d+[a-z]?\.?|part\s+[ivx]+\.?|제\s*\d+\s*[장절관]|[IVX]{1,4}\.\s+[A-Z])",
+    re.IGNORECASE)
+
+
+def _serialize_block(el) -> str:
+    """One block element → text. TABLES become one ``cell | cell | cell`` line per row (so the
+    RAG chunker keeps rows atomic and the lexical leg can match a figure to its row label);
+    everything else is its collapsed visible text."""
+    if el.tag == "table":
+        rows = []
+        for tr in el.iter("tr"):
+            cells = [re.sub(r"\s+", " ", (c.text_content() or "").strip())
+                     for c in tr.iter("td", "th")]
+            cells = [c for c in cells if c]
+            if cells:
+                rows.append(" | ".join(cells))
+        return "\n".join(rows)
+    return re.sub(r"[ \t]+", " ", (el.text_content() or "")).strip()
+
+
+def _structured_blocks(root) -> list[str]:
+    """Walk the filing body into ordered block strings: headings, paragraphs, and serialized
+    tables. Falls back to a single text_content block if the DOM has no block structure."""
+    blocks: list[str] = []
+    seen_tables: set = set()
+    for el in root.iter("h1", "h2", "h3", "h4", "p", "div", "table", "li"):
+        if el.tag == "table":
+            blocks.append(_serialize_block(el))
+            seen_tables.add(el)
+            continue
+        # skip a container whose text is only its child table (avoid double-emitting the table text)
+        if any(t in seen_tables for t in el.iter("table")):
+            continue
+        txt = _serialize_block(el)
+        if txt:
+            blocks.append(txt)
+    if not blocks:
+        txt = re.sub(r"[ \t]+", " ", root.text_content() or "").strip()
+        blocks = [b for b in re.split(r"\n\s*\n+", txt) if b.strip()]
+    return blocks
 
 
 def _html_to_docs(html: str, market: str, ticker: str, accession: str, source: str,
                   url: str | None, doc_type: str = "filing") -> list[dict]:
-    """Visible filing text from the markup, split into section-sized RAG IngestDocs. `section`
-    (s.N) lets a hit point back to a region; RAG sub-chunks within each for retrieval."""
+    """Visible filing text from the markup → structure-aware section IngestDocs (RQ-2): sections
+    break on real headings (Item 1A / 제N장), tables keep their rows, and the section carries the
+    heading name so a hit points at a named region. RAG sub-chunks (heading-prefixed) within each."""
     # US iXBRL primary docs begin with an `<?xml … encoding=…?>` declaration; lxml refuses to parse a
     # *Unicode* string that declares an encoding ("Unicode strings with encoding declaration are not
     # supported"), so US filings indexed 0 chunks. Strip the leading declaration before parsing — the
@@ -48,31 +93,43 @@ def _html_to_docs(html: str, market: str, ticker: str, accession: str, source: s
         parent = el.getparent()
         if parent is not None:
             parent.remove(el)
-    text = re.sub(r"[ \t]+", " ", root.text_content() or "")
-    text = re.sub(r"\n\s*\n+", "\n\n", text).strip()
-    if len(text) < _MIN_CHARS:
+
+    blocks = _structured_blocks(root)
+    if sum(len(b) for b in blocks) < _MIN_CHARS:
         return []
-    blocks: list[str] = []
-    cur: list[str] = []
-    size = 0
-    for para in text.split("\n\n"):
-        cur.append(para)
-        size += len(para)
-        if size >= _SECTION_CHARS:
-            blocks.append("\n\n".join(cur))
-            cur, size = [], 0
-    if cur:
-        blocks.append("\n\n".join(cur))
+
+    # group blocks into sections: a heading starts a new section (naming it), and a section is
+    # also cut when it grows past _SECTION_CHARS (same-heading overflow → …/2, …/3).
+    sections: list[tuple[str, str]] = []  # (section_name, text)
+    cur_name, cur_blocks, cur_size = "", [], 0
+
+    def _flush():
+        nonlocal cur_blocks, cur_size
+        body = "\n\n".join(cur_blocks).strip()
+        if len(body) >= _MIN_CHARS:
+            sections.append((cur_name or f"s.{len(sections) + 1}", body))
+        cur_blocks, cur_size = [], 0
+
+    for blk in blocks:
+        head = _HEADING.match(blk)
+        if head and cur_blocks:                      # new named section boundary
+            _flush()
+            cur_name = re.sub(r"\s+", " ", blk[:80]).strip()
+        elif head and not cur_blocks:
+            cur_name = re.sub(r"\s+", " ", blk[:80]).strip()
+        cur_blocks.append(blk)
+        cur_size += len(blk)
+        if cur_size >= _SECTION_CHARS:               # same-heading overflow split
+            _flush()
+    _flush()
+
     out: list[dict] = []
-    for i, blk in enumerate(blocks, 1):
-        blk = blk.strip()
-        if len(blk) < _MIN_CHARS:
-            continue
-        out.append({"text": blk, "source": source, "doc_type": doc_type,
-                    # stable per (filing, section) → re-ingest UPSERTs instead of duplicating
+    for i, (name, body) in enumerate(sections, 1):
+        out.append({"text": body, "source": source, "doc_type": doc_type,
+                    # stable per (filing, ordinal) → re-ingest replaces by accession (RQ-2)
                     "doc_id": f"{accession}:s.{i}",
                     "ticker": ticker, "market": market, "accession": accession,
-                    "section": f"s.{i}", "url": url})
+                    "section": name, "url": url})
     return out
 
 
@@ -84,17 +141,23 @@ async def ingest_filing_text_for_ticker(market: str, ticker: str, limit: int = 4
     market = (market or "").upper()
     source = "SEC EDGAR" if market == "US" else "OpenDART (FSS)"
     refs = await filing_refs(market, ticker, limit)
-    docs: list[dict] = []
+    # Ingest per accession with replace-by-accession, so re-chunking a filing swaps its old
+    # sections for the fresh structure-aware set instead of leaving orphaned stale chunks (RQ-2).
+    total_sections, chunks = 0, 0
+    rag = rag_url or settings.rag_url
     for accn, info in refs.items():
         html = await get_filing_html(market, accn, info.get("cik"), info.get("fetch_url"))
         if not html:
             continue
-        docs += await asyncio.to_thread(
+        docs = await asyncio.to_thread(
             _html_to_docs, html, market, ticker.upper(), accn, source, info.get("canonical"))
-    if not docs:
+        if not docs:
+            continue
+        total_sections += len(docs)
+        chunks += await _ingest_to_rag(rag, docs, replace={"accession": accn})
+    if not total_sections:
         return 0
-    chunks = await _ingest_to_rag(rag_url or settings.rag_url, docs)
-    log.info("filing-text: %s %s → %d sections, %d chunks indexed", market, ticker.upper(), len(docs), chunks)
+    log.info("filing-text: %s %s → %d sections, %d chunks indexed", market, ticker.upper(), total_sections, chunks)
     return chunks
 
 

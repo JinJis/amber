@@ -23,33 +23,43 @@ from app.store.transcript_html import make_accession, store_transcript_html
 
 log = logging.getLogger(__name__)
 
-_SECTION_CHARS = 4000   # target RAG section size (RAG sub-chunks within each)
+_SECTION_CHARS = 6000   # section size cap (cut only at speaker-turn boundaries; RAG sub-chunks within)
 
 
 def _transcript_to_docs(t: dict) -> list[dict]:
     """A transcript → section-sized RAG IngestDocs. `accession` TR:{ticker}:{quarter} routes the
-    in-app preview through the existing /evidence/html chain; `section` (s.N) anchors a hit."""
+    in-app preview through the existing /evidence/html chain; `section` names the speaker so a hit
+    reads "CEO's remark", not "s.7". RQ-2: never split a speaker turn across sections — accumulate
+    WHOLE turns, and start a new section on the size cap only at a turn boundary (a lone turn that
+    itself exceeds the cap becomes its own oversized section; RAG sub-chunks it on sentences)."""
     accession = make_accession(t["ticker"], t["quarter"])
-    blocks: list[str] = []
-    cur: list[str] = []
-    size = 0
+    turns: list[tuple[str, str]] = []
     for s in t.get("segments") or []:
-        spk = s.get("speaker")
-        line = f"{spk}: {s.get('content', '')}" if spk else str(s.get("content", ""))
+        spk = (s.get("speaker") or "").strip()
+        content = str(s.get("content", "")).strip()
+        if content:
+            turns.append((spk, f"{spk}: {content}" if spk else content))
+
+    blocks: list[tuple[str, str]] = []   # (first_speaker, text)
+    cur, cur_spk, size = [], "", 0
+    for spk, line in turns:
+        if cur and size + len(line) > _SECTION_CHARS:   # cut BETWEEN turns, never inside one
+            blocks.append((cur_spk, "\n\n".join(cur)))
+            cur, cur_spk, size = [], "", 0
+        if not cur:
+            cur_spk = spk
         cur.append(line)
         size += len(line)
-        if size >= _SECTION_CHARS:
-            blocks.append("\n\n".join(cur))
-            cur, size = [], 0
     if cur:
-        blocks.append("\n\n".join(cur))
+        blocks.append((cur_spk, "\n\n".join(cur)))
+
     out: list[dict] = []
-    for i, blk in enumerate(blocks, 1):
+    for i, (spk, blk) in enumerate(blocks, 1):
         if len(blk.strip()) < 50:
             continue
         out.append({"text": blk, "source": t["source"], "doc_type": "transcript",
                     "doc_id": f"{accession}:s.{i}", "ticker": t["ticker"], "market": "US",
-                    "accession": accession, "section": f"s.{i}", "as_of": t["quarter"]})
+                    "accession": accession, "section": (spk or f"s.{i}")[:80], "as_of": t["quarter"]})
     return out
 
 

@@ -2,12 +2,19 @@
 
 * memory   — numpy cosine over an in-process list (dev/CI; vectors are normalized)
 * pgvector — Postgres + pgvector (prod; managed via Cloud SQL / AlloyDB)
+
+Hybrid retrieval (RQ-1): every backend exposes BOTH a dense ``search`` (cosine over embeddings)
+and a ``lexical`` leg (keyword match — Postgres FTS with prefix tokens / token overlap in
+memory). ``rag.search`` fuses the two with RRF, so exact identifiers (tickers, accession
+numbers, Korean company names, figures) are retrievable even when the embedding misses them.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import math
+import re
 from functools import cache
 from typing import Protocol
 
@@ -15,6 +22,20 @@ import numpy as np
 
 from rag.config import settings
 from rag.models import PROVENANCE_FIELDS, Chunk
+
+# Shared query tokenizer for the lexical leg — alnum + 한글 runs, ≥2 chars, first 12 tokens.
+# Both backends use the same tokens so memory (CI) and pgvector (prod) rank comparably.
+_TOKEN = re.compile(r"[0-9A-Za-z가-힣]{2,}")
+
+
+def lexical_tokens(query: str, limit: int = 12) -> list[str]:
+    seen: list[str] = []
+    for t in _TOKEN.findall((query or "").lower()):
+        if t not in seen:
+            seen.append(t)
+        if len(seen) >= limit:
+            break
+    return seen
 
 
 class VectorStore(Protocol):
@@ -25,8 +46,16 @@ class VectorStore(Protocol):
         key, EXCEPT `tenant`, which is isolation — a row matches iff its tenant equals the caller's
         OR is unscoped/global (None). (Keep `_match` and the pgvector WHERE in sync with this — RF-17.)"""
         ...
+    async def lexical(self, query: str, top_k: int, filters: dict | None = None) -> list[tuple[Chunk, float]]:
+        """Top-k by KEYWORD relevance (FTS/token overlap), same filter semantics as `search`."""
+        ...
     async def existing_texts(self, ids: list[str]) -> dict[str, str]:
         """{id: stored_text} for ids already present — lets ingest skip re-embedding unchanged chunks."""
+        ...
+    async def delete_where(self, filters: dict) -> int:
+        """Delete chunks whose meta equals every filter key (tenant semantics: exact value,
+        including None → unscoped). Used by ingest's replace-by-accession so a re-chunked
+        filing never piles up stale duplicates."""
         ...
 
 
@@ -69,6 +98,39 @@ class MemoryStore:
                 break
         return out
 
+    async def lexical(self, query, top_k, filters=None):
+        # Token-overlap scoring with prefix matching (mirrors pgvector's `token:*` tsquery):
+        # score = matched query tokens / sqrt(doc token count) — a cheap BM25-ish proxy.
+        qtoks = lexical_tokens(query)
+        if not qtoks:
+            return []
+        scored: list[tuple[Chunk, float]] = []
+        for chunk in self._chunks:
+            if filters and not _match(chunk, filters):
+                continue
+            dtoks = _TOKEN.findall(chunk.text.lower())
+            if not dtoks:
+                continue
+            hits = sum(1 for qt in qtoks if any(dt.startswith(qt) for dt in dtoks))
+            if hits:
+                scored.append((chunk, hits / math.sqrt(len(dtoks))))
+        scored.sort(key=lambda x: -x[1])
+        return scored[:top_k]
+
+    async def delete_where(self, filters):
+        def _keep(c: Chunk) -> bool:
+            for k, v in filters.items():
+                if getattr(c, k, None) != v:
+                    return True
+            return False
+
+        kept = [(c, v) for c, v in zip(self._chunks, self._matrix) if _keep(c)]
+        removed = len(self._chunks) - len(kept)
+        self._chunks = [c for c, _ in kept]
+        self._matrix = [v for _, v in kept]
+        self._pos = {c.id: i for i, c in enumerate(self._chunks)}
+        return removed
+
 
 class PgVectorStore:
     def __init__(self, dsn: str, dim: int) -> None:
@@ -95,7 +157,25 @@ class PgVectorStore:
                 "CREATE INDEX IF NOT EXISTS rag_chunks_hnsw ON rag_chunks "
                 "USING hnsw (embedding vector_cosine_ops)"
             )
-            conn.commit()
+            # RQ-1 hybrid: a FUNCTIONAL GIN index on to_tsvector(text) for the lexical leg.
+            # A generated STORED column would rewrite the whole table under an ACCESS EXCLUSIVE
+            # lock (unacceptable on a live multi-hundred-k-row corpus); a functional index adds
+            # no column and, built CONCURRENTLY, never blocks reads/writes. 'simple' config —
+            # the corpus is mixed KR/EN, so no language stemming; queries use prefix tokens
+            # (`tok:*`) which handle Korean particles (삼성전자의 ← 삼성전자:*).
+            conn.commit()  # CONCURRENTLY can't run inside a txn block
+            conn.autocommit = True
+            try:
+                conn.execute(
+                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS rag_chunks_tsv ON rag_chunks "
+                    "USING gin (to_tsvector('simple', coalesce(text, '')))"
+                )
+            except Exception as exc:  # noqa: BLE001 — a failed/again build shouldn't block boot;
+                # search still works (seq FTS), and the next boot retries the index.
+                import logging
+                logging.getLogger(__name__).warning("rag_chunks_tsv index build deferred: %s", exc)
+            finally:
+                conn.autocommit = False
 
     def _connect(self):
         conn = self._psycopg.connect(self._dsn)
@@ -136,18 +216,7 @@ class PgVectorStore:
         return {cid: text for cid, text in rows}
 
     async def search(self, vector, top_k, filters=None):
-        where, filter_params = "", []
-        if filters:
-            conds = []
-            for k, val in filters.items():
-                if k == "tenant":
-                    # tenant isolation: own chunks OR global (unscoped) ones.
-                    conds.append("(meta->>'tenant' = %s OR meta->>'tenant' IS NULL)")
-                    filter_params.append(str(val))
-                else:
-                    conds.append("meta->>%s = %s")
-                    filter_params.extend([k, str(val)])
-            where = "WHERE " + " AND ".join(conds)
+        where, filter_params = self._where(filters)
         sql = (
             "SELECT id, text, meta, 1 - (embedding <=> %s) AS score FROM rag_chunks "
             f"{where} ORDER BY embedding <=> %s LIMIT %s"
@@ -162,6 +231,71 @@ class PgVectorStore:
                 return conn.execute(sql, args).fetchall()
 
         rows = await asyncio.to_thread(_run)  # blocking psycopg off the event loop
+        return self._rows_to_hits(rows)
+
+    async def lexical(self, query, top_k, filters=None):
+        toks = lexical_tokens(query)
+        if not toks:
+            return []
+        # OR of prefix tokens + ts_rank: graded keyword overlap (BM25-lite). Prefix (`:*`)
+        # makes bare stems match Korean particle-suffixed tokens. The expression matches the
+        # functional GIN index (to_tsvector('simple', text)) so the planner uses it.
+        tsquery = " | ".join(f"{t}:*" for t in toks)
+        where, filter_params = self._where(filters)
+        sql = (
+            "SELECT id, text, meta, ts_rank(to_tsvector('simple', coalesce(text,'')), q) AS score "
+            "FROM rag_chunks, to_tsquery('simple', %s) q "
+            f"WHERE to_tsvector('simple', coalesce(text,'')) @@ q "
+            f"{('AND ' + where[len('WHERE '):]) if where else ''} "
+            "ORDER BY score DESC LIMIT %s"
+        )
+        args = [tsquery, *filter_params, top_k]
+
+        def _run():
+            with self._connect() as conn:
+                return conn.execute(sql, args).fetchall()
+
+        rows = await asyncio.to_thread(_run)
+        return self._rows_to_hits(rows)
+
+    async def delete_where(self, filters):
+        conds, params = [], []
+        for k, v in filters.items():
+            if v is None:
+                conds.append("meta->>%s IS NULL")
+                params.append(k)
+            else:
+                conds.append("meta->>%s = %s")
+                params.extend([k, str(v)])
+        if not conds:
+            return 0
+        sql = "DELETE FROM rag_chunks WHERE " + " AND ".join(conds)
+
+        def _run():
+            with self._connect() as conn:
+                cur = conn.execute(sql, params)
+                conn.commit()
+                return cur.rowcount or 0
+
+        return await asyncio.to_thread(_run)
+
+    @staticmethod
+    def _where(filters: dict | None) -> tuple[str, list]:
+        if not filters:
+            return "", []
+        conds, params = [], []
+        for k, val in filters.items():
+            if k == "tenant":
+                # tenant isolation: own chunks OR global (unscoped) ones.
+                conds.append("(meta->>'tenant' = %s OR meta->>'tenant' IS NULL)")
+                params.append(str(val))
+            else:
+                conds.append("meta->>%s = %s")
+                params.extend([k, str(val)])
+        return "WHERE " + " AND ".join(conds), params
+
+    @staticmethod
+    def _rows_to_hits(rows) -> list[tuple[Chunk, float]]:
         out = []
         for cid, text, meta, score in rows:
             meta = meta or {}

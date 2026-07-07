@@ -286,3 +286,97 @@ def test_long_text_chunks_into_multiple_pieces():
     text = ". ".join(f"Sentence {i} about supply chains and disclosures" for i in range(40))
     chunks = chunk_text(text, size=80, overlap=10)
     assert len(chunks) > 1 and all(chunks)
+
+
+# ── RQ-2: structure-aware chunking ──────────────────────────────────────────
+def test_chunk_keeps_table_rows_atomic_and_prefixes_heading():
+    text = ("Item 1A. Risk Factors\n\n"
+            "Supply chain risk is material to operations.\n\n"
+            "Metric | 2025 | 2024\nRevenue | 391.0 | 383.3\nNet income | 93.7 | 97.0")
+    chunks = chunk_text(text, size=400, overlap=40)
+    joined = "\n---\n".join(chunks)
+    # heading context rides on the chunk(s)
+    assert any("Item 1A. Risk Factors" in c for c in chunks)
+    # a table row is never split across the ' | ' — the full row survives in one chunk
+    assert any("Revenue | 391.0 | 383.3" in c for c in chunks), joined
+    assert any("Net income | 93.7 | 97.0" in c for c in chunks), joined
+
+
+def test_chunk_splits_oversized_paragraph_on_sentences():
+    para = " ".join(f"Sentence number {i} states a distinct fact." for i in range(40))
+    chunks = chunk_text(para, size=200, overlap=30)
+    assert len(chunks) >= 3
+    # no chunk ends mid-sentence (each ends on a terminator, modulo trailing space)
+    for c in chunks:
+        assert c.rstrip().endswith(".") or c.rstrip().endswith("fact")
+
+
+# ── RQ-1: hybrid lexical leg + RRF fusion ──────────────────────────────────
+
+async def test_lexical_leg_finds_exact_identifier_the_dense_miss():
+    # The fake embedder is bag-of-tokens, so an accession number embeds to near-nothing; the
+    # lexical leg must still surface the chunk that literally contains it (the hybrid win).
+    _reset()
+    await ingest_docs([
+        IngestDoc(text="The company faces competition and margin pressure in cloud.", doc_id="a"),
+        IngestDoc(text="Filing accession 0000320193-24-000123 discusses buyback capacity.", doc_id="b"),
+    ])
+    hits = await search("0000320193-24-000123", top_k=2)
+    assert hits and "0000320193-24-000123" in hits[0].text
+
+
+async def test_lexical_matches_korean_prefix_token():
+    _reset()
+    await ingest_docs([
+        IngestDoc(text="반도체 업황이 개선되며 실적이 회복되었다.", doc_id="k1"),
+        IngestDoc(text="삼성전자의 반도체 부문 매출이 크게 늘었다.", doc_id="k2"),
+    ])
+    # query carries a particle (삼성전자가) — prefix token 삼성전자:* still matches 삼성전자의
+    hits = await search("삼성전자가 어떻게 됐나", top_k=2)
+    assert hits and any("삼성전자" in h.text for h in hits)
+
+
+# ── RQ-2: replace-by-accession ─────────────────────────────────────────────
+
+async def test_replace_by_accession_drops_stale_sections():
+    _reset()
+    # first ingest: 3 sections for one accession
+    await rag.ingest.ingest_docs([
+        IngestDoc(text=f"Old section {i} text about risk.", doc_id=f"AC:s.{i}", accession="AC")
+        for i in range(1, 4)])
+    # re-chunk: now only 1 section for the SAME accession → replace must delete the other two
+    await rag.ingest.ingest_docs(
+        [IngestDoc(text="Fresh single section text about risk.", doc_id="AC:s.1", accession="AC")],
+        replace={"accession": "AC"})
+    hits = await search("risk", top_k=10, filters={"accession": "AC"})
+    texts = [h.text for h in hits]
+    assert any("Fresh single section" in t for t in texts)
+    assert not any("Old section" in t for t in texts), texts
+
+
+# ── recall harness: a tiny graded set, recall@k over hybrid ────────────────
+
+async def test_recall_at_k_hybrid_over_mixed_queries():
+    _reset()
+    corpus = {
+        "d_rev": "Total revenue increased 18% to $35.1 billion in fiscal 2025.",
+        "d_risk": "Item 1A. Risk Factors: supply chain disruption could impair production.",
+        "d_buyback": "The board authorized a $10 billion share repurchase program.",
+        "d_kr": "삼성전자 3분기 영업이익이 시장 기대치를 상회했다.",
+        "d_noise": "The cafeteria menu changed to include vegetarian options.",
+    }
+    await ingest_docs([IngestDoc(text=t, doc_id=i) for i, t in corpus.items()])
+    graded = [
+        ("how much did revenue grow", "d_rev"),
+        ("share buyback authorization", "d_buyback"),
+        ("supply chain risk factors", "d_risk"),
+        ("삼성전자 영업이익", "d_kr"),
+    ]
+    hit_at_3 = 0
+    for q, want in graded:
+        hits = await search(q, top_k=3)
+        if want in {h.provenance.get("doc_type") or "" for h in hits} or \
+           any(corpus[want][:20] in h.text for h in hits):
+            hit_at_3 += 1
+    # hybrid (dense+lexical) over this tiny lexical-embedder set should nail ≥3/4
+    assert hit_at_3 >= 3, f"recall@3 too low: {hit_at_3}/4"

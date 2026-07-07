@@ -71,8 +71,9 @@ async def test_ingest_kr_earnings_indexes_and_warms_viewer(monkeypatch):
         captured["accn"] = accn
         return sample                                        # stands in for the cached DART markup
 
-    async def fake_rag(url, docs):
+    async def fake_rag(url, docs, **kwargs):
         captured["docs"] = docs
+        captured["replace"] = kwargs.get("replace")
         return len(docs)
 
     monkeypatch.setattr(KE, "get_financials_provider", lambda m: FakeProv())

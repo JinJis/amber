@@ -43,7 +43,8 @@ async def ingest_kr_earnings_for_ticker(market: str, ticker: str, limit: int | N
         return 0
     ref = build_ref(Market.KR, ticker)
     discs = await getter(ref, limit)
-    docs: list[dict] = []
+    rag = rag_url or settings.rag_url
+    total_docs, chunks = 0, 0
     for d in discs:
         rcp = d.get("rcept_no")
         if not rcp:
@@ -52,11 +53,14 @@ async def ingest_kr_earnings_for_ticker(market: str, ticker: str, limit: int | N
         html = await get_filing_html("KR", rcp)
         if not html:
             continue
-        docs += await asyncio.to_thread(
+        docs = await asyncio.to_thread(
             _html_to_docs, html, "KR", ticker.upper(), rcp, _SOURCE, d.get("url"), "earnings")
-    if not docs:
+        if not docs:
+            continue
+        total_docs += len(docs)
+        chunks += await _ingest_to_rag(rag, docs, replace={"accession": rcp})  # RQ-2 re-chunk swap
+    if not total_docs:
         return 0
-    chunks = await _ingest_to_rag(rag_url or settings.rag_url, docs)
     log.info("kr-earnings: %s → %d disclosures, %d chunks indexed", ticker.upper(), len(discs), chunks)
     return chunks
 
