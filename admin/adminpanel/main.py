@@ -381,11 +381,22 @@ async def pipelines(request: Request, msg: str = ""):
         "<button class=p>지금 갱신 ▶</button></form></div></div>"
     )
 
-    # --- 회사 로고 수동 업로드: 하이브리드 해석기가 놓친 종목(특히 KR)을 채운다 ---
+    # --- 회사 로고: 유니버스 자동 채우기(하이브리드 해석기) + 놓친 종목 수동 업로드 ---
     logo_card = (
-        "<div class=card><h3>🖼️ 회사 로고 업로드</h3>"
-        "<div class=muted>자동으로 못 받아온 종목의 로고를 직접 올리면, 그 종목의 모든 화면에 바로 적용돼요. "
-        "PNG·JPEG·WEBP·SVG · 정사각 권장.</div>"
+        "<div class=card><h3>🖼️ 회사 로고</h3>"
+        "<div class=sub>종목 로고를 하이브리드 해석기(Logo.dev→FMP→파비콘)로 유니버스 전체에 미리 채워요. "
+        "못 받은 종목은 아래에서 직접 올리면 그 종목의 모든 화면에 바로 적용돼요(무 날조 — 없으면 모노그램).</div>"
+        # 자동 채우기: 기존 /ops/pipelines/run 재사용 (pipelines=logos)
+        "<div class=opsrow><form class=ops method=post action=/ops/pipelines/run>"
+        "<input type=hidden name=pipelines value=logos>"
+        "<select name=preset>"
+        "<option value='us_sp500,kr_kospi200,kr_kosdaq150'>US·KR 주요 (S&P500+코스피200+코스닥150)</option>"
+        "<option value='us_sp500'>US · S&amp;P 500</option>"
+        "<option value='kr_kospi200,kr_kosdaq150'>KR · 코스피200+코스닥150</option>"
+        "<option value='kr_listed'>KR · 상장 전체 (OpenDART)</option>"
+        "</select> <button class=p>로고 채우기 ▶</button></form></div>"
+        # 수동 업로드: 해석기가 놓친 종목(특히 KR)
+        "<div class=muted style='margin-top:8px'>못 받은 종목 직접 업로드 (PNG·JPEG·WEBP·SVG · 정사각 권장):</div>"
         "<div class=opsrow><form class=ops method=post action=/ops/logos/upload enctype=multipart/form-data>"
         "<select name=market><option value=US>US</option><option value=KR>KR</option></select> "
         "<input name=ticker placeholder='티커 (예: 005930.KS)' required> "
