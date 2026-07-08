@@ -134,11 +134,15 @@ on the image must have passed the number audit (§5). 텍스트 최소 12px(모�
   CTA (it needs a tenant key). QT-2 gate applies unchanged (an answer with an unsupported number is
   refused). Tests: studio answer create/read + no-identity assertion + trust-floor refusal; shareCard
   `plainText`/`answerCardLines`.
-  - **Link-only sharing (2026-07-08).** The aspect-preset picker + image save/copy UI (old SH-2b)
-    was **removed** — every share is just a link. The OG preview is still generated: a 16:9 card is
-    rendered from the REAL content and uploaded **silently** as `og:image`, and the OG *description*
-    is the actual answer lead (`plainText` first 160 chars), so the unfurl on Threads/텔레그램/카카오
-    shows the answer content — both as a card image and as text — with zero export controls.
+  - **Link-only sharing + rich OG (2026-07-08).** The aspect-preset picker + image save/copy UI
+    (old SH-2b) was **removed** — every share is just a link. The OG preview is generated silently:
+    `renderOgCard` draws a **1200×630 (1.91:1 — the exact unfurl ratio, nothing crops/breaks)** card
+    from the REAL content with **measure-based layout** (`wrapMeasured` — real glyph width, clean
+    wrap, ellipsis on overflow, lead never collides with the footer): brand + ✓출처 chip, the
+    question as a bold ≤3-line hook, a body lead, and a footer strip (출처 names + as_of · short
+    link · '과거 기록 · 전망 아님' on history kinds). The OG *description* is the answer lead
+    (`plainText`, 160 chars) so text-only unfurls (카카오/텔레그램) also show real content. Pure
+    builders `ogCardForAnswer`/`ogCardForArtifact` are unit-tested.
 
 - **MOBILE-1 · 전면 모바일 레이아웃 (web)** — ✅ done. A `useIsMobile()` (matchMedia ≤720px) switches
   the desktop 3-column grid into a single scrolling column: the rail becomes a left **drawer** (☰ in a

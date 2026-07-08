@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from "react";
 import type { Artifact, Citation } from "@/lib/types";
-import { renderShareCard, renderAnswerCard } from "@/lib/shareCard";
+import { renderOgCard, ogCardForAnswer, ogCardForArtifact } from "@/lib/shareCard";
 
 type Urls = { page: string; x: string; threads: string; telegram: string; kakao: string };
 
@@ -69,14 +69,8 @@ export function ShareSheet({ a, answer, audit, onClose }: {
     (async () => {
       if (state !== "ready" || !urls || !token) return;
       try {
-        const cits = answer?.citations ?? [];
-        const usedCount = cits.filter((c) => c.used).length || cits.length;
-        const asOf = cits.map((c) => c.as_of).filter(Boolean).sort().slice(-1)[0] ?? null;
-        const blob = answer
-          ? await renderAnswerCard(
-              { title: answer.title, content: answer.content, sourceCount: usedCount, as_of: asOf },
-              "16:9", shortLink(urls.page))
-          : await renderShareCard(a!, "16:9", shortLink(urls.page));
+        const card = answer ? ogCardForAnswer(answer) : ogCardForArtifact(a!);
+        const blob = await renderOgCard(card, shortLink(urls.page));
         const dataUrl: string = await new Promise((res) => {
           const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.readAsDataURL(blob);
         });

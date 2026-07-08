@@ -90,10 +90,6 @@ export function provenanceStrip(a: Artifact, shortLink: string): { label: string
 }
 
 // --- answer share cards (SH-ANSWER) ---------------------------------------------------------
-// A whole-answer share bakes the answer's LEAD prose (markdown/marker-stripped) into the card,
-// with a provenance strip that counts the cited sources instead of one artifact's source.
-export type AnswerCard = { title: string; content: string; sourceCount: number; as_of?: string | null };
-
 /** Strip markdown syntax + {{figure:N}} + [n] markers → plain prose for the card body. Pure. */
 export function plainText(md: string): string {
   return (md || "")
@@ -115,85 +111,172 @@ export function answerCardLines(content: string, max = 10): string[] {
   return sentences.slice(0, max);
 }
 
+// --- the OG preview card (SH-OG) ------------------------------------------------------------
+// The link-unfurl image. Fixed 1200×630 (1.91:1 — the ratio X/Threads/Telegram/KakaoTalk crop to,
+// so nothing breaks), with MEASURE-BASED layout (real text width, never char-count) so the title
+// and lead wrap cleanly, ellipsize on overflow, and never spill past the footer. Editorial mono
+// aesthetic — a clean, sourced "receipt" that stands out in a feed of screenshots.
+export const OG = { W: 1200, H: 630 };
+
+export type OgCard = {
+  title: string;             // the question / artifact title (the hook)
+  lead: string;              // plain-text body excerpt
+  sources: string[];         // distinct source names (SEC EDGAR · DART …)
+  sourceCount: number;       // total cited sources (for the "외 N곳" overflow)
+  as_of?: string | null;
+  history?: boolean;         // history kinds carry the descriptive label
+};
+
+/** Build the OG card model from a whole-answer share (pure — unit-tested). */
+export function ogCardForAnswer(a: {
+  title: string; content: string; citations?: { source?: string; as_of?: string; used?: boolean; index?: number }[];
+  artifacts?: Artifact[];
+}): OgCard {
+  const cits = (a.citations ?? []).filter((c) => c.used || c.index != null);
+  const sources = [...new Set(cits.map((c) => c.source).filter(Boolean) as string[])];
+  const asOf = cits.map((c) => c.as_of).filter(Boolean).sort().slice(-1)[0] ?? null;
+  return {
+    title: a.title || "ValueGraph 리서치",
+    lead: plainText(a.content),
+    sources,
+    sourceCount: sources.length,
+    as_of: asOf,
+    history: (a.artifacts ?? []).some(isHistoryKind),
+  };
+}
+
+/** Build the OG card model from a single-artifact share (pure — unit-tested). */
+export function ogCardForArtifact(a: Artifact): OgCard {
+  return {
+    title: a.title || "ValueGraph 자료",
+    lead: shareCardLines(a, 6).join("  ·  "),
+    sources: a.source ? [a.source] : [],
+    sourceCount: a.source ? 1 : 0,
+    as_of: a.as_of ?? null,
+    history: isHistoryKind(a),
+  };
+}
+
 // --- the canvas draw (thin; not unit-tested — jsdom has no real 2D context) ----------------
-const INK = "#1A1B1E", MUTED = "#86868C", LINE = "#D8D8DC", PANEL = "#ffffff", BG = "#F4F4F6";
+const INK = "#17181B", SUB = "#55565C", MUTED = "#8C8C93", LINE = "#E4E4E8", BG = "#FFFFFF";
 
-/** The shared card canvas: title (≤2 lines) + body lines (height-capped) + baked provenance
- *  strip. `linesFor(maxLines)` supplies the body so artifacts and answers share one draw. */
-async function drawCard(
-  preset: PresetKey, title: string,
-  linesFor: (maxLines: number) => string[],
-  strip: { label: string | null; source: string; brand: string },
-): Promise<Blob> {
-  const { w, h } = PRESETS[preset];
-  const canvas = document.createElement("canvas");
-  canvas.width = w; canvas.height = h;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("no 2d context");
-  const M = Math.round(w * 0.06);            // margin
-  const stripH = Math.round(h * 0.16);
-  const bodyTop = M + Math.round(h * 0.11);
-
-  // surface
-  ctx.fillStyle = BG; ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = PANEL; ctx.fillRect(M / 2, M / 2, w - M, h - M);
-  ctx.strokeStyle = LINE; ctx.lineWidth = 2; ctx.strokeRect(M / 2, M / 2, w - M, h - M);
-
-  ctx.textBaseline = "top";
-  // title
-  ctx.fillStyle = INK;
-  const titleSize = Math.round(w * 0.042);
-  ctx.font = `600 ${titleSize}px "Space Grotesk", ui-sans-serif, system-ui, sans-serif`;
-  const titleLines = wrap(title || "ValueGraph 자료", 28).slice(0, 2);
-  titleLines.forEach((ln, i) => ctx.fillText(ln, M, M + i * titleSize * 1.25));
-
-  // body lines (mono for the figures)
-  const bodySize = Math.round(w * 0.028);
-  const lh = bodySize * 1.7;
-  const avail = h - stripH - bodyTop - M;
-  const maxLines = Math.max(3, Math.floor(avail / lh));
-  const lines = linesFor(maxLines);
-  let y = bodyTop;
-  for (const raw of lines) {
-    for (const ln of wrap(raw, Math.floor((w - 2 * M) / (bodySize * 0.55)))) {
-      if (y + lh > h - stripH - M) break;
-      ctx.fillStyle = INK;
-      ctx.font = `${bodySize}px "Space Mono", ui-monospace, monospace`;
-      ctx.fillText(ln, M, y);
-      y += lh;
+/** Greedy word-wrap by MEASURED width; breaks over-long tokens (URLs / space-less CJK runs) by
+ *  character, and ellipsizes the last line when the text overflows `maxLines`. Canvas-only. */
+function wrapMeasured(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, maxLines: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+  const fits = (s: string) => ctx.measureText(s).width <= maxWidth;
+  const words = (text || "").split(/\s+/).filter(Boolean);
+  let overflow = false;
+  for (let wi = 0; wi < words.length; wi++) {
+    const word = words[wi];
+    if (!fits(word)) {                 // a single token too wide → break by character
+      if (line) { lines.push(line); line = ""; }
+      let chunk = "";
+      for (const ch of word) {
+        if (!fits(chunk + ch) && chunk) { lines.push(chunk); chunk = ch; } else chunk += ch;
+        if (lines.length >= maxLines) { overflow = true; break; }
+      }
+      if (lines.length >= maxLines) { line = line || chunk; break; }
+      line = chunk;
+    } else if (!line) {
+      line = word;
+    } else if (fits(line + " " + word)) {
+      line += " " + word;
+    } else {
+      lines.push(line); line = word;
+      if (lines.length >= maxLines) { overflow = wi < words.length; break; }
     }
   }
-
-  // provenance strip (baked in, non-removable)
-  const sy = h - stripH;
-  ctx.strokeStyle = LINE; ctx.beginPath(); ctx.moveTo(M, sy); ctx.lineTo(w - M, sy); ctx.stroke();
-  let ly = sy + Math.round(stripH * 0.12);
-  const small = Math.round(w * 0.022);
-  if (strip.label) {
-    ctx.fillStyle = INK;
-    ctx.font = `600 ${small}px "Space Mono", ui-monospace, monospace`;
-    ctx.fillText(`⏳ ${strip.label}`, M, ly); ly += small * 1.7;
+  if (line && lines.length < maxLines) lines.push(line);
+  else if (line) overflow = true;
+  if (overflow && lines.length) {      // ellipsize the last visible line
+    let last = lines[Math.min(maxLines, lines.length) - 1];
+    while (last.length && !fits(last + "…")) last = last.slice(0, -1);
+    lines[Math.min(maxLines, lines.length) - 1] = last.replace(/[\s·]+$/, "") + "…";
   }
-  ctx.fillStyle = MUTED;
-  ctx.font = `${small}px "Space Mono", ui-monospace, monospace`;
-  ctx.fillText(strip.source, M, ly); ly += small * 1.7;
-  ctx.fillStyle = INK;
-  ctx.fillText(strip.brand, M, ly);
+  return lines.slice(0, maxLines);
+}
+
+const SANS = `"Space Grotesk", "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", ui-sans-serif, system-ui, sans-serif`;
+const MONO = `"Space Mono", ui-monospace, monospace`;
+
+/** Render the OG preview PNG for a share. One renderer for answers + artifacts (via OgCard). */
+export async function renderOgCard(card: OgCard, shortLink: string): Promise<Blob> {
+  const { W, H } = OG;
+  const canvas = document.createElement("canvas");
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("no 2d context");
+  const PX = 76, PY = 60, CW = W - PX * 2;
+  ctx.textBaseline = "top";
+
+  // surface + a crisp left accent rail (editorial pop against the grayscale brand)
+  ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = INK; ctx.fillRect(0, 0, 12, H);
+
+  // header: brand mark (left) + trust chip (right)
+  const brandY = PY;
+  ctx.fillStyle = INK; ctx.fillRect(PX, brandY + 2, 22, 22);
+  ctx.font = `700 26px ${SANS}`; ctx.fillStyle = INK;
+  ctx.fillText("ValueGraph", PX + 34, brandY);
+  const chip = "✓ 출처와 함께";
+  ctx.font = `500 22px ${MONO}`;
+  const cw = ctx.measureText(chip).width, chipX = W - PX - cw - 28, chipY = brandY - 4;
+  ctx.strokeStyle = LINE; ctx.lineWidth = 1.5;
+  roundRect(ctx, chipX, chipY, cw + 28, 38, 19); ctx.stroke();
+  ctx.fillStyle = SUB; ctx.fillText(chip, chipX + 14, chipY + 7);
+
+  // footer strip geometry (reserve space so the lead never collides with it)
+  const stripH = card.history ? 132 : 92;
+  const stripTop = H - PY - stripH;
+
+  // title — the hook. Bold, up to 3 lines.
+  const titleTop = brandY + 66;
+  ctx.font = `700 54px ${SANS}`; ctx.fillStyle = INK;
+  const titleLines = wrapMeasured(ctx, card.title, CW, 3);
+  const titleLH = 66;
+  titleLines.forEach((ln, i) => ctx.fillText(ln, PX, titleTop + i * titleLH));
+  const titleBottom = titleTop + titleLines.length * titleLH;
+
+  // lead — fills the space between the title and the footer, ellipsized.
+  const leadTop = titleBottom + 22;
+  ctx.font = `400 29px ${SANS}`; ctx.fillStyle = SUB;
+  const leadLH = 42;
+  const leadMax = Math.max(0, Math.floor((stripTop - 18 - leadTop) / leadLH));
+  if (leadMax > 0 && card.lead) {
+    wrapMeasured(ctx, card.lead, CW, Math.min(leadMax, 4))
+      .forEach((ln, i) => ctx.fillText(ln, PX, leadTop + i * leadLH));
+  }
+
+  // footer: divider → (history label) → sources + as_of (left) · short link (right)
+  ctx.strokeStyle = LINE; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(PX, stripTop); ctx.lineTo(W - PX, stripTop); ctx.stroke();
+  let fy = stripTop + 20;
+  if (card.history) {
+    ctx.font = `700 22px ${MONO}`; ctx.fillStyle = INK;
+    ctx.fillText("⏳ 과거 기록 · 전망 아님", PX, fy); fy += 34;
+  }
+  const srcHead = card.sources.slice(0, 3).join(" · ") || "출처 포함";
+  const extra = card.sourceCount > 3 ? ` 외 ${card.sourceCount - 3}곳` : "";
+  const srcLine = `출처 ${srcHead}${extra}${card.as_of ? ` · ${card.as_of}` : ""}`;
+  ctx.font = `400 24px ${MONO}`; ctx.fillStyle = MUTED;
+  ctx.fillText(wrapMeasured(ctx, srcLine, CW - 260, 1)[0] ?? srcLine, PX, fy);
+  ctx.font = `700 24px ${MONO}`; ctx.fillStyle = INK;
+  const link = shortLink || "valuegraph";
+  const lw = ctx.measureText(link).width;
+  ctx.fillText(link, W - PX - lw, fy);
 
   return await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/png"));
 }
 
-export function renderShareCard(a: Artifact, preset: PresetKey, shortLink: string): Promise<Blob> {
-  return drawCard(preset, a.title || "ValueGraph 자료",
-    (n) => shareCardLines(a, n), provenanceStrip(a, shortLink));
-}
-
-export function renderAnswerCard(card: AnswerCard, preset: PresetKey, shortLink: string): Promise<Blob> {
-  const strip = {
-    label: null as string | null,
-    source: `출처 ${card.sourceCount}곳${card.as_of ? ` · as of ${card.as_of}` : ""}`,
-    brand: `ValueGraph · ${shortLink}`,
-  };
-  return drawCard(preset, card.title, (n) => answerCardLines(card.content, n), strip);
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }

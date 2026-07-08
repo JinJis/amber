@@ -1,7 +1,7 @@
 // SH-2b — share-card pure helpers: preset table, kind-aware line extraction, the non-removable
 // provenance strip (history kinds always carry the label), and word-wrap.
 import { describe, expect, it } from "vitest";
-import { PRESETS, answerCardLines, isHistoryKind, plainText, provenanceStrip, shareCardLines, wrap } from "../lib/shareCard";
+import { OG, PRESETS, answerCardLines, isHistoryKind, ogCardForAnswer, ogCardForArtifact, plainText, provenanceStrip, shareCardLines, wrap } from "../lib/shareCard";
 import type { Artifact } from "../lib/types";
 
 describe("shareCard helpers", () => {
@@ -77,5 +77,40 @@ describe("shareCard helpers", () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain("첫 문장");
     expect(answerCardLines("", 5)).toEqual([]);
+  });
+
+  // SH-OG — the link-unfurl card is the standard 1.91:1 ratio (nothing crops/breaks).
+  it("OG dimensions are 1200×630 (1.91:1)", () => {
+    expect(OG.W).toBe(1200);
+    expect(OG.H).toBe(630);
+    expect(OG.W / OG.H).toBeCloseTo(1.9, 1);
+  });
+
+  it("ogCardForAnswer dedupes cited sources and strips the body to prose", () => {
+    const card = ogCardForAnswer({
+      title: "삼성전자 이번 분기 실적",
+      content: "## 요약\n영업이익 **6.5조** [1]. {{figure:1}}",
+      citations: [
+        { source: "DART", as_of: "2026-05-15", used: true, index: 1 },
+        { source: "DART", as_of: "2026-05-10", index: 2 },     // dup source → one chip
+        { source: "SEC EDGAR", as_of: "2026-04-01", index: 3 },
+      ],
+      artifacts: [{ kind: "base_rates", title: "x", series: [] }],
+    });
+    expect(card.sources).toEqual(["DART", "SEC EDGAR"]);
+    expect(card.sourceCount).toBe(2);
+    expect(card.as_of).toBe("2026-05-15");        // latest as_of
+    expect(card.lead).not.toContain("##");
+    expect(card.lead).not.toContain("{{figure");
+    expect(card.history).toBe(true);              // a base_rates artifact ⇒ history label
+  });
+
+  it("ogCardForArtifact carries the artifact source + history flag", () => {
+    const table: Artifact = { kind: "table", title: "지표", series: [], source: "SEC EDGAR",
+      as_of: "2026-07-01", table: [["지표", "값"], ["PER", "32.8x"]] };
+    const card = ogCardForArtifact(table);
+    expect(card.sources).toEqual(["SEC EDGAR"]);
+    expect(card.history).toBe(false);
+    expect(card.lead).toContain("PER");
   });
 });
