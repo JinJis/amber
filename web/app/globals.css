@@ -1687,3 +1687,33 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
   border-radius: 7px; object-fit: contain; background: var(--panel); border: 1px solid var(--line-2);
   overflow: hidden; vertical-align: middle; }
 .ticker-logo.mg { font-weight: 700; letter-spacing: -.02em; border-color: transparent; line-height: 1; }
+
+/* @관심종목 mention — enriched autocomplete + distinguished chips with a company preview popover. */
+.mention-item .mi-logos { display: inline-flex; align-items: center; gap: 3px; margin: 0 8px; }
+.mention-item .c { margin-left: auto; color: var(--muted); }
+
+.composer-meta.mentions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.composer-meta .cm-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.composer-meta .cm-hint { font-size: 10.5px; color: var(--faint); }
+
+.mention-chip { position: relative; display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12.5px; font-weight: 600; color: var(--accent-fg); background: var(--accent-bg);
+  border: 1px solid var(--accent); border-radius: 999px; padding: 3px 10px; cursor: default; outline: none; }
+.mention-chip .mc-at { opacity: .6; font-weight: 700; }
+.mention-chip .mc-count { font-size: 10px; color: var(--on-ink); background: var(--ink);
+  border-radius: 999px; padding: 0 6px; line-height: 16px; }
+/* the hover/focus preview popover — the companies this @group pulls in, with logos */
+.mention-chip .mc-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 40;
+  min-width: 220px; max-width: 300px; background: var(--panel); border: 1px solid var(--line-2);
+  border-radius: 12px; box-shadow: 0 12px 34px rgba(0,0,0,.18); padding: 10px; display: none;
+  flex-direction: column; gap: 2px; }
+.mention-chip:hover .mc-pop, .mention-chip:focus .mc-pop, .mention-chip:focus-within .mc-pop { display: flex; }
+.mc-pop-h { font-size: 10.5px; color: var(--muted); padding: 0 2px 6px; border-bottom: 1px solid var(--line);
+  margin-bottom: 4px; }
+.mc-pop-list { display: flex; flex-direction: column; gap: 1px; max-height: 260px; overflow-y: auto; }
+.mc-pop-row { display: flex; align-items: center; gap: 8px; padding: 4px 4px; border-radius: 7px; }
+.mc-pop-row:hover { background: var(--panel-2); }
+.mc-pop-name { font-size: 12.5px; color: var(--text); font-weight: 500; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.mc-pop-tk { margin-left: auto; font-size: 10.5px; color: var(--muted); }
+.mc-pop-more, .mc-pop-empty { font-size: 10.5px; color: var(--muted); padding: 5px 2px 0; }

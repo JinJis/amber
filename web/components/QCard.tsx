@@ -4,6 +4,7 @@
 // 카드 본문 탭 = 컴포저 채움(실행용 query 우선, 없으면 표시용 question), 출처 칩 탭 = 근거 뷰어.
 
 import type { Citation } from "@/lib/types";
+import { TickerLogo } from "./TickerLogo";
 
 export type AskCard = { kind: string; question: string; query?: string | null; hook: string;
                         ticker?: string | null; market?: string | null; citations?: Citation[] };
@@ -32,7 +33,8 @@ export function QCard({ c, name, onPick, onEvidence }: {
     <div className="qc">
       <button type="button" className="qc-main" onClick={() => onPick(c.query || c.question)}>
         <div className="qc-top">
-          <span className="qc-emoji" aria-hidden>{k.i}</span>
+          {c.ticker ? <TickerLogo market={c.market} ticker={c.ticker} name={name || c.ticker} size={20} />
+                    : <span className="qc-emoji" aria-hidden>{k.i}</span>}
           {name ? <span className="qc-tkr">{name}</span> : null}
           {k.t ? <span className="qc-kind">{k.t}</span> : null}
         </div>

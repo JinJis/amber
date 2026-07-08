@@ -10,6 +10,8 @@ import NotebookView from "./NotebookView";
 import { NotebookPicker, type PinPayload } from "./NotebookPicker";
 import CockpitEntry from "./CockpitEntry";
 import Watchlists, { Watchlist } from "./Watchlists";
+import { MentionChip } from "./MentionChip";
+import { TickerLogo } from "./TickerLogo";
 import { ContextPanel, evidenceOf, uniqueTools } from "./EvidencePanel";
 import { type LedgerRow } from "../lib/evidence";
 import { useIsMobile } from "../lib/useIsMobile";
@@ -66,8 +68,8 @@ export default function Chat({ name, features }: { name: string; features: Featu
     features.dashboard ? "dashboard" : "explore");
   const [nbPin, setNbPin] = useState<PinPayload | null>(null);   // NB-2: asset awaiting 노트 담기
   const [standingDone, setStandingDone] = useState<Set<number>>(new Set());  // SA-1: subscribed turns
-  const [handles, setHandles] = useState<string[]>([]);
-  const [mention, setMention] = useState<string[]>([]); // open @-autocomplete suggestions
+  const [groups, setGroups] = useState<Watchlist[]>([]);   // @관심종목 groups (name + member items)
+  const [mention, setMention] = useState<Watchlist[]>([]); // open @-autocomplete suggestions
   const [onboarded, setOnboarded] = useState<boolean | null>(null);  // null = checking; false = show onboarding
   const [viewer, setViewer] = useState<Citation | null>(null);  // expanded source viewer
   // LG-3: [n] ↔ 근거 패널 two-way link. hover mirrors; click scrolls+flashes the card.
@@ -193,7 +195,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
   async function loadHandles() {
     try {
       const r = await fetch("/api/watchlists");
-      if (r.ok) setHandles(((await r.json()).watchlists ?? []).map((w: Watchlist) => w.name));
+      if (r.ok) setGroups((await r.json()).watchlists ?? []);
     } catch {}
   }
   useEffect(() => {
@@ -220,14 +222,18 @@ export default function Chat({ name, features }: { name: string; features: Featu
     const m = v.match(/@([^\s@]*)$/);
     if (m) {
       const tok = m[1].toLowerCase();
-      setMention(handles.filter((h) => h.toLowerCase().includes(tok)).slice(0, 6));
+      setMention(groups.filter((g) => g.name.toLowerCase().includes(tok)).slice(0, 6));
     } else setMention([]);
   }
-  function pickHandle(h: string) {
-    setInput((v) => v.replace(/@([^\s@]*)$/, `@${h} `));
+  function pickHandle(g: Watchlist) {
+    setInput((v) => v.replace(/@([^\s@]*)$/, `@${g.name} `));
     setMention([]);
     inputRef.current?.focus();
   }
+  // known groups the user has @-mentioned in the current input (exact name, token-bounded — same
+  // matching as the server expansion), rendered as preview chips below the composer.
+  const mentionedGroups = groups.filter((g) =>
+    new RegExp("@" + g.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![0-9A-Za-z_가-힣])").test(input));
 
   const selected = agents.find((a) => a.id === agentId) || null;
 
@@ -608,11 +614,16 @@ export default function Chat({ name, features }: { name: string; features: Featu
             <footer className="composer">
               {mention.length > 0 && (
                 <div className="mention">
-                  {mention.map((h, i) => (
-                    <div key={h} className={`mention-item ${i === 0 ? "on" : ""}`}
-                      onMouseDown={(e) => { e.preventDefault(); pickHandle(h); }}>
-                      <span className="h">@{h}</span>
-                      <span className="c">관심 그룹</span>
+                  {mention.map((g, i) => (
+                    <div key={g.id} className={`mention-item ${i === 0 ? "on" : ""}`}
+                      onMouseDown={(e) => { e.preventDefault(); pickHandle(g); }}>
+                      <span className="h">@{g.name}</span>
+                      <span className="mi-logos">
+                        {(g.items ?? []).slice(0, 5).map((it) => (
+                          <TickerLogo key={it.id} market={it.market} ticker={it.ticker} name={it.name} size={16} />
+                        ))}
+                      </span>
+                      <span className="c mono">{g.count}종목</span>
                     </div>
                   ))}
                 </div>
@@ -626,11 +637,11 @@ export default function Chat({ name, features }: { name: string; features: Featu
                         : "무엇이든 물어보세요 — @그룹으로 관심종목을 부를 수 있어요"} disabled={busy} />
                 <Button disabled={busy || !input.trim()}>보내기</Button>
               </form>
-              {(input.match(/@([^\s@]+)/g) ?? []).length > 0 && (
-                <div className="composer-meta">
-                  {(input.match(/@([^\s@]+)/g) ?? []).slice(0, 3).map((h) => (
-                    <Chip key={h} tone="accent">{h}</Chip>
-                  ))}
+              {mentionedGroups.length > 0 && (
+                <div className="composer-meta mentions">
+                  <span className="cm-label mono">관심종목 태그</span>
+                  {mentionedGroups.map((g) => <MentionChip key={g.id} group={g} />)}
+                  <span className="cm-hint mono">이 그룹의 종목들이 질문에 함께 들어가요</span>
                 </div>
               )}
               <div className="disclaimer">투자 자문이 아니며, 가격 예측을 제공하지 않습니다.</div>

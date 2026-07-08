@@ -598,6 +598,30 @@ def test_chat_expands_at_handle_to_tickers(monkeypatch):
 
 
 @respx.mock
+def test_chat_expands_dotted_group_name(monkeypatch):
+    """Regression: a group whose name contains '·' (e.g. the default 'AI·빅테크') must expand — the
+    old character-class regex truncated at '·' and reported '알 수 없는 관심 그룹'."""
+    _cfg(monkeypatch)
+    _mock_control_plane()
+    email = "dot@u.com"
+    wid = client.post("/watchlists", headers=_hdr(email), json={"name": "AI·빅테크"}).json()["id"]
+    client.post(f"/watchlists/{wid}/items", headers=_hdr(email),
+                json={"market": "US", "ticker": "NVDA", "name": "NVIDIA"})
+    captured = {}
+
+    def _capture(request):
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, content=b'data: {"type":"token","text":"ok"}\n\ndata: {"type":"done","citations":[],"refused":false}\n\n')
+
+    respx.post("http://ae.test/agent/chat").mock(side_effect=_capture)
+    r = client.post("/chat/stream", headers=_hdr(email),
+                    json={"messages": [{"role": "user", "content": "@AI·빅테크 실적 비교"}]})
+    assert r.status_code == 200
+    sent = captured["body"]["messages"][-1]["content"]
+    assert "NVDA" in sent and "AI·빅테크 =" in sent and "알 수 없는" not in sent
+
+
+@respx.mock
 def test_chat_unknown_handle_is_graceful(monkeypatch):
     _cfg(monkeypatch)
     _mock_control_plane()
