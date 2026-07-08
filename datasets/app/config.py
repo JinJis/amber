@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     polygon_api_key: str = ""
     tiingo_api_key: str = ""
     fmp_api_key: str = ""
+    # Logo.dev — optional publishable token for high-quality company logos by ticker/domain.
+    # Unset → logos fall back to FMP profile images + domain favicons (hybrid resolver, /logos).
+    logodev_token: str = ""
     # NYT Archive — era news headlines/abstracts by month back to 1851 (HL-5). Free key; the
     # provider self-limits to ~5 req/min (their guidance). Unset → the pre-2017 era-news path is dark.
     nyt_api_key: str = ""

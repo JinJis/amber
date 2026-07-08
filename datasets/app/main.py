@@ -18,6 +18,7 @@ from app.routers import (  # noqa: I001
     fmp,
     history,
     kis,
+    logos,
     admin,
     catalog,
     company,
@@ -91,6 +92,7 @@ for module in (
     company, prices, financials, filings, macro, metrics,
     news, earnings, insider, institutional, funds, gurus, corporate_actions, technical,
     market, search, evidence, catalog, admin, scaffold, valuation, backtest, fmp, kis, history, era_news,
+    logos,
 ):
     app.include_router(module.router)
 

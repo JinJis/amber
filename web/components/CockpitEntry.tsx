@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Citation } from "@/lib/types";
 import { QCard, type AskCard } from "./QCard";
+import { TickerLogo } from "./TickerLogo";
 
 type TickerInfo = { market: string; ticker: string; name: string; groups: string[] };
 
@@ -123,6 +124,7 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence }: {
                     <button key={key} type="button" data-testid={`tk-${t.ticker}`}
                       className={`tk-chip ${on ? "on" : ""}`} aria-pressed={on}
                       onClick={() => void pickTicker(t)}>
+                      <TickerLogo market={t.market} ticker={t.ticker} name={t.name} size={20} />
                       <span className="tk-name">{t.name}</span>
                       <span className="tk-mkt mono">{t.market}</span>
                       {loadingKey === key ? <span className="tl-spin" aria-hidden /> : (

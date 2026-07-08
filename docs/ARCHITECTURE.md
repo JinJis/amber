@@ -183,7 +183,11 @@ A gateway in front of the data plane. Package `controlplane` (talks to data plan
 - **Entitlement:** fetches the data-plane `/catalog`, maps `(method, path, market)` → connector(s); a
   request is allowed iff the project activated one of them.
 - **Gateway flow:** authenticate → entitle → rate-limit → proxy to data plane → meter + audit. Returns
-  `x-connector` / `x-cost-units` headers; public `/catalog` passthrough.
+  `x-connector` / `x-cost-units` headers; public `/catalog` passthrough. **Ungoverned passthroughs**
+  (not in any manifest → no entitlement, auth+meter only): `/evidence/*` (sourced HTML) and `/logos`
+  (company brand images — hybrid resolver Logo.dev→FMP→favicon, cached on the datasets volume; a miss
+  returns 204 and the UI draws a monogram — never a fabricated logo). Admins fill KR/coverage gaps via
+  `POST /logos` (studio proxy → `web /api/logos → TickerLogo`; admin panel has an upload form).
 - **Admin (X-Admin-Token):** create tenant/project/key, activate connectors, usage + audit summaries.
 - **6 tests.** Verified live: activate `yahoo` → `/prices` 200; unactivated → 403; usage metered.
 

@@ -81,6 +81,11 @@ async def _run_era_news(market: str, tickers: list[str]) -> None:
     await run_era_news_ingest(market, tickers)   # tickers = regime slugs (empty = all)
 
 
+async def _run_logos(market: str, tickers: list[str]) -> None:
+    from app.routers.logos import run_logo_ingest
+    await run_logo_ingest(market, tickers)
+
+
 # pipeline cadence tiers — the scheduler skips a pipeline that ran within `min_interval_seconds`,
 # so heavy historical pulls don't re-fetch the full history every sweep. Pairs with incremental
 # fetch in the runners (prices/corp_actions only pull since the last stored date).
@@ -189,6 +194,19 @@ PIPELINES: list[dict] = [
      "fetch": "각 국면 구간(start~end)의 위기 관련 기사(제목·초록)를 최대 60건 RAG 색인 "
               "(doc_id=era:{slug}:{url}). 커버리지 없는 구간(2017 이전+NYT 키 없음)은 0 chunks(갭)."},
 ]
+
+PIPELINES.append(
+    {"id": "logos", "label": "회사 로고", "source": "Logo.dev / FMP / favicon", "store": "logos(volume)",
+     "kind": "logo", "markets": ["US", "KR"], "default": False, "runner": _run_logos,
+     "min_interval_seconds": _WEEK,
+     "desc": "종목 로고 이미지(하이브리드 해석·캐시). 없으면 UI가 모노그램 표시(무 날조).",
+     "upstream": [
+         "Logo.dev — GET https://img.logo.dev/ticker/{SYMBOL} 또는 /{domain} (LOGODEV_TOKEN 있을 때)",
+         "FMP — GET https://financialmodelingprep.com/stable/profile?symbol={SYMBOL} (image/website)",
+         "Google favicon — GET https://www.google.com/s2/favicons?domain={domain}&sz=128 (도메인 있을 때만)",
+     ],
+     "fetch": "티커별 로고 1장을 해석→/data/logos에 캐시(.img+.meta), 미스는 .miss 마커. 재실행 시 "
+              "기존 캐시는 건너뛰고 미스만 재시도."})
 
 PIPELINE_BY_ID = {p["id"]: p for p in PIPELINES}
 KIND_TO_PIPELINE = {p["kind"]: p for p in PIPELINES}

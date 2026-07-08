@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Mascot, Modal } from "./ui";
+import { TickerLogo } from "./TickerLogo";
 
 export type WatchItem = { id: string; market: string; ticker: string; name?: string | null };
 export type Watchlist = { id: string; name: string; handle: string; count: number; items: WatchItem[] };
@@ -235,6 +236,7 @@ export default function Watchlists(
                             <div key={`${r.market}-${r.ticker}`} className="wl-srow">
                               <button className={`star ${on ? "on" : ""}`} title={on ? "이미 담김" : "관심에 추가"}
                                 onClick={() => favorite(r)} disabled={on}>{on ? "★" : "☆"}</button>
+                              <TickerLogo market={r.market} ticker={r.ticker} name={r.name} size={22} />
                               <span className="wl-sname">{r.name} <span className="meta">{r.ticker} · {r.market}</span></span>
                             </div>
                           );
@@ -250,6 +252,7 @@ export default function Watchlists(
                   ) : active.items.map((it) => (
                     <div key={it.id} className="wl-srow">
                       <button className="star on" title="그룹에서 제거" onClick={() => removeItem(it.id)}>★</button>
+                      <TickerLogo market={it.market} ticker={it.ticker} name={it.name} size={22} />
                       <span className="wl-sname">{it.name || it.ticker} <span className="meta">{it.ticker} · {it.market}</span></span>
                     </div>
                   ))}

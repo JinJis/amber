@@ -11,6 +11,7 @@
 
 import { useState } from "react";
 import { CadenceTag, FreshnessDot, FRESH_LABEL, TrustLegend } from "./ui";
+import { TickerLogo } from "./TickerLogo";
 // Citation lives in lib/types.ts (FE-01); imported for local use + re-exported for back-compat
 // (importers use `import { Citation } from "./SourceCard"`).
 import type { Citation } from "../lib/types";
@@ -106,7 +107,7 @@ export function SourceCard({ c, onExpand, onPin, hideTitle }: { c: Citation; onE
         <>
           <div className="sp-head">
             {c.index ? <span className="sp-n mono">[{c.index}]</span> : null}
-            <span className="sp-ic" aria-hidden>📄</span>
+            {c.ticker ? <TickerLogo ticker={c.ticker} size={18} /> : <span className="sp-ic" aria-hidden>📄</span>}
             {!hideTitle && <span className="sp-title">{c.source || "공시 문서"}</span>}
             {c.page ? <span className="sp-page mono">{c.page}</span> : null}
             {evBadge}
@@ -142,7 +143,7 @@ export function SourceCard({ c, onExpand, onPin, hideTitle }: { c: Citation; onE
         <>
           <div className="sp-head">
             {c.index ? <span className="sp-n mono">[{c.index}]</span> : null}
-            <span className="sp-ic" aria-hidden>▤</span>
+            {c.ticker ? <TickerLogo ticker={c.ticker} size={18} /> : <span className="sp-ic" aria-hidden>▤</span>}
             {!hideTitle && <span className="sp-title">{c.source || "추출 데이터"}</span>}
             {c.ticker ? <span className="sp-page mono">{c.ticker}</span> : null}
             {evBadge}

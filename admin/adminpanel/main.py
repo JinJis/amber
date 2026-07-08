@@ -16,7 +16,7 @@ One session login gates everything (a guard middleware).
 from __future__ import annotations
 
 import httpx
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from sqlalchemy import text as sa_text
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -380,6 +380,19 @@ async def pipelines(request: Request, msg: str = ""):
         "<div class=opsrow><form class=ops method=post action=/ops/askfeed/refresh>"
         "<button class=p>지금 갱신 ▶</button></form></div></div>"
     )
+
+    # --- 회사 로고 수동 업로드: 하이브리드 해석기가 놓친 종목(특히 KR)을 채운다 ---
+    logo_card = (
+        "<div class=card><h3>🖼️ 회사 로고 업로드</h3>"
+        "<div class=muted>자동으로 못 받아온 종목의 로고를 직접 올리면, 그 종목의 모든 화면에 바로 적용돼요. "
+        "PNG·JPEG·WEBP·SVG · 정사각 권장.</div>"
+        "<div class=opsrow><form class=ops method=post action=/ops/logos/upload enctype=multipart/form-data>"
+        "<select name=market><option value=US>US</option><option value=KR>KR</option></select> "
+        "<input name=ticker placeholder='티커 (예: 005930.KS)' required> "
+        "<input type=file name=logo accept='image/*' required> "
+        "<button class=p>업로드 ▶</button></form></div></div>"
+    )
+    macro_card = macro_card + logo_card
 
     # --- per-pipeline visualization cards ---
     cards = "".join(_pipeline_card(p, cron_by_pid) for p in registry) or "<div class=empty>파이프라인 레지스트리를 불러오지 못했어요.</div>"
@@ -869,6 +882,33 @@ async def ops_askfeed_refresh(request: Request):
                    f"카드 {j.get('cards', '?')}개")
     except Exception as exc:  # noqa: BLE001 — studio 미기동 등
         msg = f"Macro Trends 갱신 실패: {type(exc).__name__}"
+    return RedirectResponse(f"/pipelines?msg={msg.replace(' ', '+')}", status_code=303)
+
+
+@app.post("/ops/logos/upload")
+async def ops_logo_upload(request: Request, market: str = Form("US"),
+                          ticker: str = Form(""), logo: UploadFile = File(...)):
+    """Manual company-logo upload — fills any ticker the hybrid resolver missed (esp. KR). Forwards
+    the image to datasets /logos (base64 JSON) where it's cached and served like an auto-resolved one."""
+    import base64 as _b64
+    ticker = (ticker or "").strip()
+    if not ticker:
+        return RedirectResponse("/pipelines?msg=티커를+입력하세요", status_code=303)
+    try:
+        raw = await logo.read()
+        if not raw:
+            return RedirectResponse("/pipelines?msg=이미지+파일이+비어있어요", status_code=303)
+        data_url = "data:image/png;base64," + _b64.b64encode(raw).decode()
+        async with httpx.AsyncClient() as c:
+            r = await c.post(f"{settings.datasets_url}/logos",
+                             json={"market": market, "ticker": ticker, "data_url": data_url}, timeout=30)
+        if r.status_code == 200:
+            msg = f"로고 업로드 완료 · {market} {ticker} ({r.json().get('bytes', '?')}B)"
+        else:
+            detail = (r.json().get("detail") if r.headers.get("content-type", "").startswith("application/json") else "") or ""
+            msg = f"로고 업로드 실패 (HTTP {r.status_code}) {detail}"
+    except Exception as exc:  # noqa: BLE001
+        msg = f"로고 업로드 실패: {type(exc).__name__}"
     return RedirectResponse(f"/pipelines?msg={msg.replace(' ', '+')}", status_code=303)
 
 

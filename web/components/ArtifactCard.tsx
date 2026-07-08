@@ -6,6 +6,7 @@ import { TradeChart } from "./TradeChart";
 import { ComputationPanel } from "./ComputationPanel";
 import { demoWidget } from "./DemoWidgets";
 import { AnalogueArtifact, BaseRatesArtifact } from "./HistoryArtifacts";
+import { TickerLogo } from "./TickerLogo";
 import type { Citation } from "./SourceCard";
 import type { Artifact, ArtifactCandle, ArtifactSeries, ChartAnnotations } from "../lib/types";
 import { currencyOf, fmt, fmtBig, fmtPrice, fmtVol } from "../lib/format";
@@ -237,6 +238,7 @@ export function ArtifactCard(
     return (
       <div className="artifact">
         <div className="artifact-head">
+          {!hideTitle && ticker && <TickerLogo market={(a.args?.market as string) || undefined} ticker={ticker} size={20} />}
           {!hideTitle && <span className="artifact-title">{a.title}</span>}
           <FreshnessDot f={a.freshness ?? undefined} />
           {a.live && <span className="dw-livechip"><i />LIVE</span>}

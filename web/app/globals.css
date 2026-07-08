@@ -1680,3 +1680,10 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+/* Company logos — one look everywhere (관심종목·출처·카드·아티팩트). Real logo = contained image;
+   fallback = deterministic monogram tile. Always rounded, never a broken image. */
+.ticker-logo { display: inline-flex; align-items: center; justify-content: center; flex: none;
+  border-radius: 7px; object-fit: contain; background: var(--panel); border: 1px solid var(--line-2);
+  overflow: hidden; vertical-align: middle; }
+.ticker-logo.mg { font-weight: 700; letter-spacing: -.02em; border-color: transparent; line-height: 1; }
