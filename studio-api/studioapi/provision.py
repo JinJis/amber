@@ -40,12 +40,24 @@ async def _activate_defaults(project_id: str) -> None:
 _reconciled: set[str] = set()
 
 
-async def ensure_user(email: str) -> User:
+async def ensure_user(email: str, name: str | None = None, image: str | None = None) -> User:
     with SessionLocal() as db:
         existing = db.get(User, email)
     if existing:
         if email not in _reconciled:
             await _activate_defaults(existing.project_id)  # backfill connectors added since signup
+            # backfill profile from the provider if we never captured it (never overwrite a set value —
+            # the user may have edited their display name).
+            if name and not existing.name or image and not existing.image:
+                with SessionLocal() as db:
+                    u = db.get(User, email)
+                    if u is not None:
+                        if name and not u.name:
+                            u.name = name[:120]
+                        if image and not u.image:
+                            u.image = image[:512]
+                        db.commit()
+                        existing = u
             _reconciled.add(email)
         return existing
 
@@ -55,7 +67,8 @@ async def ensure_user(email: str) -> User:
     await _activate_defaults(project["id"])
     _reconciled.add(email)
 
-    user = User(email=email, tenant_id=tenant["id"], project_id=project["id"], api_key=key["api_key"])
+    user = User(email=email, tenant_id=tenant["id"], project_id=project["id"], api_key=key["api_key"],
+                name=(name or None) and name[:120], image=(image or None) and image[:512])
     with SessionLocal() as db:
         db.merge(user)
         db.commit()

@@ -8,12 +8,17 @@ export async function studioFetch(path: string, init: RequestInit = {}): Promise
   const email = session?.user?.email;
   if (!email) return null;
   const base = process.env.STUDIO_API_URL ?? "http://127.0.0.1:8004";
+  // name/image ride along so studio can seed the profile; URI-encoded because HTTP headers are
+  // latin-1 and provider names/URLs can be Korean/unicode (studio unquotes them).
+  const enc = (v?: string | null) => (v ? encodeURIComponent(v) : "");
   return fetch(`${base}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
       "X-Service-Token": process.env.SERVICE_TOKEN ?? "dev-service-token",
       "X-User-Email": email,
+      "X-User-Name": enc(session?.user?.name),
+      "X-User-Image": enc(session?.user?.image),
       ...(init.headers ?? {}),
     },
   });

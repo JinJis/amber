@@ -37,6 +37,10 @@ class User(Base):
     tenant_id: Mapped[str] = mapped_column(String(48))
     project_id: Mapped[str] = mapped_column(String(48))
     api_key: Mapped[str] = mapped_column(String(80))  # the tenant platform key (server-side only)
+    # Profile (seeded from the OAuth provider on first login; display name is user-editable).
+    name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    image: Mapped[str | None] = mapped_column(String(512), nullable=True)   # avatar URL (provider or set)
+    plan: Mapped[str] = mapped_column(String(24), default="free")           # free | pro | team (display-only)
     onboarded: Mapped[bool] = mapped_column(Boolean, default=False)  # completed the F1 onboarding
     # M-DESK: previous visit timestamp — bounds the desk feed's "since last visit" windows
     # (새로 들어온 공시 etc.). Updated each time the feed is served.

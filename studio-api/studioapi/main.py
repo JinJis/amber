@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -15,6 +16,7 @@ from studioapi.agents import router as agents_router
 from studioapi.agents import seed_templates
 from studioapi.alerts import channels_router, deliveries_router, router as alerts_router
 from studioapi.chat import sse_tail, start_turn
+from studioapi.config import settings
 from studioapi.runs import manager as run_manager
 from studioapi.db import SessionLocal, init_db
 from studioapi.deps import current_user, require_service
@@ -75,9 +77,51 @@ async def users_ensure(user: User = Depends(current_user)) -> dict:
             "onboarded": bool(user.onboarded)}
 
 
+def _profile(user: User) -> dict:
+    return {"email": user.email, "name": user.name or (user.email.split("@")[0]),
+            "image": user.image, "plan": user.plan or "free", "onboarded": bool(user.onboarded)}
+
+
 @app.get("/users/me", tags=["Users"], dependencies=[Depends(require_service)])
 async def users_me(user: User = Depends(current_user)) -> dict:
-    return {"email": user.email, "onboarded": bool(user.onboarded)}
+    return _profile(user)
+
+
+class ProfileIn(BaseModel):
+    name: str | None = None
+    image: str | None = None
+
+
+@app.patch("/users/me", tags=["Users"], dependencies=[Depends(require_service)])
+async def update_me(body: ProfileIn, user: User = Depends(current_user)) -> dict:
+    with SessionLocal() as db:
+        u = db.get(User, user.email)
+        if u is None:
+            raise HTTPException(404, "user not found")
+        if body.name is not None:
+            n = body.name.strip()
+            if not (1 <= len(n) <= 120):
+                raise HTTPException(422, "이름은 1~120자여야 해요.")
+            u.name = n
+        if body.image is not None:
+            u.image = body.image.strip()[:512] or None
+        db.commit()
+        db.refresh(u)
+        return _profile(u)
+
+
+@app.get("/users/me/usage", tags=["Users"], dependencies=[Depends(require_service)])
+async def usage_me(user: User = Depends(current_user)) -> dict:
+    """The user's metered tool-call usage + cost, read from the control-plane (admin) for their
+    project. Best-effort — an outage returns an empty summary, never a 500 (settings still renders)."""
+    try:
+        async with httpx.AsyncClient(timeout=settings.http_timeout_seconds) as client:
+            r = await client.get(f"{settings.control_plane_url}/admin/projects/{user.project_id}/usage",
+                                 headers={"X-Admin-Token": settings.admin_token})
+        data = r.json() if r.status_code == 200 else {}
+    except Exception:  # noqa: BLE001
+        data = {}
+    return {"plan": user.plan or "free", "usage": data}
 
 
 @app.post("/users/onboarded", tags=["Users"], dependencies=[Depends(require_service)])

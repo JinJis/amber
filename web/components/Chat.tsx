@@ -12,6 +12,7 @@ import CockpitEntry from "./CockpitEntry";
 import Watchlists, { Watchlist } from "./Watchlists";
 import { MentionChip } from "./MentionChip";
 import { TickerLogo } from "./TickerLogo";
+import { Settings } from "./Settings";
 import { ContextPanel, evidenceOf, uniqueTools } from "./EvidencePanel";
 import { type LedgerRow } from "../lib/evidence";
 import { useIsMobile } from "../lib/useIsMobile";
@@ -44,7 +45,7 @@ function toCitation(ev: any): Citation {
 }
 
 
-export default function Chat({ name, features }: { name: string; features: Features }) {
+export default function Chat({ name, email, image, features }: { name: string; email?: string; image?: string | null; features: Features }) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -64,7 +65,7 @@ export default function Chat({ name, features }: { name: string; features: Featu
 
   // shell view + watchlists / @groups. Dashboard is home (when enabled); 탐색(explore) is the chat
   // surface and the fallback when a feature-flagged surface is off.
-  const [view, setView] = useState<"dashboard" | "explore" | "watch" | "bot" | "notes">(
+  const [view, setView] = useState<"dashboard" | "explore" | "watch" | "bot" | "notes" | "settings">(
     features.dashboard ? "dashboard" : "explore");
   const [nbPin, setNbPin] = useState<PinPayload | null>(null);   // NB-2: asset awaiting 노트 담기
   const [standingDone, setStandingDone] = useState<Set<number>>(new Set());  // SA-1: subscribed turns
@@ -448,6 +449,9 @@ export default function Chat({ name, features }: { name: string; features: Featu
         <button className={`rail-item ${view === "watch" ? "on" : ""}`} onClick={() => setView("watch")}>
           <span className="ic">⭐</span><span className="lbl">관심종목</span>
         </button>
+        <button className={`rail-item ${view === "settings" ? "on" : ""}`} onClick={() => { setView("settings"); if (isMobile) setDrawer(false); }}>
+          <span className="ic">⚙️</span><span className="lbl">설정</span>
+        </button>
         {features.alerts && (
           <button className={`rail-item ${view === "bot" ? "on" : ""}`} onClick={() => setView("bot")}>
             <span className="ic">🔔</span><span className="lbl">알림봇</span>
@@ -463,18 +467,25 @@ export default function Chat({ name, features }: { name: string; features: Featu
           </div>
         )}
         <div className="rail-spacer" />
-        <div className="rail-foot">
-          <span className="acct-ava" aria-hidden />
+        <button className="rail-foot" onClick={() => setView("settings")} title="설정">
+          {image ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img className="acct-ava" src={image} alt="" width={22} height={22} referrerPolicy="no-referrer" />
+          ) : (
+            <span className="acct-ava mg" aria-hidden>{(name || "?").trim().charAt(0).toUpperCase()}</span>
+          )}
           <div className="acct-meta">
-            <span className="acct-name" title={name}>{(name?.split("@")[0] ?? "me").slice(0, 12)}</span>
-            <span className="acct-sub">tenant ✓</span>
+            <span className="acct-name" title={name}>{(name?.split("@")[0] ?? "me").slice(0, 14)}</span>
+            <span className="acct-sub">설정 · 요금제</span>
           </div>
-          <a href="/api/auth/signout" title="로그아웃">↩</a>
-        </div>
+          <span className="acct-gear" aria-hidden>⚙</span>
+        </button>
       </nav>
 
       <div className="main">
-        {view === "watch" ? (
+        {view === "settings" ? (
+          <Settings name={name} email={email ?? name} image={image} />
+        ) : view === "watch" ? (
           <Watchlists embedded onChanged={loadHandles} />
         ) : view === "notes" ? (
           <NotebookView onShare={(n) => setShareArt(n as unknown as Artifact)} />
