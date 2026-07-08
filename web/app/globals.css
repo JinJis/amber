@@ -1458,18 +1458,7 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .share-sns .chip { text-decoration: none; }
 .share-note { font-size: 10.5px; color: var(--muted); }
 
-/* --- SH-2b: share card image (aspect presets + preview + save/copy) --- */
-.share-card-block { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; border-top: 1px solid var(--line-3); }
-.share-presets { display: flex; gap: 6px; }
-.share-presets .chip.on { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
-.share-card-preview { display: flex; align-items: center; justify-content: center; background: var(--panel-2);
-  border: 1px solid var(--line-3); border-radius: 8px; overflow: hidden; max-height: 300px; }
-.share-card-preview img { max-width: 100%; max-height: 300px; object-fit: contain; display: block; }
-.share-card-preview.p-16-9 { aspect-ratio: 16 / 9; }
-.share-card-preview.p-1-1 { aspect-ratio: 1 / 1; }
-.share-card-preview.p-4-5 { aspect-ratio: 4 / 5; }
-.share-card-skel { color: var(--muted); font-size: 11px; padding: 40px 0; }
-.share-card-actions { display: flex; gap: 6px; }
+/* Sharing is link-only (SH-2b image export removed) — the OG preview is generated silently. */
 
 /* ── NB: 리서치 노트북 ─────────────────────────────────────────── */
 .nbview { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 0; height: 100%; overflow: hidden; }

@@ -131,9 +131,14 @@ on the image must have passed the number audit (§5). 텍스트 최소 12px(모�
   the exact chat answer components (article typography, inline figures, LG-4 numeral highlights, 판정
   strip) plus every cited source as a read-only `SourceCard` (source · as_of · snippet · 원문↗ link) —
   so provenance/evidence travel WITH the answer; the in-app highlight viewer stays behind the sign-up
-  CTA (it needs a tenant key). The 1:1 OG card bakes the answer lead + `출처 N곳` strip. QT-2 gate
-  applies unchanged (an answer with an unsupported number is refused). Tests: studio answer
-  create/read + no-identity assertion + trust-floor refusal; shareCard `plainText`/`answerCardLines`.
+  CTA (it needs a tenant key). QT-2 gate applies unchanged (an answer with an unsupported number is
+  refused). Tests: studio answer create/read + no-identity assertion + trust-floor refusal; shareCard
+  `plainText`/`answerCardLines`.
+  - **Link-only sharing (2026-07-08).** The aspect-preset picker + image save/copy UI (old SH-2b)
+    was **removed** — every share is just a link. The OG preview is still generated: a 16:9 card is
+    rendered from the REAL content and uploaded **silently** as `og:image`, and the OG *description*
+    is the actual answer lead (`plainText` first 160 chars), so the unfurl on Threads/텔레그램/카카오
+    shows the answer content — both as a card image and as text — with zero export controls.
 
 - **MOBILE-1 · 전면 모바일 레이아웃 (web)** — ✅ done. A `useIsMobile()` (matchMedia ≤720px) switches
   the desktop 3-column grid into a single scrolling column: the rail becomes a left **drawer** (☰ in a
