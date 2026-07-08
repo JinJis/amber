@@ -1570,6 +1570,100 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .share-quote { background: var(--panel); border: 1px solid var(--line-2); border-radius: 12px;
   padding: 18px 20px; font-size: 15px; }
 .share-quote footer { color: var(--muted); margin-top: 10px; font-size: 11px; }
+
+/* SH-ANSWER — a whole shared answer, read-only: the research body + 판정 strip + source cards. */
+.share-answer { display: flex; flex-direction: column; gap: 16px; }
+.share-answer .msg.assistant { max-width: 100%; }
+.share-answer .ctx-trust { align-self: flex-start; }
+.share-sources { display: flex; flex-direction: column; gap: 10px; margin-top: 6px;
+  border-top: 1px solid var(--line); padding-top: 16px; }
+.share-sources-h { font-size: 11px; color: var(--muted); margin: 0 0 2px; letter-spacing: .02em; }
+.share-src-slot { border-radius: 12px; transition: box-shadow .2s, background .2s; }
+.share-src-slot.flash { box-shadow: 0 0 0 2px var(--accent); background: var(--panel-2); }
+
+/* SH-ANSWER — the per-answer share button in chat (every finished assistant answer). */
+.answer-actions { align-self: flex-start; }
+.ans-share { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px;
+  color: var(--text-2); background: var(--panel); border: 1px solid var(--line-2);
+  border-radius: 999px; padding: 4px 12px; cursor: pointer; transition: border-color .15s, color .15s; }
+.ans-share:hover { border-color: var(--ink); color: var(--ink); }
+
+/* ── Mobile: the public share page is the SNS landing — most traffic is phones ─────────── */
+@media (max-width: 640px) {
+  .share-head { padding: 10px 14px; }
+  .share-brand { font-size: 14px; }
+  .share-cta { font-size: 12px; padding: 6px 12px; }
+  .share-main { padding: 18px 14px 48px; }
+  .share-title { font-size: 18px; }
+  .share-answer .md.article { font-size: 15px; }   /* a touch larger for phone reading */
+  .share-quote { font-size: 15px; padding: 15px 16px; }
+  .share-note-doc { gap: 10px; }
+}
 .load-error, .df-error { display: flex; align-items: center; gap: 10px; justify-content: center;
   background: var(--panel); border: 1px solid var(--line-2); border-radius: 10px;
   padding: 10px 14px; font-size: 12.5px; color: var(--text-2); }
+
+/* ══════════════════════════════════════════════════════════════════════════════════════
+   MOBILE — the full-app phone layout ("웹뷰"): the desktop 3-column grid collapses to one
+   scrolling column; the rail becomes a left drawer; the 근거 패널 becomes a bottom sheet.
+   Mobile chrome (top bar + backdrops) is desktop-hidden and revealed only ≤720px.
+   ══════════════════════════════════════════════════════════════════════════════════════ */
+.m-topbar, .m-backdrop { display: none; }
+
+@media (max-width: 720px) {
+  /* one column; !important beats the SSR inline grid style before hydration (no flash) */
+  .shell, .shell.with-ctx, .shell.no-right {
+    grid-template-columns: 1fr !important; display: flex !important; flex-direction: column;
+    height: 100dvh; overflow: hidden; }
+
+  /* top bar — always present so the drawer + new-chat are reachable from every view */
+  .m-topbar { display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 30;
+    padding: 10px 12px; padding-top: max(10px, env(safe-area-inset-top)); flex: none;
+    background: var(--panel-2); border-bottom: 1px solid var(--line); }
+  .m-topbar .m-brand { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; font-size: 15px; }
+  .m-topbar .m-brand .wordmark { font-size: 15px; }
+  .m-menu, .m-newchat { background: none; border: none; font-size: 20px; line-height: 1;
+    color: var(--text); cursor: pointer; padding: 4px; }
+  .m-newchat { margin-left: auto; font-size: 18px; }
+
+  /* the rail becomes an off-canvas left drawer */
+  .m-backdrop { display: block; position: fixed; inset: 0; z-index: 38;
+    background: rgba(0,0,0,.44); animation: fade-in .16s ease; }
+  .rail { position: fixed; top: 0; left: 0; bottom: 0; z-index: 40; width: 82%; max-width: 320px;
+    transform: translateX(-100%); transition: transform .22s ease; overflow-y: auto;
+    padding-top: max(14px, env(safe-area-inset-top)); box-shadow: 0 0 40px rgba(0,0,0,.3); }
+  .shell.drawer-open .rail { transform: translateX(0); }
+
+  /* main fills the rest and scrolls on its own */
+  .main { min-height: 0; min-width: 0; }
+  .msg { max-width: 100%; }
+  .top { padding: 10px 14px; }
+  .explore-sub { display: none; }            /* keep the header compact */
+  .composer { padding: 10px 12px; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  .composer form.hero { flex-direction: column; }
+
+  /* the 근거 패널 becomes a bottom sheet (slides up over the answer) */
+  .shell.with-ctx .ctxpane, .ctxpane {
+    position: fixed; left: 0; right: 0; bottom: 0; top: auto; width: auto !important;
+    height: 86dvh; z-index: 40; transform: translateY(100%); transition: transform .24s ease;
+    border-radius: 16px 16px 0 0; box-shadow: 0 -10px 40px rgba(0,0,0,.28);
+    padding-bottom: max(16px, env(safe-area-inset-bottom)); overflow-y: auto; }
+  .shell.ctx-open .ctxpane { transform: translateY(0); }
+  .ctx-resize { display: none; }             /* no drag-resize on touch */
+  .ctxpane-head { position: sticky; top: 0; background: var(--panel); z-index: 1;
+    padding-top: 8px; }
+  .ctx-sheet-x { margin-left: auto; background: none; border: none; font-size: 17px;
+    color: var(--faint); cursor: pointer; padding: 2px 6px; }
+
+  /* modals go full-bleed / bottom-sheet on phones */
+  .share-sheet { width: 100%; max-width: 100%; border-radius: 16px 16px 0 0;
+    position: fixed; left: 0; right: 0; bottom: 0; max-height: 90dvh; overflow-y: auto; }
+  .sv-backdrop { padding: 0; align-items: flex-end; }
+  .sv { width: 100%; height: 92dvh; max-height: none; border-radius: 16px 16px 0 0; }
+  .sv-body { flex-direction: column; }
+  .sv-stage { padding: 14px; }
+  .modal, .modal.wide { width: 100%; max-width: 100%; }
+}
+.m-topbar .m-brand .wordmark { letter-spacing: -.01em; }
+
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }

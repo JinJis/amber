@@ -1,7 +1,7 @@
 // SH-2b — share-card pure helpers: preset table, kind-aware line extraction, the non-removable
 // provenance strip (history kinds always carry the label), and word-wrap.
 import { describe, expect, it } from "vitest";
-import { PRESETS, isHistoryKind, provenanceStrip, shareCardLines, wrap } from "../lib/shareCard";
+import { PRESETS, answerCardLines, isHistoryKind, plainText, provenanceStrip, shareCardLines, wrap } from "../lib/shareCard";
 import type { Artifact } from "../lib/types";
 
 describe("shareCard helpers", () => {
@@ -57,5 +57,25 @@ describe("shareCard helpers", () => {
   it("wrap breaks on words within the char budget", () => {
     expect(wrap("the quick brown fox", 9)).toEqual(["the quick", "brown fox"]);
     expect(wrap("single", 20)).toEqual(["single"]);
+  });
+
+  // SH-ANSWER — a whole-answer card strips markdown/markers and keeps only prose sentences.
+  it("plainText strips figure markers, [n] refs and markdown syntax", () => {
+    const md = "## 실적 요약\n삼성전자 영업이익은 **6.5조**였어요 [1]. {{figure:1}}\n- 전년比 개선";
+    const flat = plainText(md);
+    expect(flat).not.toContain("{{figure");
+    expect(flat).not.toContain("[1]");
+    expect(flat).not.toContain("**");
+    expect(flat).not.toContain("##");
+    expect(flat).toContain("삼성전자 영업이익은");
+    expect(flat).toContain("6.5조");
+  });
+
+  it("answerCardLines yields bounded lead sentences", () => {
+    const md = "첫 문장이에요. 둘째 문장이에요. 셋째 문장이에요. 넷째 문장이에요.";
+    const lines = answerCardLines(md, 2);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain("첫 문장");
+    expect(answerCardLines("", 5)).toEqual([]);
   });
 });

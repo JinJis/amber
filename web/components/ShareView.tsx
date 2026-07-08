@@ -4,9 +4,14 @@
 // the provenance footer + (history) label travel with the artifact, and the CTA closes the
 // growth loop (share → page → sign-up).
 
+import { useState } from "react";
 import { ArtifactCard } from "./ArtifactCard";
-import type { Artifact } from "@/lib/types";
+import type { Artifact, Citation, Msg } from "@/lib/types";
 import { Mascot } from "./ui";
+import { AnswerArticle, makeMdComponents } from "./chat/answer";
+import { TrustStrip } from "./EvidencePanel";
+import { trustSummary, type LedgerRow } from "../lib/evidence";
+import { SourceCard } from "./SourceCard";
 
 type Share = {
   token: string; kind: string; title: string; payload: Record<string, unknown>;
@@ -24,7 +29,9 @@ export function ShareView({ status, share }: { status: number; share: Share | nu
         {share ? (
           <>
             <h1 className="share-title">{share.title}</h1>
-            {share.kind === "note" ? (
+            {share.kind === "answer" ? (
+              <AnswerShareView payload={share.payload} />
+            ) : share.kind === "note" ? (
               // NB-4: the public research note — sourced pins keep their provenance shape;
               // the USER'S OWN text is explicitly labeled (attribution, not audit).
               <div className="share-note-doc">
@@ -75,6 +82,65 @@ export function ShareView({ status, share }: { status: number; share: Share | nu
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+// SH-ANSWER — the public render of a WHOLE shared answer: the research note body (inline figures
+// + [n] refs + LG-4 number highlights) + the 판정 strip + every cited source as a read-only card.
+// Provenance and evidence travel WITH the answer; the reader verifies. No user identity is ever
+// present in the payload (it's a pure content snapshot), so nothing about the author can leak.
+type AnswerPayload = {
+  content?: string; artifacts?: Artifact[]; citations?: Citation[];
+  audit?: { checked?: number; supported?: number; unsupported?: string[]; ledger?: LedgerRow[] } | null;
+};
+
+function AnswerShareView({ payload }: { payload: Record<string, unknown> }) {
+  const p = payload as AnswerPayload;
+  const content = p.content ?? "";
+  const artifacts = p.artifacts ?? [];
+  const citations = p.citations ?? [];
+  const ledger = (p.audit?.ledger ?? []) as LedgerRow[];
+  const [hoverCite, setHoverCite] = useState<number | null>(null);
+
+  // read-only: a [n]/number click scrolls to (and flashes) its source card below — no in-app viewer
+  // (that needs a login); the source card links out to the original document.
+  const goCite = (n: number) => {
+    const el = document.getElementById(`cite-${n}`);
+    if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1200); }
+  };
+  const openSource = (c: Citation) => { if (c.url) window.open(c.url, "_blank", "noreferrer"); };
+
+  const trust = trustSummary({ role: "assistant", content, artifacts, citations,
+    audit: p.audit ?? null } as Msg);
+
+  // the cited sources, in [n] order (the ones the answer actually leaned on)
+  const cited = citations
+    .filter((c) => c.used || c.index != null)
+    .sort((a, b) => (a.index ?? 999) - (b.index ?? 999));
+
+  return (
+    <div className="share-answer">
+      {!trust.conceptual && <TrustStrip s={trust} />}
+      {/* reuse the exact chat answer wrappers so article typography + inline figures + [n]/number
+          highlights render identically to the app (read-only — evidence opens the source page). */}
+      <div className="msg assistant"><div className="bubble">
+        <AnswerArticle content={content} artifacts={artifacts} ledger={ledger}
+          mdComponents={makeMdComponents(hoverCite, setHoverCite, goCite,
+            { rows: ledger, citations, onEvidence: openSource })}
+          onEvidence={openSource} />
+      </div></div>
+      {cited.length > 0 && (
+        <section className="share-sources">
+          <h2 className="share-sources-h mono">근거 · 출처 {cited.length}곳</h2>
+          {cited.map((c, i) => (
+            <div key={i} id={c.index != null ? `cite-${c.index}` : undefined} className="share-src-slot">
+              <SourceCard c={c} />
+            </div>
+          ))}
+        </section>
+      )}
     </div>
   );
 }

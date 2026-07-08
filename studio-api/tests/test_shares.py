@@ -64,6 +64,47 @@ def test_share_lifecycle_and_sns_urls(monkeypatch):
 
 
 @respx.mock
+def test_share_whole_answer_snapshot(monkeypatch):
+    """A whole chat answer shares as kind=answer — pure content snapshot, NO user identity."""
+    from studioapi.config import settings
+    monkeypatch.setattr(settings, "control_plane_url", "http://cp.test")
+    monkeypatch.setattr(settings, "public_base_url", "https://vg.example")
+    _cp()
+    payload = {
+        "content": "삼성전자 영업이익은 6.5조였어요 [1]. {{figure:1}}",
+        "artifacts": [{"kind": "table", "title": "실적", "table": [["항목", "값"], ["영업이익", "6.5조"]]}],
+        "citations": [{"index": 1, "source": "DART", "as_of": "2026-05-15", "used": True, "kind": "filing"}],
+        "audit": {"checked": 1, "supported": 1, "unsupported": [], "ledger": []},
+    }
+    r = client.post("/shares", headers=_hdr("ans@u.com"), json={
+        "kind": "answer", "title": "삼성전자 이번 분기 실적 정리", "payload": payload,
+        "audit": payload["audit"]})
+    assert r.status_code == 200
+    tok = r.json()["token"]
+    pub = client.get(f"/shares/{tok}", headers={"X-Service-Token": SVC})
+    assert pub.status_code == 200
+    body = pub.json()
+    assert body["kind"] == "answer"
+    # the content + provenance travel; NO user identity in the public payload
+    assert body["payload"]["content"] == payload["content"]
+    assert body["payload"]["citations"][0]["source"] == "DART"
+    dumped = str(body)
+    assert "ans@u.com" not in dumped and "conversation" not in dumped and "user_email" not in dumped
+
+
+@respx.mock
+def test_share_answer_refused_below_trust_floor(monkeypatch):
+    """An answer carrying an unsupported number is refused, same trust floor as artifacts."""
+    from studioapi.config import settings
+    monkeypatch.setattr(settings, "control_plane_url", "http://cp.test")
+    _cp()
+    r = client.post("/shares", headers=_hdr("ans2@u.com"), json={
+        "kind": "answer", "title": "t", "payload": {"content": "매출 99조 [1]"},
+        "audit": {"checked": 1, "unsupported": ["99조"]}})
+    assert r.status_code == 422 and "99조" in r.json()["detail"]
+
+
+@respx.mock
 def test_share_refused_below_trust_floor(monkeypatch):
     from studioapi.config import settings
     monkeypatch.setattr(settings, "control_plane_url", "http://cp.test")

@@ -12,6 +12,7 @@ import CockpitEntry from "./CockpitEntry";
 import Watchlists, { Watchlist } from "./Watchlists";
 import { ContextPanel, evidenceOf, uniqueTools } from "./EvidencePanel";
 import { type LedgerRow } from "../lib/evidence";
+import { useIsMobile } from "../lib/useIsMobile";
 import { SourceViewer } from "./SourceViewer";
 import { Button, Chip, GuardrailLabel, Mascot, FreshnessDot } from "./ui";
 import type { Features } from "../lib/features";
@@ -391,6 +392,12 @@ export default function Chat({ name, features }: { name: string; features: Featu
     setFlashCite({ n, ts: Date.now() });
   };
   const [shareArt, setShareArt] = useState<Artifact | null>(null);  // SH-2 share sheet
+  const [shareMsg, setShareMsg] = useState<{ title: string; msg: Msg } | null>(null);  // SH-ANSWER: whole-answer share
+  // Mobile shell: the desktop 3-column grid collapses to one column; the rail becomes a
+  // left drawer and the 근거 패널 becomes a bottom sheet, each toggled by these flags.
+  const isMobile = useIsMobile();
+  const [drawer, setDrawer] = useState(false);       // rail drawer (mobile)
+  const [ctxSheet, setCtxSheet] = useState(false);   // 근거 패널 bottom sheet (mobile)
   const [loadError, setLoadError] = useState<string | null>(null);  // IMP-5: conv-load failure banner
   const panelStreaming = busy && panelIdx === messages.length - 1;
 
@@ -402,9 +409,24 @@ export default function Chat({ name, features }: { name: string; features: Featu
     {shareArt && (
       <ShareSheet a={shareArt} audit={panelMsg?.audit ?? null} onClose={() => setShareArt(null)} />
     )}
-    <div className={`shell ${view === "explore" && messages.length > 0 ? "with-ctx" : "no-right"}`}
-      style={view === "explore" && messages.length > 0 ? { gridTemplateColumns: `210px minmax(0,1fr) ${ctxWidth}px` } : undefined}>
-      <nav className="rail">
+    {shareMsg && (
+      <ShareSheet answer={{ title: shareMsg.title, content: shareMsg.msg.content,
+        artifacts: shareMsg.msg.artifacts, citations: shareMsg.msg.citations,
+        audit: (shareMsg.msg.audit ?? null) as Record<string, unknown> | null }}
+        onClose={() => setShareMsg(null)} />
+    )}
+    <div className={`shell ${view === "explore" && messages.length > 0 ? "with-ctx" : "no-right"}`
+        + `${isMobile ? " mobile" : ""}${drawer ? " drawer-open" : ""}${ctxSheet ? " ctx-open" : ""}`}
+      style={!isMobile && view === "explore" && messages.length > 0
+        ? { gridTemplateColumns: `210px minmax(0,1fr) ${ctxWidth}px` } : undefined}>
+      {/* Mobile top bar — always reachable (the rail is an off-canvas drawer on phones). */}
+      <div className="m-topbar">
+        <button className="m-menu" onClick={() => setDrawer(true)} aria-label="메뉴 열기">☰</button>
+        <span className="m-brand"><span className="mascot" aria-hidden /><span className="wordmark">ValueGraph</span></span>
+        <button className="m-newchat" onClick={newChat} aria-label="새 탐구">✎</button>
+      </div>
+      {drawer && <div className="m-backdrop" onClick={() => setDrawer(false)} aria-hidden />}
+      <nav className="rail" onClick={() => { if (isMobile) setDrawer(false); }}>
         <div className="rail-brand"><span className="mascot" aria-hidden /><span className="wordmark">ValueGraph</span></div>
         <button className="rail-new" onClick={newChat}>
           <span className="ic">✎</span><span>탐구 시작하기</span>
@@ -503,8 +525,8 @@ export default function Chat({ name, features }: { name: string; features: Featu
                       role="button"
                       tabIndex={0}
                       aria-pressed={panelIdx === i}
-                      onClick={() => setFocusIdx(i)}
-                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setFocusIdx(i); } }}
+                      onClick={() => { setFocusIdx(i); if (isMobile) setCtxSheet(true); }}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setFocusIdx(i); if (isMobile) setCtxSheet(true); } }}
                     >
                       <div className="bubble">
                         {m.content
@@ -531,6 +553,18 @@ export default function Chat({ name, features }: { name: string; features: Featu
                           </div>
                         );
                       })()}
+                      {/* SH-ANSWER: every finished answer gets a share button — snapshot the whole
+                          answer (본문+근거+검증) to a public link. Not shown while still streaming. */}
+                      {m.content && !(busy && i === messages.length - 1) && (
+                        <div className="answer-actions">
+                          <button type="button" className="ans-share"
+                            onClick={(e) => { e.stopPropagation();
+                              const q = messages[i - 1]?.role === "user" ? messages[i - 1].content : m.content;
+                              setShareMsg({ title: (q || "ValueGraph 리서치").slice(0, 80), msg: m }); }}>
+                            🔗 공유
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="bubble">{m.content}</div>
@@ -601,18 +635,22 @@ export default function Chat({ name, features }: { name: string; features: Featu
       </div>
 
       {view === "explore" && messages.length > 0 && (
-        <ContextPanel
-          hoverCite={hoverCite}
-          setHoverCite={setHoverCite}
-          flashCite={flashCite}
-          msg={panelMsg}
-          streaming={panelStreaming}
-          onEvidence={setViewer}
-          onPinArtifact={pinArtifact}
-          onShareArtifact={(a) => setShareArt(a)}
-          onPinCitation={pinCitation}
-          onResizeStart={startCtxResize}
-        />
+        <>
+          {isMobile && ctxSheet && <div className="m-backdrop ctx" onClick={() => setCtxSheet(false)} aria-hidden />}
+          <ContextPanel
+            hoverCite={hoverCite}
+            setHoverCite={setHoverCite}
+            flashCite={flashCite}
+            msg={panelMsg}
+            streaming={panelStreaming}
+            onEvidence={setViewer}
+            onPinArtifact={pinArtifact}
+            onShareArtifact={(a) => setShareArt(a)}
+            onPinCitation={pinCitation}
+            onResizeStart={startCtxResize}
+            onCloseMobile={isMobile ? () => setCtxSheet(false) : undefined}
+          />
+        </>
       )}
 
       {builder.open && (

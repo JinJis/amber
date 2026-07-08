@@ -124,6 +124,25 @@ on the image must have passed the number audit (§5). 텍스트 최소 12px(모�
   ORIGINAL: "오늘의 데스크" 상단에 "오늘 브리핑 공유": composes the day's
   top 3 cards into one 1:1 card. (Small; reuses SH-1/2.)
 
+- **SH-ANSWER · 답변 전체 공유 (studio-api + web)** — ✅ done. Every finished chat answer gets a
+  🔗 공유 button; the sheet snapshots the WHOLE answer (kind=`answer`) — prose + inline `{{figure:N}}`
+  artifacts + `[n]` citations + the QT-2 audit/number-ledger — as a **pure content payload with NO
+  user identity** (no email, no conversation id). The public page `/s/{token}` renders it read-only via
+  the exact chat answer components (article typography, inline figures, LG-4 numeral highlights, 판정
+  strip) plus every cited source as a read-only `SourceCard` (source · as_of · snippet · 원문↗ link) —
+  so provenance/evidence travel WITH the answer; the in-app highlight viewer stays behind the sign-up
+  CTA (it needs a tenant key). The 1:1 OG card bakes the answer lead + `출처 N곳` strip. QT-2 gate
+  applies unchanged (an answer with an unsupported number is refused). Tests: studio answer
+  create/read + no-identity assertion + trust-floor refusal; shareCard `plainText`/`answerCardLines`.
+
+- **MOBILE-1 · 전면 모바일 레이아웃 (web)** — ✅ done. A `useIsMobile()` (matchMedia ≤720px) switches
+  the desktop 3-column grid into a single scrolling column: the rail becomes a left **drawer** (☰ in a
+  mobile top bar), the 근거 패널 becomes a **bottom sheet** (tap an answer → slides up, ✕ to close),
+  modals (공유 시트 · SourceViewer) go full-bleed bottom-sheet, and the composer is safe-area docked.
+  `viewport` (device-width, viewport-fit=cover, theme-color) + notch-safe insets ship the app as a
+  phone web-app. The **public share page is mobile-first** (SNS links open on phones). Pure CSS with
+  `!important` grid override beats the SSR inline style (no desktop-grid flash before hydration).
+
 ## 4. M-FACT — 근거 기반 팩트체크
 
 ### 4.1 Flow

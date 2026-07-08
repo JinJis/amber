@@ -89,10 +89,42 @@ export function provenanceStrip(a: Artifact, shortLink: string): { label: string
   };
 }
 
+// --- answer share cards (SH-ANSWER) ---------------------------------------------------------
+// A whole-answer share bakes the answer's LEAD prose (markdown/marker-stripped) into the card,
+// with a provenance strip that counts the cited sources instead of one artifact's source.
+export type AnswerCard = { title: string; content: string; sourceCount: number; as_of?: string | null };
+
+/** Strip markdown syntax + {{figure:N}} + [n] markers → plain prose for the card body. Pure. */
+export function plainText(md: string): string {
+  return (md || "")
+    .replace(/\{\{figure:\d+\}\}/g, " ")
+    .replace(/\[(\d{1,3})\]/g, "")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/[*_`~>#|]/g, " ")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** The answer body as lead sentences (bounded). Pure (unit-tested). */
+export function answerCardLines(content: string, max = 10): string[] {
+  const flat = plainText(content);
+  if (!flat) return [];
+  // split on sentence-ish boundaries so wrapping breaks read naturally
+  const sentences = flat.split(/(?<=[.。!?])\s+/).filter(Boolean);
+  return sentences.slice(0, max);
+}
+
 // --- the canvas draw (thin; not unit-tested — jsdom has no real 2D context) ----------------
 const INK = "#1A1B1E", MUTED = "#86868C", LINE = "#D8D8DC", PANEL = "#ffffff", BG = "#F4F4F6";
 
-export async function renderShareCard(a: Artifact, preset: PresetKey, shortLink: string): Promise<Blob> {
+/** The shared card canvas: title (≤2 lines) + body lines (height-capped) + baked provenance
+ *  strip. `linesFor(maxLines)` supplies the body so artifacts and answers share one draw. */
+async function drawCard(
+  preset: PresetKey, title: string,
+  linesFor: (maxLines: number) => string[],
+  strip: { label: string | null; source: string; brand: string },
+): Promise<Blob> {
   const { w, h } = PRESETS[preset];
   const canvas = document.createElement("canvas");
   canvas.width = w; canvas.height = h;
@@ -112,7 +144,7 @@ export async function renderShareCard(a: Artifact, preset: PresetKey, shortLink:
   ctx.fillStyle = INK;
   const titleSize = Math.round(w * 0.042);
   ctx.font = `600 ${titleSize}px "Space Grotesk", ui-sans-serif, system-ui, sans-serif`;
-  const titleLines = wrap(a.title || "ValueGraph 자료", 28).slice(0, 2);
+  const titleLines = wrap(title || "ValueGraph 자료", 28).slice(0, 2);
   titleLines.forEach((ln, i) => ctx.fillText(ln, M, M + i * titleSize * 1.25));
 
   // body lines (mono for the figures)
@@ -120,7 +152,7 @@ export async function renderShareCard(a: Artifact, preset: PresetKey, shortLink:
   const lh = bodySize * 1.7;
   const avail = h - stripH - bodyTop - M;
   const maxLines = Math.max(3, Math.floor(avail / lh));
-  const lines = shareCardLines(a, maxLines);
+  const lines = linesFor(maxLines);
   let y = bodyTop;
   for (const raw of lines) {
     for (const ln of wrap(raw, Math.floor((w - 2 * M) / (bodySize * 0.55)))) {
@@ -133,7 +165,6 @@ export async function renderShareCard(a: Artifact, preset: PresetKey, shortLink:
   }
 
   // provenance strip (baked in, non-removable)
-  const strip = provenanceStrip(a, shortLink);
   const sy = h - stripH;
   ctx.strokeStyle = LINE; ctx.beginPath(); ctx.moveTo(M, sy); ctx.lineTo(w - M, sy); ctx.stroke();
   let ly = sy + Math.round(stripH * 0.12);
@@ -151,4 +182,18 @@ export async function renderShareCard(a: Artifact, preset: PresetKey, shortLink:
 
   return await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/png"));
+}
+
+export function renderShareCard(a: Artifact, preset: PresetKey, shortLink: string): Promise<Blob> {
+  return drawCard(preset, a.title || "ValueGraph 자료",
+    (n) => shareCardLines(a, n), provenanceStrip(a, shortLink));
+}
+
+export function renderAnswerCard(card: AnswerCard, preset: PresetKey, shortLink: string): Promise<Blob> {
+  const strip = {
+    label: null as string | null,
+    source: `출처 ${card.sourceCount}곳${card.as_of ? ` · as of ${card.as_of}` : ""}`,
+    brand: `ValueGraph · ${shortLink}`,
+  };
+  return drawCard(preset, card.title, (n) => answerCardLines(card.content, n), strip);
 }

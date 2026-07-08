@@ -84,7 +84,7 @@ function ProcessRows({ tools, live }: { tools: ToolUse[]; live: boolean }) {
 // ── the panel ────────────────────────────────────────────────────────────────────
 export function ContextPanel(
   { msg, streaming, onEvidence, onPinArtifact, onPinCitation, onShareArtifact, onResizeStart,
-    hoverCite, setHoverCite, flashCite }:
+    hoverCite, setHoverCite, flashCite, onCloseMobile }:
   {
     msg: Msg | null; streaming: boolean;
     onEvidence: (c: Citation) => void;
@@ -92,6 +92,7 @@ export function ContextPanel(
     onShareArtifact?: (a: Artifact) => void;
     onPinCitation?: (c: Citation) => void;
     onResizeStart: (e: ReactMouseEvent) => void;
+    onCloseMobile?: () => void;   // mobile bottom-sheet: a close (✕) affordance in the head
     hoverCite: number | null;
     setHoverCite: (n: number | null) => void;
     flashCite: { n: number; ts: number } | null;   // [n] clicked in prose → scroll+flash here
@@ -154,6 +155,9 @@ export function ContextPanel(
       <div className="ctxpane-head">
         <span className="ctx-title">근거 패널</span>
         {streaming && <span className="ctx-live"><span className="tl-spin" />수집 중</span>}
+        {onCloseMobile && (
+          <button type="button" className="ctx-sheet-x" onClick={onCloseMobile} aria-label="근거 패널 닫기">✕</button>
+        )}
       </div>
       <span className="live-label">원자료와 출처만 보여드려요 — 예측이나 매매 의견은 없어요.</span>
       {!hasAny ? (

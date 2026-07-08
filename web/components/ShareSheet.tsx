@@ -4,20 +4,29 @@
 // and offer ONE-TAP handoff to every SNS (X · Threads · Telegram · KakaoTalk=copy) — the
 // intent URLs come ready-made from the server. 링크에는 출처·기준일이 함께 갑니다.
 
-import { useEffect, useRef, useState } from "react";
-import type { Artifact } from "@/lib/types";
-import { PRESETS, type PresetKey, renderShareCard } from "@/lib/shareCard";
+import { useEffect, useState } from "react";
+import type { Artifact, Citation } from "@/lib/types";
+import { PRESETS, type PresetKey, renderShareCard, renderAnswerCard } from "@/lib/shareCard";
 
 type Urls = { page: string; x: string; threads: string; telegram: string; kakao: string };
+
+// SH-ANSWER: a whole chat answer to share — pure content, no user identity travels.
+export type AnswerShare = {
+  title: string; content: string;
+  artifacts?: Artifact[]; citations?: Citation[];
+  audit?: Record<string, unknown> | null;
+};
 
 function shortLink(page: string): string {
   try { const u = new URL(page); return `${u.host}${u.pathname}`.replace(/^www\./, ""); }
   catch { return page.replace(/^https?:\/\//, ""); }
 }
 
-export function ShareSheet({ a, audit, onClose }: {
-  a: Artifact; audit?: Record<string, unknown> | null; onClose: () => void;
+export function ShareSheet({ a, answer, audit, onClose }: {
+  a?: Artifact; answer?: AnswerShare; audit?: Record<string, unknown> | null; onClose: () => void;
 }) {
+  // one of `a` (single artifact) or `answer` (whole answer) drives the sheet.
+  const shareTitle = answer?.title || a?.title || "ValueGraph 자료";
   const [state, setState] = useState<"working" | "ready" | "blocked" | "error">("working");
   const [urls, setUrls] = useState<Urls | null>(null);
   const [detail, setDetail] = useState("");
@@ -31,18 +40,25 @@ export function ShareSheet({ a, audit, onClose }: {
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch("/api/shares", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(
-            a.kind === "note"
-              ? { kind: "note", title: a.title || "리서치 노트",
+        const body = answer
+          // SH-ANSWER: the whole answer — content + inline figures + citations + audit. No user
+          // identity is ever included (no email / conversation id) — the payload is pure research.
+          ? { kind: "answer", title: answer.title || "ValueGraph 리서치",
+              payload: { content: answer.content, artifacts: answer.artifacts ?? [],
+                         citations: answer.citations ?? [], audit: answer.audit ?? null },
+              audit: answer.audit ?? null }
+          : a!.kind === "note"
+              ? { kind: "note", title: a!.title || "리서치 노트",
                   payload: { blocks: (a as unknown as { blocks: unknown[] }).blocks },
                   audit: null }  // pins carry provenance; user text is ATTRIBUTED, not audited
-              : a.kind === "quote"
-              ? { kind: "quote", title: a.title || "원문 인용",
-                  payload: { passage: a.passage, source: a.source, doc_title: a.doc_title, url: a.url, as_of: a.as_of },
+              : a!.kind === "quote"
+              ? { kind: "quote", title: a!.title || "원문 인용",
+                  payload: { passage: a!.passage, source: a!.source, doc_title: a!.doc_title, url: a!.url, as_of: a!.as_of },
                   audit: null }  // a verbatim quote has no computed numbers to audit
-              : { kind: "artifact", title: a.title || "ValueGraph 자료", payload: a, audit: audit ?? null }),
+              : { kind: "artifact", title: a!.title || "ValueGraph 자료", payload: a, audit: audit ?? null };
+        const r = await fetch("/api/shares", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
         });
         if (r.status === 422) { setDetail((await r.json()).error ?? ""); setState("blocked"); return; }
         if (!r.ok) { setState("error"); return; }
@@ -50,7 +66,7 @@ export function ShareSheet({ a, audit, onClose }: {
         setState("ready");
       } catch { setState("error"); }
     })();
-  }, [a, audit]);
+  }, [a, answer, audit]);
 
   // SH-2b: render the card image whenever the share is ready or the preset changes.
   useEffect(() => {
@@ -59,7 +75,14 @@ export function ShareSheet({ a, audit, onClose }: {
       if (state !== "ready" || !urls) return;
       setImgBusy(true);
       try {
-        const blob = await renderShareCard(a, preset, shortLink(urls.page));
+        const cits = answer?.citations ?? [];
+        const usedCount = cits.filter((c) => c.used).length || cits.length;
+        const asOf = cits.map((c) => c.as_of).filter(Boolean).sort().slice(-1)[0] ?? null;
+        const blob = answer
+          ? await renderAnswerCard(
+              { title: answer.title, content: answer.content, sourceCount: usedCount, as_of: asOf },
+              preset, shortLink(urls.page))
+          : await renderShareCard(a!, preset, shortLink(urls.page));
         const url = URL.createObjectURL(blob);
         revoked = url;
         setImgUrl(url);
@@ -77,13 +100,13 @@ export function ShareSheet({ a, audit, onClose }: {
     })();
     return () => { if (revoked) URL.revokeObjectURL(revoked); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, preset, urls]);
+  }, [state, preset, urls, answer]);
 
   async function saveImage() {
     if (!imgUrl) return;
     const link = document.createElement("a");
     link.href = imgUrl;
-    link.download = `${(a.title || "valuegraph").replace(/\s+/g, "_").slice(0, 40)}_${preset.replace(":", "x")}.png`;
+    link.download = `${shareTitle.replace(/\s+/g, "_").slice(0, 40)}_${preset.replace(":", "x")}.png`;
     link.click();
   }
 
