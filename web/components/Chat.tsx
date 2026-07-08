@@ -539,32 +539,37 @@ export default function Chat({ name, features }: { name: string; features: Featu
                               onEvidence={setViewer} onPin={pinArtifact} onShare={(a) => setShareArt(a)} />
                           : (busy && !(m.thinking?.length) ? "…" : "")}
                       </div>
+                      {/* Answer footer — one clean action row: evidence stats (left) + a clear
+                          공유 button (right). SH-ANSWER: 공유 snapshots the whole answer to a public
+                          link; shown on every finished answer (hidden only while still streaming). */}
                       {(() => {
                         const nArt = m.artifacts?.length || 0;
                         const nUsed = evidenceOf(m).length;
                         const nTool = uniqueTools(m.tools).length;
-                        if (!(nArt || nUsed || nTool)) return null;
+                        const hasStats = nArt || nUsed || nTool;
+                        const showShare = !!m.content && !(busy && i === messages.length - 1);
+                        if (!hasStats && !showShare) return null;
                         return (
-                          <div className="ctx-hint">
-                            {nArt > 0 && <span className="ch-stat">📊 차트·표 {nArt}</span>}
-                            {nUsed > 0 && <span className="ch-stat">🔗 근거 {nUsed}</span>}
-                            {nTool > 0 && <span className="ch-stat">🔧 도구 {nTool}</span>}
-                            <span className="ch-go">{panelIdx === i ? "근거 패널에 표시 중" : "근거 패널에서 보기 →"}</span>
+                          <div className="answer-foot">
+                            {hasStats ? (
+                              <div className="ctx-hint">
+                                {nArt > 0 && <span className="ch-stat">📊 차트·표 {nArt}</span>}
+                                {nUsed > 0 && <span className="ch-stat">🔗 근거 {nUsed}</span>}
+                                {nTool > 0 && <span className="ch-stat">🔧 도구 {nTool}</span>}
+                                <span className="ch-go">{panelIdx === i ? "근거 패널에 표시 중" : "근거 패널에서 보기 →"}</span>
+                              </div>
+                            ) : <span className="af-spacer" />}
+                            {showShare && (
+                              <button type="button" className="ans-share" title="이 답변을 공개 링크로 공유해요"
+                                onClick={(e) => { e.stopPropagation();
+                                  const q = messages[i - 1]?.role === "user" ? messages[i - 1].content : m.content;
+                                  setShareMsg({ title: (q || "ValueGraph 리서치").slice(0, 80), msg: m }); }}>
+                                <span aria-hidden>↗</span> 공유
+                              </button>
+                            )}
                           </div>
                         );
                       })()}
-                      {/* SH-ANSWER: every finished answer gets a share button — snapshot the whole
-                          answer (본문+근거+검증) to a public link. Not shown while still streaming. */}
-                      {m.content && !(busy && i === messages.length - 1) && (
-                        <div className="answer-actions">
-                          <button type="button" className="ans-share"
-                            onClick={(e) => { e.stopPropagation();
-                              const q = messages[i - 1]?.role === "user" ? messages[i - 1].content : m.content;
-                              setShareMsg({ title: (q || "ValueGraph 리서치").slice(0, 80), msg: m }); }}>
-                            🔗 공유
-                          </button>
-                        </div>
-                      )}
                     </div>
                   ) : (
                     <div className="bubble">{m.content}</div>

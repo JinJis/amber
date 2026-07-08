@@ -1581,12 +1581,18 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .share-src-slot { border-radius: 12px; transition: box-shadow .2s, background .2s; }
 .share-src-slot.flash { box-shadow: 0 0 0 2px var(--accent); background: var(--panel-2); }
 
-/* SH-ANSWER — the per-answer share button in chat (every finished assistant answer). */
-.answer-actions { align-self: flex-start; }
-.ans-share { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px;
+/* SH-ANSWER — the answer footer: evidence stats (left) + a clear 공유 button (right). One row
+   per finished answer so 공유 is always in the same, discoverable place. */
+.answer-foot { display: flex; align-items: center; justify-content: space-between;
+  gap: 8px 14px; flex-wrap: wrap; }
+.answer-foot .ctx-hint { margin: 0; }
+.answer-foot .af-spacer { flex: 1; }
+.ans-share { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500;
   color: var(--text-2); background: var(--panel); border: 1px solid var(--line-2);
-  border-radius: 999px; padding: 4px 12px; cursor: pointer; transition: border-color .15s, color .15s; }
-.ans-share:hover { border-color: var(--ink); color: var(--ink); }
+  border-radius: 999px; padding: 6px 14px; cursor: pointer; white-space: nowrap;
+  transition: border-color .15s, color .15s, background .15s; }
+.ans-share:hover { border-color: var(--ink); color: var(--ink); background: var(--panel-2); }
+.ans-share span[aria-hidden] { font-size: 13px; }
 
 /* ── Mobile: the public share page is the SNS landing — most traffic is phones ─────────── */
 @media (max-width: 640px) {
@@ -1634,36 +1640,54 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
     padding-top: max(14px, env(safe-area-inset-top)); box-shadow: 0 0 40px rgba(0,0,0,.3); }
   .shell.drawer-open .rail { transform: translateX(0); }
 
-  /* main fills the rest and scrolls on its own */
-  .main { min-height: 0; min-width: 0; }
+  /* main fills the rest and scrolls on its own (drop the desktop 100vh so it flexes) */
+  .main { height: auto; flex: 1 1 auto; min-height: 0; min-width: 0; }
   .msg { max-width: 100%; }
-  .top { padding: 10px 14px; }
-  .explore-sub { display: none; }            /* keep the header compact */
-  .composer { padding: 10px 12px; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
-  .composer form.hero { flex-direction: column; }
+  .top { display: none; }                     /* the m-topbar is the only header — no double bar */
+  .msg.assistant .md.article { font-size: 15px; line-height: 1.75; }   /* comfortable phone reading */
+  .answer-foot { gap: 6px 10px; }
+  .ans-share { padding: 7px 15px; font-size: 12.5px; }   /* ≥40px tap target */
 
-  /* the 근거 패널 becomes a bottom sheet (slides up over the answer) */
+  /* composer docks at the very bottom, safe-area aware; 16px input = no iOS zoom-on-focus */
+  .composer { padding: 10px 12px; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  .composer form, .composer form.hero { max-width: 100%; }
+  .input, .composer form.hero .input { font-size: 16px; padding: 13px 15px; }
+  .disclaimer { font-size: 11px; }
+
+  /* the 근거 패널 becomes a bottom sheet (slides up over the answer) with a grab handle */
   .shell.with-ctx .ctxpane, .ctxpane {
     position: fixed; left: 0; right: 0; bottom: 0; top: auto; width: auto !important;
-    height: 86dvh; z-index: 40; transform: translateY(100%); transition: transform .24s ease;
-    border-radius: 16px 16px 0 0; box-shadow: 0 -10px 40px rgba(0,0,0,.28);
-    padding-bottom: max(16px, env(safe-area-inset-bottom)); overflow-y: auto; }
+    height: 84dvh; z-index: 40; transform: translateY(100%); transition: transform .26s cubic-bezier(.32,.72,0,1);
+    border-radius: 18px 18px 0 0; box-shadow: 0 -10px 40px rgba(0,0,0,.28);
+    padding: 0 14px max(16px, env(safe-area-inset-bottom)); overflow-y: auto; }
   .shell.ctx-open .ctxpane { transform: translateY(0); }
   .ctx-resize { display: none; }             /* no drag-resize on touch */
   .ctxpane-head { position: sticky; top: 0; background: var(--panel); z-index: 1;
-    padding-top: 8px; }
-  .ctx-sheet-x { margin-left: auto; background: none; border: none; font-size: 17px;
-    color: var(--faint); cursor: pointer; padding: 2px 6px; }
+    padding: 18px 0 8px; }
+  .ctxpane-head::before { content: ""; position: absolute; top: 7px; left: 50%; transform: translateX(-50%);
+    width: 38px; height: 4px; border-radius: 2px; background: var(--line-2); }
+  .ctx-sheet-x { margin-left: auto; background: none; border: none; font-size: 19px; line-height: 1;
+    color: var(--faint); cursor: pointer; padding: 2px 8px; }
 
-  /* modals go full-bleed / bottom-sheet on phones */
-  .share-sheet { width: 100%; max-width: 100%; border-radius: 16px 16px 0 0;
-    position: fixed; left: 0; right: 0; bottom: 0; max-height: 90dvh; overflow-y: auto; }
-  .sv-backdrop { padding: 0; align-items: flex-end; }
-  .sv { width: 100%; height: 92dvh; max-height: none; border-radius: 16px 16px 0 0; }
+  /* modals → bottom sheets with a grab handle (ShareSheet + SourceViewer share .sv-backdrop) */
+  .sv-backdrop, .modal-backdrop { padding: 0; align-items: flex-end; }
+  .share-sheet { width: 100%; max-width: 100%; border-radius: 18px 18px 0 0;
+    position: fixed; left: 0; right: 0; bottom: 0; max-height: 90dvh; overflow-y: auto;
+    padding-top: 20px; padding-bottom: max(16px, env(safe-area-inset-bottom));
+    animation: sheet-up .26s cubic-bezier(.32,.72,0,1); }
+  .share-sheet-h::before, .sv-head::before { content: ""; position: absolute; top: 7px; left: 50%;
+    transform: translateX(-50%); width: 38px; height: 4px; border-radius: 2px; background: var(--line-2); }
+  .share-sheet-h { position: relative; }
+  .sv { width: 100%; height: 92dvh; max-height: none; border-radius: 18px 18px 0 0;
+    animation: sheet-up .26s cubic-bezier(.32,.72,0,1); }
+  .sv-head { position: relative; padding-top: 18px; }
   .sv-body { flex-direction: column; }
   .sv-stage { padding: 14px; }
-  .modal, .modal.wide { width: 100%; max-width: 100%; }
+  .modal, .modal.wide, .modal.alert-sheet, .modal.widget-gallery {
+    width: 100%; max-width: 100%; border-radius: 18px 18px 0 0; max-height: 92dvh; overflow-y: auto;
+    padding-bottom: max(16px, env(safe-area-inset-bottom)); animation: sheet-up .26s cubic-bezier(.32,.72,0,1); }
 }
 .m-topbar .m-brand .wordmark { letter-spacing: -.01em; }
 
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
