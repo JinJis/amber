@@ -71,13 +71,18 @@ async def ingest_transcript_for_ticker(market: str, ticker: str, limit: int | No
         return 0
     limit = limit or settings.transcript_ingest_limit
     transcripts = await recent_transcripts(ticker, limit)
-    docs: list[dict] = []
+    rag = rag_url or settings.rag_url
+    total_docs, chunks = 0, 0
     for t in transcripts:
         await store_transcript_html(t)   # render + cache so the in-app preview is ready
-        docs += _transcript_to_docs(t)
-    if not docs:
+        docs = _transcript_to_docs(t)
+        if not docs:
+            continue
+        total_docs += len(docs)
+        # replace by TR:{ticker}:{quarter} so a re-chunk (turn-preserving) swaps sections cleanly (RQ-2)
+        chunks += await _ingest_to_rag(rag, docs, replace={"accession": docs[0]["accession"]})
+    if not total_docs:
         return 0
-    chunks = await _ingest_to_rag(rag_url or settings.rag_url, docs)
     log.info("transcript: %s → %d quarters, %d chunks indexed", ticker.upper(), len(transcripts), chunks)
     return chunks
 
