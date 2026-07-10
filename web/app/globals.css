@@ -2009,3 +2009,17 @@ html[data-theme="dark"] img.ticker-logo, html[data-theme="dark"] .avatar:not(.mg
 /* UXQ-2: 응답 제어 — 중지(컴포저)·복사/재생성(답변 푸터) */
 .stop-btn { flex: none; white-space: nowrap; border-color: var(--stale); color: var(--stale); }
 .stop-btn:hover { background: var(--warn-bg); }
+
+/* UXQ-4: 대화 검색 + rename/삭제 액션 (호버 노출) */
+.rail-search { width: 100%; box-sizing: border-box; background: var(--panel); border: 1px solid var(--line-2);
+  border-radius: 8px; padding: 6px 9px; font-size: 11px; color: var(--text); margin: 2px 0 6px; outline: none; }
+.rail-search:focus { border-color: var(--focus); }
+.rail-conv-row { display: flex; align-items: center; gap: 2px; border-radius: 7px; }
+.rail-conv-row .rail-conv { flex: 1; min-width: 0; }
+.rail-conv-row.on, .rail-conv-row:hover { background: var(--rail-active); }
+.rail-conv-act { display: none; background: none; border: none; cursor: pointer; color: var(--muted);
+  font-size: 11px; padding: 4px 5px; border-radius: 5px; flex: none; }
+.rail-conv-row:hover .rail-conv-act { display: inline-block; }
+.rail-conv-act:hover { color: var(--text); background: var(--panel); }
+.rail-conv-act.danger:hover { color: var(--danger); }
+@media (pointer: coarse) { .rail-conv-act { display: inline-block; } }  /* 터치는 상시 노출 */

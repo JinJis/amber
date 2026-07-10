@@ -720,3 +720,25 @@ async def test_uxq2_stop_cancels_active_run_and_persists_partial():
     assert mgr.cancel("convS") is True          # 진행 중 → 취소 성공
     await asyncio.wait_for(done.wait(), 2)      # 드라이버가 취소를 흡수하고 마무리
     assert mgr.cancel("convS") is False         # 이미 끝난 런 → False
+
+
+@respx.mock
+def test_uxq4_rename_and_delete_conversation(monkeypatch):
+    """UXQ-4: 대화 rename/삭제 — 소유자만, 삭제는 메시지까지."""
+    _cfg(monkeypatch)
+    _mock_control_plane()
+    sse = b'data: {"type":"token","text":"ok"}\n\ndata: {"type":"done","citations":[],"refused":false}\n\n'
+    respx.post("http://ae.test/agent/chat").mock(return_value=httpx.Response(200, content=sse))
+    email = "convmgr@u.com"
+    client.post("/chat/stream", headers=_hdr(email),
+                json={"messages": [{"role": "user", "content": "테스트 대화"}]})
+    cid = client.get("/conversations", headers=_hdr(email)).json()["conversations"][0]["id"]
+    # rename (소유자) / 타 유저 404
+    assert client.patch(f"/conversations/{cid}", headers=_hdr(email),
+                        json={"title": "새 제목"}).json()["title"] == "새 제목"
+    assert client.patch(f"/conversations/{cid}", headers=_hdr("other@u.com"),
+                        json={"title": "x"}).status_code == 404
+    # delete → 목록에서 사라지고 메시지도 빈다
+    assert client.delete(f"/conversations/{cid}", headers=_hdr(email)).json()["deleted"] == cid
+    assert all(c["id"] != cid for c in client.get("/conversations", headers=_hdr(email)).json()["conversations"])
+    assert client.get(f"/conversations/{cid}/messages", headers=_hdr(email)).json()["messages"] == []

@@ -106,6 +106,7 @@ export default function Chat({ name, email, image, features }: { name: string; e
   // chat session/history — persisted in studio-api; resume a past conversation.
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [convs, setConvs] = useState<{ id: string; title: string }[]>([]);
+  const [convQuery, setConvQuery] = useState("");   // UXQ-4: 레일 대화 검색
 
   async function loadHistory() {
     try {
@@ -448,9 +449,29 @@ export default function Chat({ name, email, image, features }: { name: string; e
         {convs.length > 0 && (
           <div className="rail-hist">
             <div className="rail-hist-h">최근 대화</div>
-            {convs.slice(0, 12).map((c) => (
-              <button key={c.id} className={`rail-conv ${c.id === conversationId ? "on" : ""}`}
-                title={c.title} onClick={() => openConversation(c.id)}>{c.title || "(제목 없음)"}</button>
+            <input className="rail-search mono" value={convQuery} placeholder="대화 검색"
+              onChange={(e) => setConvQuery(e.target.value)} />
+            {convs.filter((c) => !convQuery.trim()
+                || (c.title || "").toLowerCase().includes(convQuery.trim().toLowerCase()))
+              .slice(0, convQuery.trim() ? 30 : 12).map((c) => (
+              <div key={c.id} className={`rail-conv-row ${c.id === conversationId ? "on" : ""}`}>
+                <button className="rail-conv" title={c.title}
+                  onClick={() => openConversation(c.id)}>{c.title || "(제목 없음)"}</button>
+                <button className="rail-conv-act" title="이름 바꾸기" onClick={async (e) => {
+                  e.stopPropagation();
+                  const t = window.prompt("대화 제목", c.title || "");
+                  if (!t?.trim()) return;
+                  const r = await fetch(`/api/conversations/${c.id}`, { method: "PATCH",
+                    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: t.trim() }) });
+                  if (r.ok) loadHistory();
+                }}>✎</button>
+                <button className="rail-conv-act danger" title="삭제" onClick={async (e) => {
+                  e.stopPropagation();
+                  if (!window.confirm("이 대화를 삭제할까요? 되돌릴 수 없어요.")) return;
+                  const r = await fetch(`/api/conversations/${c.id}`, { method: "DELETE" });
+                  if (r.ok) { if (c.id === conversationId) newChat(); loadHistory(); }
+                }}>🗑</button>
+              </div>
             ))}
           </div>
         )}

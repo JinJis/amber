@@ -150,6 +150,39 @@ async def list_conversations(user: User = Depends(current_user)) -> dict:
         return {"conversations": [{"id": c.id, "title": c.title, "agent_id": c.agent_id} for c in rows]}
 
 
+class ConvPatch(BaseModel):
+    title: str
+
+
+@app.patch("/conversations/{conversation_id}", tags=["Conversations"], dependencies=[Depends(require_service)])
+async def rename_conversation(conversation_id: str, body: ConvPatch,
+                              user: User = Depends(current_user)) -> dict:
+    """UXQ-4: 대화 제목 변경 (소유자만)."""
+    t = body.title.strip()
+    if not (1 <= len(t) <= 120):
+        raise HTTPException(422, "제목은 1~120자여야 해요.")
+    with SessionLocal() as db:
+        c = db.get(Conversation, conversation_id)
+        if c is None or c.user_email != user.email:
+            raise HTTPException(404, "conversation not found")
+        c.title = t
+        db.commit()
+        return {"id": c.id, "title": c.title}
+
+
+@app.delete("/conversations/{conversation_id}", tags=["Conversations"], dependencies=[Depends(require_service)])
+async def delete_conversation(conversation_id: str, user: User = Depends(current_user)) -> dict:
+    """UXQ-4: 대화 삭제 (소유자만, 메시지 포함)."""
+    with SessionLocal() as db:
+        c = db.get(Conversation, conversation_id)
+        if c is None or c.user_email != user.email:
+            raise HTTPException(404, "conversation not found")
+        db.execute(Message.__table__.delete().where(Message.conversation_id == conversation_id))
+        db.delete(c)
+        db.commit()
+        return {"deleted": conversation_id}
+
+
 @app.get("/conversations/{conversation_id}/messages", tags=["Conversations"], dependencies=[Depends(require_service)])
 async def conversation_messages(conversation_id: str, user: User = Depends(current_user)) -> dict:
     with SessionLocal() as db:
