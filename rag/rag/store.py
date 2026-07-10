@@ -174,6 +174,17 @@ class PgVectorStore:
                 # search still works (seq FTS), and the next boot retries the index.
                 import logging
                 logging.getLogger(__name__).warning("rag_chunks_tsv index build deferred: %s", exc)
+            # RQ-5: 한국어/이름형 짧은 쿼리용 트라이그램 레그 — 부분어·오탈자에 강함.
+            # (to_tsvector 'simple'은 한글 형태소를 못 쪼개 회사명 부분 매칭이 약하다.)
+            try:
+                conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+                conn.execute(
+                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS rag_chunks_trgm ON rag_chunks "
+                    "USING gin (text gin_trgm_ops)"
+                )
+            except Exception as exc:  # noqa: BLE001 — 미지원/권한 부족 → FTS 단독으로 동작
+                import logging
+                logging.getLogger(__name__).warning("rag_chunks_trgm index deferred: %s", exc)
             finally:
                 conn.autocommit = False
 
@@ -256,7 +267,29 @@ class PgVectorStore:
                 return conn.execute(sql, args).fetchall()
 
         rows = await asyncio.to_thread(_run)
-        return self._rows_to_hits(rows)
+        hits = self._rows_to_hits(rows)
+
+        # RQ-5: 이름형 짧은 쿼리(≤3토큰)는 트라이그램 유사도 레그 병행 — '삼전'·'하이닉스'류
+        # 부분어가 FTS prefix를 비껴가는 경우를 회수. 인덱스(%% 연산자) 기반이라 저비용.
+        if len(toks) <= 3 and len(query.strip()) >= 2:
+            tsql = (
+                "SELECT id, text, meta, similarity(text, %s) AS score FROM rag_chunks "
+                f"WHERE text %% %s {('AND ' + where[len('WHERE '):]) if where else ''} "
+                "ORDER BY score DESC LIMIT %s"
+            )
+            targs = [query, query, *filter_params, top_k]
+
+            def _trun():
+                with self._connect() as conn:
+                    return conn.execute(tsql, targs).fetchall()
+
+            try:
+                trows = await asyncio.to_thread(_trun)
+                seen = {c.id for c, _ in hits}
+                hits += [(c, sc) for c, sc in self._rows_to_hits(trows) if c.id not in seen]
+            except Exception:  # noqa: BLE001 — 확장 미설치 등 → FTS 결과만
+                pass
+        return hits[:top_k * 2]
 
     async def delete_where(self, filters):
         conds, params = [], []
