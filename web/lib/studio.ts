@@ -1,5 +1,16 @@
 import { auth } from "@/auth";
 
+// AUTH-1: the BFF↔studio trust token. In production a missing SERVICE_TOKEN must FAIL LOUDLY —
+// silently falling back to the well-known dev token would leave the trust boundary open.
+function serviceToken(): string {
+  const t = process.env.SERVICE_TOKEN;
+  if (t) return t;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("SERVICE_TOKEN is required in production (dev fallback is disabled)");
+  }
+  return "dev-service-token";
+}
+
 // Server-only helper: call studio-api with the trusted service token + the
 // authenticated user's email. The platform key stays in studio-api; the browser
 // only ever holds an Auth.js session.
@@ -15,7 +26,7 @@ export async function studioFetch(path: string, init: RequestInit = {}): Promise
     ...init,
     headers: {
       "Content-Type": "application/json",
-      "X-Service-Token": process.env.SERVICE_TOKEN ?? "dev-service-token",
+      "X-Service-Token": serviceToken(),
       "X-User-Email": email,
       "X-User-Name": enc(session?.user?.name),
       "X-User-Image": enc(session?.user?.image),

@@ -10,6 +10,8 @@ class Settings(BaseSettings):
 
     # App log verbosity (DEBUG|INFO|WARNING|…); a bare shared `LOG_LEVEL` env overrides it.
     log_level: str = "INFO"
+    # Deployment environment (dev|production). production refuses to start on dev-default secrets.
+    env: str = "dev"                                     # ENV
     # Trust token shared with the first-party web BFF.
     service_token: str = "dev-service-token"            # SERVICE_TOKEN
     # Control plane (for provisioning tenants/keys/activations) + its admin token.
@@ -44,6 +46,20 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def assert_production_secrets() -> None:
+    """AUTH-1: ENV=production에서 잘 알려진 dev 기본 토큰이 남아 있으면 기동을 거부한다 —
+    조용한 폴백은 BFF↔studio↔control-plane 신뢰 경계를 통째로 여는 것과 같다."""
+    if settings.env.lower() not in ("production", "prod"):
+        return
+    leaked = [name for name, value, dev_default in (
+        ("SERVICE_TOKEN", settings.service_token, "dev-service-token"),
+        ("ADMIN_TOKEN", settings.admin_token, "dev-admin-token"),
+    ) if value == dev_default]
+    if leaked:
+        raise RuntimeError(f"production requires real secrets for: {', '.join(leaked)}")
+
 
 # Connectors auto-activated for every project — the subscription model provides ALL data via
 # server-side keys, so every connector in the catalog is entitled (users pick TOOLS per agent, not

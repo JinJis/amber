@@ -44,6 +44,8 @@ setup_logging()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    from studioapi.config import assert_production_secrets
+    assert_production_secrets()  # AUTH-1: production은 dev 기본 토큰으로 기동 불가
     init_db()
     seed_templates()
     seed_dashboard_templates()

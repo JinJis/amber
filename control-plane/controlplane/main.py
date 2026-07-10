@@ -24,6 +24,8 @@ setup_logging()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    from controlplane.config import assert_production_secrets
+    assert_production_secrets()  # AUTH-1: production은 dev 기본 ADMIN_TOKEN으로 기동 불가
     init_db()
     await load_catalog_from_datasets()
     yield

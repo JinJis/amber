@@ -1,16 +1,15 @@
 import { signIn } from "@/auth";
 
-// Sign-in / sign-up — one screen, social-first (Google · Kakao · Naver); each button appears only
-// when its OAuth app is configured. A dev-login stays for local use. First sign-in provisions the
-// tenant + seeds the profile (name/picture) from the provider.
+// Sign-in / sign-up — one screen, social-first (Google · Kakao); each button appears only
+// when its OAuth app is configured. A dev-login stays for local use (never in production —
+// see web/auth.ts). First sign-in provisions the tenant + seeds the profile from the provider.
 export default function SignIn() {
   const has = {
     google: Boolean(process.env.AUTH_GOOGLE_ID),
     kakao: Boolean(process.env.AUTH_KAKAO_ID),
-    naver: Boolean(process.env.AUTH_NAVER_ID),
-    dev: process.env.AUTH_DEV_LOGIN === "true",
+    dev: process.env.AUTH_DEV_LOGIN === "true" && process.env.NODE_ENV !== "production",
   };
-  const anySocial = has.google || has.kakao || has.naver;
+  const anySocial = has.google || has.kakao;
   return (
     <main className="signin">
       <div className="signin-card">
@@ -27,11 +26,6 @@ export default function SignIn() {
           {has.kakao && (
             <form action={async () => { "use server"; await signIn("kakao", { redirectTo: "/" }); }}>
               <button className="sso sso-kakao" type="submit"><span className="sso-ic" aria-hidden>💬</span>카카오로 계속하기</button>
-            </form>
-          )}
-          {has.naver && (
-            <form action={async () => { "use server"; await signIn("naver", { redirectTo: "/" }); }}>
-              <button className="sso sso-naver" type="submit"><span className="sso-ic">N</span>네이버로 계속하기</button>
             </form>
           )}
         </div>

@@ -245,3 +245,18 @@ def test_llm_usage_ingest_and_summary():
     assert s["daily"], "daily tail present"
     # no admin token → 401 (telemetry is operator-plane only)
     assert client.post("/admin/llm-usage", json={"service": "x", "kind": "k", "model": "m"}).status_code == 401
+
+
+def test_production_refuses_dev_admin_token(monkeypatch):
+    """AUTH-1: ENV=production + dev 기본 ADMIN_TOKEN → 기동 거부; dev에선 no-op."""
+    import pytest as _pytest
+
+    from controlplane.config import assert_production_secrets, settings
+
+    monkeypatch.setattr(settings, "env", "dev")
+    assert_production_secrets()  # dev → 통과
+    monkeypatch.setattr(settings, "env", "production")
+    with _pytest.raises(RuntimeError, match="ADMIN_TOKEN"):
+        assert_production_secrets()
+    monkeypatch.setattr(settings, "admin_token", "real-token-xyz")
+    assert_production_secrets()  # 실 토큰 → 통과

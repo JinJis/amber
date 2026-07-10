@@ -745,3 +745,21 @@ def test_uxq4_rename_and_delete_conversation(monkeypatch):
     assert client.delete(f"/conversations/{cid}", headers=_hdr(email)).json()["deleted"] == cid
     assert all(c["id"] != cid for c in client.get("/conversations", headers=_hdr(email)).json()["conversations"])
     assert client.get(f"/conversations/{cid}/messages", headers=_hdr(email)).json()["messages"] == []
+
+
+def test_production_refuses_dev_default_tokens(monkeypatch):
+    """AUTH-1: ENV=production에서 dev 기본 SERVICE_TOKEN/ADMIN_TOKEN이면 기동 거부."""
+    import pytest
+
+    from studioapi.config import assert_production_secrets, settings as cfg
+
+    monkeypatch.setattr(cfg, "env", "dev")
+    assert_production_secrets()  # dev → no-op
+    monkeypatch.setattr(cfg, "env", "production")
+    with pytest.raises(RuntimeError, match="SERVICE_TOKEN"):
+        assert_production_secrets()
+    monkeypatch.setattr(cfg, "service_token", "real-svc")
+    with pytest.raises(RuntimeError, match="ADMIN_TOKEN"):
+        assert_production_secrets()
+    monkeypatch.setattr(cfg, "admin_token", "real-admin")
+    assert_production_secrets()  # 둘 다 실 토큰 → 통과
