@@ -656,6 +656,16 @@ export default function Chat({ name, email, image, features }: { name: string; e
 
       {view === "explore" && messages.length > 0 && (
         <>
+          {/* 모바일: 스트리밍 중 근거 수집이 보이도록 하단 라이브 필 — 탭하면 근거 시트 오픈 */}
+          {isMobile && !ctxSheet && panelMsg && (busy || panelStreaming) && (
+            <button type="button" className="m-live-pill" onClick={() => setCtxSheet(true)}
+              aria-label="근거 수집 현황 보기">
+              <span className="tl-spin" aria-hidden />
+              <span>근거 수집 중</span>
+              <span className="mono">🔗 {(panelMsg.citations ?? []).length} · 📊 {(panelMsg.artifacts ?? []).length}</span>
+              <span className="mlp-open" aria-hidden>▲</span>
+            </button>
+          )}
           {isMobile && ctxSheet && <div className="m-backdrop ctx" onClick={() => setCtxSheet(false)} aria-hidden />}
           <ContextPanel
             hoverCite={hoverCite}
