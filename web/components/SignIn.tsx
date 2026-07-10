@@ -1,4 +1,5 @@
 import { signIn } from "@/auth";
+import EmailOtp from "./EmailOtp";
 
 // Sign-in / sign-up — one screen, social-first (Google · Kakao); each button appears only
 // when its OAuth app is configured. A dev-login stays for local use (never in production —
@@ -31,16 +32,14 @@ export default function SignIn({ callbackUrl = "/" }: { callbackUrl?: string } =
           )}
         </div>
 
+        {anySocial && <div className="signin-or"><span>또는</span></div>}
+        <EmailOtp callbackUrl={callbackUrl} />{/* AUTH-2: 이메일 6자리 코드 로그인 */}
         {has.dev && (
-          <>
-            {anySocial && <div className="signin-or"><span>또는</span></div>}
-            <form className="signin-dev" action={async (fd: FormData) => { "use server"; await signIn("credentials", { email: String(fd.get("email") || ""), redirectTo: callbackUrl }); }}>
-              <input className="input" name="email" type="email" placeholder="dev@example.com" required />
-              <button className="btn ghost" type="submit">개발용 로그인</button>
-            </form>
-          </>
+          <form className="signin-dev" action={async (fd: FormData) => { "use server"; await signIn("credentials", { email: String(fd.get("email") || ""), redirectTo: callbackUrl }); }}>
+            <input className="input" name="email" type="email" placeholder="dev@example.com" required />
+            <button className="btn ghost" type="submit">개발용 로그인</button>
+          </form>
         )}
-        {!anySocial && !has.dev && <p className="muted">로그인 제공자가 설정되지 않았어요 (.env 참고).</p>}
         <p className="signin-legal mono">계속하면 서비스 약관과 개인정보 처리방침에 동의하게 돼요.</p>
       </div>
     </main>

@@ -5,6 +5,9 @@
 
 import { useEffect, useState } from "react";
 
+import BillingPanel from "./BillingPanel";
+import InvitePanel from "./InvitePanel";
+
 type Me = { email: string; name: string; image?: string | null; plan: string };
 type ByConn = { connector_id: string; calls: number; cost_units: number };
 type Usage = {
@@ -18,9 +21,9 @@ type Usage = {
 
 const PLANS = [
   { id: "free", name: "Free", price: "₩0", tagline: "가볍게 둘러보기",
-    features: ["하루 질문 한도", "핵심 데이터 소스", "공유 링크"] },
-  { id: "pro", name: "Pro", price: "₩19,000 / 월", tagline: "개인 리서처", featured: true,
-    features: ["질문 무제한", "전체 데이터 소스", "히스토리 랩 · 스탠딩 알림", "우선 응답 속도"] },
+    features: ["하루 5회 · 월 80회 분석", "핵심 데이터 소스(공시·거시·뉴스·히스토리)", "공유 링크"] },
+  { id: "pro", name: "Pro", price: "₩19,900 / 월", tagline: "개인 리서처", featured: true,
+    features: ["월 200회 심층 분석(이후에도 표준 모델로 계속)", "프리미엄 데이터 — KIS 실시간 수급 · 컨센서스 · 어닝콜", "심층 리서치 모델 + 멀티 에이전트 분석", "히스토리 랩 · 스탠딩 알림"] },
   { id: "team", name: "Team", price: "문의", tagline: "팀 · 기관",
     features: ["팀 워크스페이스", "공유 워크스페이스", "SSO 로그인", "전용 지원"] },
 ];
@@ -40,7 +43,7 @@ function Avatar({ image, name, size = 72 }: { image?: string | null; name: strin
 export function Settings({ name, email, image }: { name: string; email: string; image?: string | null }) {
   const [me, setMe] = useState<Me | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
-  const [tab, setTab] = useState<"profile" | "plan" | "usage">("profile");
+  const [tab, setTab] = useState<"profile" | "plan" | "usage" | "invite">("profile");
   const [editName, setEditName] = useState(name);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -88,9 +91,9 @@ export function Settings({ name, email, image }: { name: string; email: string; 
     <div className="settings">
       <header className="settings-head"><h2>설정</h2></header>
       <div className="settings-tabs">
-        {(["profile", "plan", "usage"] as const).map((t) => (
+        {(["profile", "plan", "usage", "invite"] as const).map((t) => (
           <button key={t} type="button" className={`st-tab ${tab === t ? "on" : ""}`} onClick={() => setTab(t)}>
-            {t === "profile" ? "프로필" : t === "plan" ? "요금제" : "사용량"}
+            {t === "profile" ? "프로필" : t === "plan" ? "요금제" : t === "usage" ? "사용량" : "친구 초대"}
           </button>
         ))}
       </div>
@@ -147,7 +150,7 @@ export function Settings({ name, email, image }: { name: string; email: string; 
               </div>
             ))}
           </div>
-          <p className="st-note mono">결제 연동은 준비 중이에요 — 지금은 플랜 안내만 제공해요.</p>
+          <BillingPanel />{/* BILL-2: 카드 등록 → Pro · 구독 관리 */}
         </section>
       )}
 
@@ -192,6 +195,8 @@ export function Settings({ name, email, image }: { name: string; email: string; 
           ) : <p className="st-note mono">아직 사용 기록이 없어요 — 질문을 시작하면 여기에 쌓여요.</p>}
         </section>
       )}
+
+      {tab === "invite" && <InvitePanel />}{/* REF-4: 친구 초대 */}
     </div>
   );
 }

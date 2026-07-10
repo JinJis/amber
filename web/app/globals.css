@@ -916,6 +916,10 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .fu-chip:disabled { opacity: .5; cursor: default; }
 .fu-chip .fu-arrow { color: var(--accent); flex: none; }
 
+/* AUTH-2: 이메일 OTP */
+.otp-note { width: 100%; margin: 4px 0 0; font-size: 12px; }
+.linklike { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; font-size: 12px; text-decoration: underline; }
+
 /* GUEST-2: 게스트 필 + 가입 월 */
 .guest-pill { margin-left: auto; padding: 4px 10px; border: 1px solid var(--line-2); border-radius: 999px;
   background: var(--panel); color: var(--muted); font-size: 12px; white-space: nowrap; }

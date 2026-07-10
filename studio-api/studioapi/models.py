@@ -142,6 +142,21 @@ class ShareLink(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class EmailOtp(Base):
+    """AUTH-2: 이메일 로그인 6자리 코드 — sha256만 저장, 10분 만료, 시도 5회, 1회 소비.
+    발송 스로틀(이메일/IP 시간당)은 created_at·ip_hash 카운트로 판정한다."""
+
+    __tablename__ = "email_otp"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(256), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    consumed: Mapped[bool] = mapped_column(Boolean, default=False)
+    ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+
 class ServiceState(Base):
     """GUEST-1: 서비스 수준 KV — 예: 공유 게스트 테넌트의 project/key(JSON). 서버 사이드 전용;
     브라우저에는 절대 내려가지 않는다."""
@@ -206,6 +221,88 @@ class Message(Base):
     # 더 파고들기 chips (JSON list of strings) — persisted so reopened conversations keep the
     # follow-up row instead of losing it with the ephemeral SSE stream.
     suggestions: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+# --- BILL/REF: 토스 빌링 구독 + 레퍼럴 크레딧 -------------------------------
+class BillingCustomer(Base):
+    """BILL-1: 유저↔토스 매핑. customer_key는 UUID(이메일 노출 금지), 빌링키는 Fernet 암호화
+    저장 — 서버 밖으로 절대 나가지 않는다. card_label은 던닝 안내·중복카드 레퍼럴 가드용."""
+
+    __tablename__ = "billing_customers"
+    user_email: Mapped[str] = mapped_column(ForeignKey("users.email"), primary_key=True)
+    customer_key: Mapped[str] = mapped_column(String(64), unique=True)
+    billing_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    card_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(12), default="active")   # active | removed
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Subscription(Base):
+    """BILL-1: 구독 상태기계 — active →(과금 실패) past_due →(재시도 성공) active |
+    (소진) canceled → apply_plan(free). 해지는 cancel_at_period_end(기간 끝까지 Pro 유지)."""
+
+    __tablename__ = "subscriptions"
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: _uid("sub"))
+    user_email: Mapped[str] = mapped_column(ForeignKey("users.email"), index=True)
+    plan: Mapped[str] = mapped_column(String(24), default="pro")
+    status: Mapped[str] = mapped_column(String(12), default="active")   # active | past_due | canceled
+    current_period_start: Mapped[datetime] = mapped_column(DateTime)
+    current_period_end: Mapped[datetime] = mapped_column(DateTime, index=True)
+    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Invoice(Base):
+    """BILL-1: 청구서. order_id UNIQUE가 이중과금의 1차 방어(같은 기간 재시도는 같은 order_id
+    → 토스가 멱등 처리). total = amount − discount − credit_applied."""
+
+    __tablename__ = "invoices"
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: _uid("inv"))
+    user_email: Mapped[str] = mapped_column(ForeignKey("users.email"), index=True)
+    subscription_id: Mapped[str] = mapped_column(String(48), index=True)
+    order_id: Mapped[str] = mapped_column(String(64), unique=True)
+    amount: Mapped[int] = mapped_column(Integer)                 # 정가(KRW)
+    discount: Mapped[int] = mapped_column(Integer, default=0)    # REF-2: 피추천 첫 달 할인 등
+    credit_applied: Mapped[int] = mapped_column(Integer, default=0)  # REF-3: 크레딧 차감
+    total: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(12), default="pending")  # pending|paid|failed|refunded
+    toss_payment_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    period_start: Mapped[datetime] = mapped_column(DateTime)
+    period_end: Mapped[datetime] = mapped_column(DateTime)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class WebhookEvent(Base):
+    """BILL-4: 웹훅 멱등 원장 — event_id UNIQUE로 중복 배달을 무해화. 바디는 신뢰하지 않고
+    paymentKey로 토스에 재조회해 검증한다."""
+
+    __tablename__ = "webhook_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(String(16), default="toss")
+    event_id: Mapped[str] = mapped_column(String(120), unique=True)
+    payload: Mapped[str] = mapped_column(Text)
+    processed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class CreditLedger(Base):
+    """REF-2: 구독 크레딧 원장(KRW, signed) — 잔액 = SUM. (kind, related_invoice_id, user_email)
+    UNIQUE가 킥백/차감의 멱등을 보장한다. 현금 아님 — 다음 인보이스에서 자동 차감."""
+
+    __tablename__ = "credit_ledger"
+    __table_args__ = (
+        UniqueConstraint("kind", "related_invoice_id", "user_email", name="uq_credit_once"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_email: Mapped[str] = mapped_column(String(256), index=True)
+    amount_krw: Mapped[int] = mapped_column(Integer)   # +적립 / −사용(차감)·회수
+    kind: Mapped[str] = mapped_column(String(32))      # referral_kickback|invoice_application|clawback|admin_adjust
+    related_invoice_id: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    related_user: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

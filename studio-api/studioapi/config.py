@@ -51,6 +51,16 @@ class Settings(BaseSettings):
     # PLAN-4 롤아웃 스위치: true면 기존 유저도 다음 요청에서 플랜 기준으로 커넥터를 reconcile
     # (free 유저의 fmp/kis 회수 포함). 기본 false — 켜기 전까지 기존 활성화는 건드리지 않는다.
     plan_enforce_connectors: bool = False                # PLAN_ENFORCE_CONNECTORS
+    # AUTH-2: 이메일 OTP 로그인 발송 (Resend). 키 없으면 dev 모드 — 코드가 로그로만 남는다.
+    resend_api_key: str = ""                             # RESEND_API_KEY
+    email_from: str = "ValueGraph <login@valuegraph.app>"  # EMAIL_FROM (Resend 도메인 인증 필요)
+    # BILL: 토스페이먼츠 빌링 — 시크릿 키 없으면 FakeGateway(로컬/테스트). 빌링키는 Fernet 암호화.
+    billing_enabled: bool = False                        # BILLING_ENABLED (스케줄러 틱 게이트)
+    toss_secret_key: str = ""                            # TOSS_SECRET_KEY
+    billing_enc_key: str = ""                            # BILLING_ENC_KEY (Fernet, 32b urlsafe b64)
+    toss_webhook_secret: str = "dev-webhook-secret"      # TOSS_WEBHOOK_PATH_SECRET (URL 세그먼트 2차 인증)
+    plan_price_pro_krw: int = 19900                      # PLAN_PRICE_PRO_KRW
+    referral_kickback_monthly_cap_krw: int = 100000      # REFERRAL_KICKBACK_MONTHLY_CAP_KRW
 
 
 settings = Settings()
@@ -67,6 +77,12 @@ def assert_production_secrets() -> None:
     ) if value == dev_default]
     if leaked:
         raise RuntimeError(f"production requires real secrets for: {', '.join(leaked)}")
+    # BILL: 실키 결제를 켰다면 빌링키 암호화 키·웹훅 시크릿도 실값이어야 한다
+    if settings.toss_secret_key:
+        if not settings.billing_enc_key:
+            raise RuntimeError("production billing requires BILLING_ENC_KEY")
+        if settings.toss_webhook_secret == "dev-webhook-secret":
+            raise RuntimeError("production billing requires a real TOSS_WEBHOOK_PATH_SECRET")
 
 
 # PLAN-4: connectors auto-activated at signup = the FREE plan set (single source: plans.py).

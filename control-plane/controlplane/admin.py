@@ -168,6 +168,37 @@ async def llm_usage_summary(days: int = 30) -> dict:
     }
 
 
+@router.get("/llm-usage/by-project", summary="METER-2: 프로젝트(유저)별 LLM 토큰 롤업 — 유닛 이코노믹스")
+async def llm_usage_by_project(days: int = 30) -> dict:
+    """LLM 토큰을 project(=유저 테넌트) × model로 롤업 — admin '유저별 원가' 화면이 pricing
+    레지스트리로 달러화한다. project_id NULL = 공용/백그라운드(피드·인제스트)."""
+    from datetime import datetime as _dt, timedelta as _td
+    since = _dt.utcnow() - _td(days=max(1, min(days, 365)))
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(LlmUsage.project_id, LlmUsage.model,
+                   func.coalesce(func.sum(LlmUsage.input_tokens), 0),
+                   func.coalesce(func.sum(LlmUsage.output_tokens), 0),
+                   func.coalesce(func.sum(LlmUsage.calls), 0))
+            .where(LlmUsage.ts >= since)
+            .group_by(LlmUsage.project_id, LlmUsage.model)
+            .order_by(func.sum(LlmUsage.input_tokens).desc())
+        ).all()
+        # project → tenant 이름(=유저 이메일) 매핑
+        pids = {p for p, *_ in rows if p}
+        names: dict[str, str] = {}
+        if pids:
+            for pid, tname in db.execute(
+                select(Project.id, Tenant.name).join(Tenant, Project.tenant_id == Tenant.id)
+                .where(Project.id.in_(pids))
+            ).all():
+                names[pid] = tname
+    return {"since": since.isoformat(), "days": days,
+            "rows": [{"project_id": p, "tenant": names.get(p) if p else None, "model": m,
+                      "input_tokens": int(i), "output_tokens": int(o), "calls": int(c)}
+                     for p, m, i, o, c in rows]}
+
+
 @router.get("/projects/{project_id}/usage", summary="Usage + cost summary")
 async def usage(project_id: str) -> dict:
     with SessionLocal() as db:

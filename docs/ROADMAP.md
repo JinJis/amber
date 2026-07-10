@@ -734,6 +734,39 @@ QT-1(compute 엔진)과 정합: compute의 스펙-as-계산근거는 이 카드�
 - **NB-1..5 리서치 노트북**(대시보드 개편, M-NOTE 흡수): [`NOTEBOOK_SPEC.md`](./NOTEBOOK_SPEC.md) §A
 - **SA-1..4 스탠딩 알림**(질문 구독 → 데스크 카드): [`NOTEBOOK_SPEC.md`](./NOTEBOOK_SPEC.md) §B
 
+## 12e. M-PROD — Production 준비: 인증·프리미엄·미터링·결제·레퍼럴 (2026-07-10 승인·착수)
+
+> 상세 설계·유닛 이코노믹스: 오너 승인 플랜 문서 (2026-07-10). 6개 트랙, 1 task = 1 PR.
+> 인바리언트 유지: 게스트 포함 모든 턴이 게이트웨이·가드레일·미터링을 통과; 플랜 티어링은
+> 리소스 설정(AgentSpec·Activation)이지 추론 하드코딩이 아님(§2.9).
+
+| id | 내용 | 상태 |
+|---|---|---|
+| AUTH-1 | 네이버 제거 · dev-login production 차단 · SERVICE/ADMIN 토큰 dev 폴백 기동 거부 | ✅ 2026-07-10 |
+| AUTH-2 | 이메일 6자리 OTP 로그인 (Resend, dev 모드 폴백; 매직링크 아님 — 인앱 브라우저 보존) | ✅ 2026-07-10 |
+| AUTH-3 | `/?q=` 딥링크 로그인 왕복 보존 (callbackUrl) — V-5 바이럴 루프 봉합 | ✅ 2026-07-10 |
+| AUTH-4 | 카카오 무이메일 센티널(`@noemail.local`, email_verified=false 메일 게이트) — 이메일 연결 승격 UI는 잔여 | 🔶 부분 |
+| GUEST-1 | 공유 게스트 테넌트·GuestSession·current_actor·평생/IP 캡 | ✅ 2026-07-10 |
+| GUEST-2 | 비로그인 게스트 챗 착지 + 게스트 필 + GuestWall(대화 승계 안내) | ✅ 2026-07-10 |
+| GUEST-3 | `POST /users/claim-guest` — 가입 시 게스트 대화 이어붙이기 (멱등·409) | ✅ 2026-07-10 |
+| GUEST-4 | 공유 CTA·칩 `?ref=` + vg_ref 쿠키(30일 last-touch) | ✅ 2026-07-10 |
+| PLAN-1/2 | plans.py(PLANS_JSON) · TurnUsage · start_turn 쿼터 게이트(quota SSE) · 게이트웨이 플랜 rate | ✅ 2026-07-10 |
+| PLAN-3 | AgentSpec 모델 티어링(free=flash 합성·스텝·서브에이전트 캡; pro fair-use 초과=강등) | ✅ 2026-07-10 |
+| PLAN-4 | apply_plan 단일 경로(활성화→rate→plan 순서 고정) · DEFAULT_CONNECTORS 무료 셋 축소 · PLAN_ENFORCE_CONNECTORS 스위치 | ✅ 2026-07-10 |
+| PLAN-5 | 내 사용량 UI(턴 프로그레스) | ✅ 2026-07-10 |
+| METER-1 | LlmUsage.project_id — X-Project-Id → contextvar → 유저별 LLM 원가 귀속 | ✅ 2026-07-10 |
+| METER-2 | `/admin/llm-usage/by-project` 롤업 (admin 패널 화면은 잔여) | 🔶 부분 |
+| METER-3 | Vertex 리랭커 콜 계측 | ✅ 2026-07-10 |
+| BILL-1~4 | 토스 빌링키 스키마·상태기계·등록/첫결제·시간별 갱신·던닝 D+1/3/5·웹훅(멱등·재조회 검증)·해지 예약 — FakeGateway 전수 테스트 | ✅ 2026-07-10 |
+| BILL-5 | admin 결제 운영 화면 | ⬜ |
+| REF-1 | 추천 코드 발급·가입 귀속·14일 소급 입력 | ✅ 2026-07-10 |
+| REF-2/3 | credit_ledger(멱등 UNIQUE) · 피추천 첫 달 30% 할인 · 결제 확정 시 추천인 20% 킥백(월 상한) · 환불 clawback | ✅ 2026-07-10 |
+| REF-4 | 어뷰즈 가드(자기추천·일회용 이메일·월 상한) + 친구 초대 화면 — 카드 지문 가드는 잔여 | 🔶 부분 |
+
+**유저 액션(코드 밖):** 구글 OAuth 동의화면 · 카카오 개발자 앱(+비즈앱 심사) · Resend 도메인
+인증 · 토스페이먼츠 가맹 계약 + 웹훅 URL 등록 · production env(ENV/SERVICE_TOKEN/ADMIN_TOKEN/
+BILLING_ENC_KEY/GUEST_IP_SALT) 발급.
+
 ## 13. Test & eval accounting
 
 Every task adds tests; keep this table updated in the same PR (Definition of Done).
@@ -743,12 +776,12 @@ Every task adds tests; keep this table updated in the same PR (Definition of Don
 | Service | Baseline (2026-07-03) | Current | Planned additions (minimum) |
 |---|---|---|---|
 | datasets | 148 | 239 (measured) | ✅ OPS-1 (+2 grouping/runner); then ≥32 HL-1/2/3, ≥12 HL-4, ≥9 HL-5, ≥22 QT-1/4, ≥7 EC-1, ≥14 FI-1/2/3, ≥8 HL-8/EC-2 |
-| agent-engine | 111 | 148 (measured, incl. skips) | ✅ DK-1 (+5: feed states, citation-drop, degrade); then ≥10 HL-6/7, ≥8 QT-2 (number audit), ≥8 EC-3, ≥6 HL-9 |
-| studio-api | 40 | 70 (measured) | ✅ FLAG-1 scheduler gate (+1), ✅ DK-3 (+4: cache/TTL/invalidate/since/degrade); then ≥7 HL-12/14 BFF |
-| control-plane | 13 | 13 | ≥1 QT-1 (activated-connectors header forwarding); rest manifest-derived (coverage.sh guards) |
+| agent-engine | 111 | 169 (measured — RC-6 펄스 +3, METER-1 +1 등) | ✅ DK-1 (+5); then ≥10 HL-6/7, ≥8 QT-2 (number audit), ≥8 EC-3, ≥6 HL-9 |
+| studio-api | 40 | 104 (measured — M-PROD +34: plans/quotas/guest/otp/billing/referral) | ✅ FLAG-1 scheduler gate (+1), ✅ DK-3 (+4); then ≥7 HL-12/14 BFF |
+| control-plane | 13 | 19 (measured — M-PROD +6: 플랜 rate·PATCH project·llm-usage 귀속) | ≥1 QT-1 (activated-connectors header forwarding); rest manifest-derived (coverage.sh guards) |
 | mcp | 9 | 9 | ≥3 HL-4/QT-1 (new tools listed, unentitled 403) |
 | rag | 20 | 20 | ≥4 HL-5 (era_news/dossier doc types), ≥2 FI-1 (section filter) |
-| web | TS build only | 46 (vitest) | UX-4 adds a vitest runner; then component tests for DK-2 (3 states), HL-7/10/11/12/13, QT-3 (scatter/distribution/계산 근거), EC-4 |
+| web | TS build only | 68 (vitest) | component tests for DK-2 (3 states), HL-7/10/11/12/13, QT-3 (scatter/distribution/계산 근거), EC-4 |
 | eval scenarios | 32 | 93 (scenarios.py — M-DERIV +2, M-FACT +3, DATA-KR-1 +1) | ✅ DK-4 (+2 desk-feed, `kind: desk_feed` runner); then +4 HL-6, +2 QT-2, +1 EC-3, +2 M2 flows, +1 FI |
 
 Eval bar: maintain ≥ current score (`eval/RUBRIC.md`); run before every push.

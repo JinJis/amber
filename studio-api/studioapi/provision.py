@@ -74,7 +74,9 @@ async def ensure_user(email: str, name: str | None = None, image: str | None = N
     _reconciled.add(email)
 
     user = User(email=email, tenant_id=tenant["id"], project_id=project["id"], api_key=key["api_key"],
-                name=(name or None) and name[:120], image=(image or None) and image[:512])
+                name=(name or None) and name[:120], image=(image or None) and image[:512],
+                # AUTH-4: 카카오 무이메일 센티널은 실주소가 아니다 — 메일 발송(OTP·던닝) 차단
+                email_verified=not email.endswith("@noemail.local"))
     with SessionLocal() as db:
         db.merge(user)
         db.commit()

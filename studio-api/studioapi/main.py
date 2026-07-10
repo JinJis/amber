@@ -26,6 +26,7 @@ from studioapi.market import router as market_router
 from studioapi.standing import router as standing_router
 from studioapi.search import router as search_router
 from studioapi.templates import router as templates_router, seed_dashboard_templates
+from studioapi.authcodes import router as authcodes_router
 from studioapi.askfeed import router as askfeed_router
 from studioapi.askfeed import start as askfeed_start
 from studioapi.deskfeed import router as deskfeed_router
@@ -271,6 +272,9 @@ async def run_stream(run_id: str, user: User = Depends(current_actor), from_inde
     return StreamingResponse(sse_tail(run, from_index), media_type="text/event-stream")
 
 
+app.include_router(authcodes_router)   # AUTH-2: 이메일 OTP 로그인
+from studioapi.billing_api import router as billing_router  # noqa: E402
+app.include_router(billing_router)     # BILL: 토스 빌링 + REF: 레퍼럴
 app.include_router(agents_router)
 app.include_router(connectors_router)
 app.include_router(alerts_router)

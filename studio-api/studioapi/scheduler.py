@@ -78,10 +78,28 @@ async def _loop() -> None:
         await asyncio.sleep(settings.alerts_tick_seconds)
 
 
+async def _billing_loop() -> None:
+    """BILL-3: 시간별 정기결제·던닝 틱 — billing_tick 내부의 advisory lock이 복수 레플리카
+    이중과금을 막는다. 실패해도 루프는 계속(다음 시간에 재시도)."""
+    from studioapi.billing import billing_tick
+
+    while True:
+        try:
+            n = await billing_tick()
+            if n:
+                log.info("billing tick: %d subscription/invoice(s) processed", n)
+        except Exception:  # noqa: BLE001
+            log.exception("billing tick failed — retrying next hour")
+        await asyncio.sleep(3600)
+
+
 def start(task_holder: list) -> None:
     """Start the loop only when the 알림봇 feature is on AND the scheduler switch is enabled, appending
     the task to ``task_holder`` for shutdown. Chat-first (FLAG-1): feature_alerts defaults off, so no
     scheduler ticks unless an operator explicitly turns the alert surface on."""
+    if settings.billing_enabled:   # BILL-3: 결제 틱은 알림봇 플래그와 무관하게 자체 게이트
+        task_holder.append(asyncio.create_task(_billing_loop()))
+        log.info("billing scheduler started (hourly)")
     if not (settings.feature_alerts and settings.alerts_scheduler_enabled):
         log.info("alerts scheduler disabled (feature_alerts=%s, enabled=%s)",
                  settings.feature_alerts, settings.alerts_scheduler_enabled)
