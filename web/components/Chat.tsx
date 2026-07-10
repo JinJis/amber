@@ -443,7 +443,7 @@ export default function Chat({ name, email, image, features }: { name: string; e
       <nav className="rail" onClick={() => { if (isMobile) setDrawer(false); }}>
         <div className="rail-brand"><span className="mascot" aria-hidden /><span className="wordmark">ValueGraph</span></div>
         <button className="rail-new" onClick={newChat}>
-          <span className="ic">✎</span><span>탐구 시작하기</span>
+          <span className="ic">✎</span><span>분석 시작하기</span>
         </button>
         {features.dashboard && (
           <button className={`rail-item ${view === "dashboard" ? "on" : ""}`} onClick={() => setView("dashboard")}>
@@ -593,8 +593,10 @@ export default function Chat({ name, email, image, features }: { name: string; e
                         const nUsed = evidenceOf(m).length;
                         const nTool = uniqueTools(m.tools).length;
                         const hasStats = nArt || nUsed || nTool;
-                        const showShare = !!m.content && !(busy && i === messages.length - 1);
-                        if (!hasStats && !showShare) return null;
+                        const streaming = busy && i === messages.length - 1;
+                        const showShare = !!m.content && !streaming;
+                        // 답변이 다 작성되기 전엔 하단 액션 행 전체를 숨긴다(스트리밍 중 노출 금지).
+                        if (streaming || (!hasStats && !showShare)) return null;
                         return (
                           <div className="answer-foot">
                             {hasStats ? (
