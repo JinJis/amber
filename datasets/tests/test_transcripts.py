@@ -36,6 +36,7 @@ def test_accession_roundtrip():
 
 @pytest.mark.asyncio
 async def test_fetch_transcript_no_key_returns_none(monkeypatch):
+    monkeypatch.setattr(T.settings, "api_ninjas_key", "")
     monkeypatch.setattr(T.settings, "alphavantage_api_key", "")
     assert await T.fetch_transcript("AAPL", "2024Q3") is None   # dark without a key, never fabricated
 
@@ -43,8 +44,9 @@ async def test_fetch_transcript_no_key_returns_none(monkeypatch):
 @pytest.mark.asyncio
 @respx.mock
 async def test_fetch_transcript_parses_segments(monkeypatch):
+    monkeypatch.setattr(T.settings, "api_ninjas_key", "")
     monkeypatch.setattr(T.settings, "alphavantage_api_key", "demo")
-    respx.get(T._URL).mock(return_value=httpx.Response(200, json=_SAMPLE))
+    respx.get(T._AV_URL).mock(return_value=httpx.Response(200, json=_SAMPLE))
     t = await T.fetch_transcript("AAPL", "2024Q3")
     assert t and t["ticker"] == "AAPL" and len(t["segments"]) == 2
     assert t["segments"][0]["speaker"] == "Tim Cook"
@@ -69,10 +71,11 @@ def test_transcript_to_docs_chunks_with_synthetic_accession():
 @pytest.mark.asyncio
 @respx.mock
 async def test_ingest_for_ticker_indexes_and_warms_preview(monkeypatch, tmp_path):
+    monkeypatch.setattr(T.settings, "api_ninjas_key", "")
     monkeypatch.setattr(T.settings, "alphavantage_api_key", "demo")
     monkeypatch.setattr(TH.settings, "evidence_docs_dir", str(tmp_path))
     monkeypatch.setattr(TI.settings, "transcript_ingest_limit", 1)
-    respx.get(T._URL).mock(return_value=httpx.Response(200, json=_SAMPLE))
+    respx.get(T._AV_URL).mock(return_value=httpx.Response(200, json=_SAMPLE))
     rag = respx.post("http://rag.test/rag/ingest").mock(return_value=httpx.Response(200, json={"chunks": 2}))
 
     n = await TI.ingest_transcript_for_ticker("US", "AAPL", rag_url="http://rag.test")
@@ -83,5 +86,49 @@ async def test_ingest_for_ticker_indexes_and_warms_preview(monkeypatch, tmp_path
 
 
 @pytest.mark.asyncio
-async def test_ingest_for_ticker_kr_is_noop():
-    assert await TI.ingest_transcript_for_ticker("KR", "005930") == 0   # AV transcripts are US-only
+async def test_ingest_for_ticker_kr_noop_without_ninjas_key(monkeypatch):
+    monkeypatch.setattr(T.settings, "api_ninjas_key", "")
+    assert await TI.ingest_transcript_for_ticker("KR", "005930") == 0   # KR needs API Ninjas
+
+
+_NINJAS_SAMPLE = {
+    "date": "2024-05-02", "ticker": "AAPL", "year": "2024", "quarter": "2",
+    "transcript": ("Suhasini Chandramouli: Good afternoon, and welcome to the call.\n"
+                   "Tim Cook: Thank you. Revenue set a March quarter record in more than two dozen countries.\n"
+                   "Luca Maestri: Revenue for the March quarter was $90.8 billion."),
+}
+
+
+def test_parse_turns_splits_speakers_and_keeps_preamble():
+    segs = T.parse_turns(_NINJAS_SAMPLE["transcript"])
+    assert [x["speaker"] for x in segs] == ["Suhasini Chandramouli", "Tim Cook", "Luca Maestri"]
+    assert "90.8 billion" in segs[2]["content"]
+    # no recognizable turns → one speaker-less segment, never dropped
+    lone = T.parse_turns("just a raw paragraph with no speakers")
+    assert len(lone) == 1 and lone[0]["speaker"] == ""
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_fetch_prefers_api_ninjas_and_carries_call_date(monkeypatch):
+    monkeypatch.setattr(T.settings, "api_ninjas_key", "nk")
+    monkeypatch.setattr(T.settings, "alphavantage_api_key", "demo")  # must NOT be hit
+    nin = respx.get(T._NINJAS_URL).mock(return_value=httpx.Response(200, json=_NINJAS_SAMPLE))
+    got = await T.fetch_transcript("AAPL", "2024Q2")
+    assert nin.called and got and got["source"].startswith("API Ninjas")
+    assert got["as_of"] == "2024-05-02" and len(got["segments"]) == 3
+    assert nin.calls.last.request.url.params["quarter"] == "2"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_kr_ingest_maps_code_to_ks_and_indexes(monkeypatch, tmp_path):
+    monkeypatch.setattr(T.settings, "api_ninjas_key", "nk")
+    monkeypatch.setattr(TI.settings, "rag_url", "http://rag.test")
+    monkeypatch.setattr(TH.settings, "evidence_docs_dir", str(tmp_path))
+    kr = dict(_NINJAS_SAMPLE, ticker="005930.KS")
+    nin = respx.get(T._NINJAS_URL).mock(return_value=httpx.Response(200, json=kr))
+    rag = respx.post("http://rag.test/rag/ingest").mock(return_value=httpx.Response(200, json={"chunks": 2}))
+    got = await TI.ingest_transcript_for_ticker("KR", "005930", limit=1)
+    assert got > 0 and rag.called
+    assert nin.calls[0].request.url.params["ticker"] == "005930.KS"   # bare code → .KS

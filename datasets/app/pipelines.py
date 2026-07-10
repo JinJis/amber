@@ -149,16 +149,18 @@ PIPELINES: list[dict] = [
      ],
      "fetch": "재무제표에 등장한 최근 4개 공시 본문 HTML을 텍스트 추출→RAG 색인(doc_id={accession}:s.{n}). "
               "HTML은 인앱 뷰어와 동일 원천을 공유·캐시(증분)."},
-    {"id": "transcript_text", "label": "어닝콜 트랜스크립트 → RAG", "source": "Alpha Vantage", "store": "RAG corpus",
-     "kind": "transcript", "markets": ["US"], "default": False, "runner": _run_transcript_text,
+    {"id": "transcript_text", "label": "어닝콜 트랜스크립트 → RAG", "source": "API Ninjas / Alpha Vantage", "store": "RAG corpus",
+     "kind": "transcript", "markets": ["US", "KR"], "default": False, "runner": _run_transcript_text,
      "min_interval_seconds": _WEEK,
-     "desc": "분기 어닝콜 전문(화자별)을 RAG 색인 — 인앱 트랜스크립트 프리뷰와 동일 원천 (US, 무료 키 필요)",
+     "desc": "분기 어닝콜 전문(화자별)을 RAG 색인 — 인앱 트랜스크립트 프리뷰와 동일 원천 (US+KR, API_NINJAS_KEY)",
      "upstream": [
-         "US · Alpha Vantage 어닝콜 전문 — GET https://www.alphavantage.co/query"
-         "?function=EARNINGS_CALL_TRANSCRIPT&symbol={ticker}&quarter={YYYYQn}&apikey=…",
+         "US·KR · API Ninjas 어닝콜 전문 — GET https://api.api-ninjas.com/v1/earningstranscript"
+         "?ticker={SYM|005930.KS}&year={YYYY}&quarter={n} (X-Api-Key, 프리미엄 · ~5년 깊이)",
+         "US 폴백 · Alpha Vantage — GET https://www.alphavantage.co/query"
+         "?function=EARNINGS_CALL_TRANSCRIPT&symbol={ticker}&quarter={YYYYQn} (무료, 일 25콜)",
      ],
-     "fetch": "최근 TRANSCRIPT_INGEST_LIMIT개 분기(기본 4) 어닝콜 전문을 화자별 텍스트로 RAG 색인 "
-              "(doc_id=TR:{ticker}:{quarter}:s.{n}). KR은 무료 API 미제공 → no-op. AV 무료 키는 일 25콜 제한."},
+     "fetch": "최근 TRANSCRIPT_INGEST_LIMIT개 분기(기본 8) 어닝콜 전문을 화자별 텍스트로 RAG 색인 "
+              "(doc_id=TR:{ticker}:{quarter}:s.{n}). KR 코드는 .KS→.KQ로 시도(API Ninjas 전용)."},
     {"id": "presentation_text", "label": "어닝 발표자료(8-K 덱) → RAG", "source": "SEC EDGAR · Document AI",
      "kind": "presentation", "markets": ["US"], "default": False, "runner": _run_presentation_text,
      "min_interval_seconds": _WEEK,

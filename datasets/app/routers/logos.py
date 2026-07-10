@@ -8,8 +8,9 @@ image.
 
 Hybrid resolver (source chosen by the deployment's keys):
   1. Logo.dev by ticker      — highest quality, needs LOGODEV_TOKEN (US-style symbols)
-  2. FMP company profile image — uses the existing FMP key (US, some KR .KS)
-  3. domain → Logo.dev/domain (token) or Google favicon — only with a RESOLVED domain, so unknown
+  2. API Ninjas /v1/logo     — ticker-based incl. KR (.KS/.KQ), needs API_NINJAS_KEY
+  3. FMP company profile image — uses the existing FMP key (US, some KR .KS)
+  4. domain → Logo.dev/domain (token) or Google favicon — only with a RESOLVED domain, so unknown
      tickers fall through to the monogram instead of a generic globe
 Results are cached to `/data/logos/{MARKET}/{TICKER}.{img,meta}`; misses cache a short-lived marker.
 """
@@ -167,7 +168,24 @@ async def resolve_logo(market: str, ticker: str) -> tuple[bytes, str, str] | Non
         if got:
             return got[0], got[1], "Logo.dev"
 
-    # 2) FMP company profile image (+ website for the domain fallback)
+    # 2) API Ninjas logo by ticker (works for KR codes as 005930.KS/.KQ too)
+    if settings.api_ninjas_key:
+        syms = [sym]
+        if market == "KR" and "." not in sym:
+            syms = [f"{code}.KS", f"{code}.KQ"]
+        for s_ in syms:
+            try:
+                data = await fetch_json("api_ninjas", "https://api.api-ninjas.com/v1/logo",
+                                        params={"ticker": s_}, headers={"X-Api-Key": settings.api_ninjas_key})
+            except Exception:  # noqa: BLE001 — best-effort; fall through to the next source
+                break
+            img = (data[0].get("image") if isinstance(data, list) and data and isinstance(data[0], dict) else None)
+            if img:
+                got = await _download_image(str(img))
+                if got:
+                    return got[0], got[1], "API Ninjas"
+
+    # 3) FMP company profile image (+ website for the domain fallback)
     domain: str | None = None
     if market == "KR":
         domain = _KR_DOMAINS.get(code)
@@ -180,7 +198,7 @@ async def resolve_logo(market: str, ticker: str) -> tuple[bytes, str, str] | Non
                     return got[0], got[1], "FMP"
             domain = _domain_of(profile.get("website"))
 
-    # 3) domain-based (only with a RESOLVED domain — no domain ⇒ monogram, never a globe)
+    # 4) domain-based (only with a RESOLVED domain — no domain ⇒ monogram, never a globe)
     if domain:
         if token:
             got = await _download_image(f"https://img.logo.dev/{domain}",

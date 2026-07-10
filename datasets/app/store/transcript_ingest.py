@@ -5,8 +5,8 @@ text into RAG with provenance, and warm the in-app HTML preview. The transcript 
 ``accession`` ``TR:{ticker}:{quarter}`` so the SAME evidence chain that opens a filing opens the
 transcript — the agent can quote management/analyst remarks and the user verifies them in-app.
 
-US coverage (Alpha Vantage). KR earnings-call transcripts are not freely API-available (see DART
-filings/IR for the KR analog); this runner no-ops for KR.
+US + KR coverage. Primary source is API Ninjas (KR calls ride Yahoo-style codes — 005930.KS /
+.KQ — and are held in English); Alpha Vantage remains the free US-only fallback.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import logging
 import traceback
 
 from app.config import settings
-from app.providers.transcripts import recent_transcripts
+from app.providers.transcripts import has_transcript_key, recent_transcripts, transcripts_cover_kr
 from app.store.jobs import finish_job, log_activity, start_job, update_progress
 from app.store.news_ingest import _ingest_to_rag  # reuse the RAG /rag/ingest POST helper
 from app.store.transcript_html import make_accession, store_transcript_html
@@ -59,18 +59,25 @@ def _transcript_to_docs(t: dict) -> list[dict]:
             continue
         out.append({"text": blk, "source": t["source"], "doc_type": "transcript",
                     "doc_id": f"{accession}:s.{i}", "ticker": t["ticker"], "market": "US",
-                    "accession": accession, "section": (spk or f"s.{i}")[:80], "as_of": t["quarter"]})
+                    "accession": accession, "section": (spk or f"s.{i}")[:80],
+                    "as_of": t.get("as_of") or t["quarter"]})
     return out
 
 
 async def ingest_transcript_for_ticker(market: str, ticker: str, limit: int | None = None,
                                        rag_url: str | None = None) -> int:
     """Index a ticker's recent earnings-call transcripts into RAG + warm the preview cache; return
-    the chunk count. US only (Alpha Vantage). Best-effort (0 on no key / no data)."""
-    if (market or "").upper() != "US":
+    the chunk count. US + KR (API Ninjas; AV fallback US). Best-effort (0 on no key / no data)."""
+    market = (market or "").upper()
+    if market == "KR" and not transcripts_cover_kr():
         return 0
     limit = limit or settings.transcript_ingest_limit
-    transcripts = await recent_transcripts(ticker, limit)
+    sym = ticker
+    if market == "KR" and "." not in ticker:
+        sym = f"{ticker}.KS"          # KOSPI first; KOSDAQ names retry below
+    transcripts = await recent_transcripts(sym, limit)
+    if not transcripts and market == "KR" and sym.endswith(".KS"):
+        transcripts = await recent_transcripts(f"{ticker}.KQ", limit)
     rag = rag_url or settings.rag_url
     total_docs, chunks = 0, 0
     for t in transcripts:
@@ -93,15 +100,15 @@ async def run_transcript_text_ingest(market: str, tickers: list[str]) -> None:
     market = (market or "").upper()
     tickers = tickers or []
     job = start_job("transcript", market, f"transcript · {len(tickers)} tickers", len(tickers))
-    if market != "US":
+    if market == "KR" and not transcripts_cover_kr():
         await asyncio.to_thread(finish_job, job, "success", 0,
-                                "KR 어닝콜 트랜스크립트는 무료 API 미제공 — US만 인덱싱 (KR은 DART 공시/IR 참고)")
+                                "KR 어닝콜은 API_NINJAS_KEY(프리미엄)가 필요해요 — US는 AV 폴백으로 가능")
         return
-    if not settings.alphavantage_api_key:
+    if not has_transcript_key():
         await asyncio.to_thread(finish_job, job, "error", 0,
-                                "ALPHAVANTAGE_API_KEY 미설정 — 무료 키를 .env에 넣으면 인덱싱됩니다")
+                                "API_NINJAS_KEY(권장) 또는 ALPHAVANTAGE_API_KEY를 .env에 넣으면 인덱싱됩니다")
         return
-    log_activity("transcript", market, f"▶ 시작 · {len(tickers)}종목 · Alpha Vantage 어닝콜 → RAG", job_id=job)
+    log_activity("transcript", market, f"▶ 시작 · {len(tickers)}종목 · 어닝콜 트랜스크립트 → RAG", job_id=job)
     total = 0
     failed: dict[str, str] = {}
     empty: list[str] = []

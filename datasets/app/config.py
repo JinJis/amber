@@ -36,9 +36,12 @@ class Settings(BaseSettings):
     # NYT Archive — era news headlines/abstracts by month back to 1851 (HL-5). Free key; the
     # provider self-limits to ~5 req/min (their guidance). Unset → the pre-2017 era-news path is dark.
     nyt_api_key: str = ""
-    # Alpha Vantage — earnings-call transcripts (free key works; rate-limited). US coverage.
+    # API Ninjas (premium) — earnings-call transcripts (US + KR, ~5y depth) + company logos.
+    # Primary transcript source; Alpha Vantage below is the free fallback.
+    api_ninjas_key: str = ""
+    # Alpha Vantage — earnings-call transcripts fallback (free key works; rate-limited). US only.
     alphavantage_api_key: str = ""
-    transcript_ingest_limit: int = 4   # recent quarters of transcripts to index per ticker
+    transcript_ingest_limit: int = 8   # recent quarters of transcripts to index per ticker
 
     # Phase 2: 8-K EX-99 earnings/investor presentation decks (PDF) → GCP Document AI Layout Parser
     # → RAG (faithful, layout-aware chunks WITH page+bbox for precise in-app PDF highlight). Auth via
