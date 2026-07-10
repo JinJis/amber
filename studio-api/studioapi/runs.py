@@ -47,6 +47,16 @@ class RunManager:
         run = self._runs.get(rid) if rid else None
         return rid if (run and run.status == "running") else None
 
+    def cancel(self, conversation_id: str) -> bool:
+        """UXQ-2: 진행 중 런 중지 — 드라이버 태스크 취소. 부분 답변은 드라이버의 finally
+        경로가 그대로 영속하므로(지금까지의 텍스트/인용 보존) 날조·유실 없음."""
+        rid = self.active_run_id(conversation_id)
+        run = self._runs.get(rid) if rid else None
+        if not run or not run.task or run.task.done():
+            return False
+        run.task.cancel()
+        return True
+
     def _prune(self) -> None:
         if len(self._runs) <= _MAX_RUNS:
             return

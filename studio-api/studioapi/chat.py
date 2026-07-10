@@ -9,6 +9,7 @@ persisted when the run completes.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 
@@ -74,7 +75,9 @@ async def drive_run(run: Run, user: User, conv_id: str, payload: dict) -> None:
     artifacts: list[dict] = []
     hook: str | None = None
     audit: dict | None = None
-    async with httpx.AsyncClient(timeout=None) as client:
+    cancelled = False
+    try:
+      async with httpx.AsyncClient(timeout=None) as client:
         async with client.stream(
             "POST", f"{settings.agent_engine_url}/agent/chat",
             json=payload, headers={"X-API-KEY": user.api_key},
@@ -94,6 +97,13 @@ async def drive_run(run: Run, user: User, conv_id: str, payload: dict) -> None:
                     artifacts = ev.get("artifacts") or artifacts
                     hook = ev.get("hook") or hook
                     audit = ev.get("audit") or audit
+    except asyncio.CancelledError:
+        # UXQ-2: 사용자가 중지 — CancelledError를 여기서 흡수하면 이후 저장은 정상 실행.
+        # 지금까지의 부분 답변을 그대로 영속(유실·날조 없음)하고 중지 표식을 남긴다.
+        cancelled = True
+
+    if cancelled and text_parts:
+        text_parts.append("\n\n*⏹ 여기서 중지했어요*")
 
     with SessionLocal() as db:
         db.add(Message(
@@ -105,6 +115,9 @@ async def drive_run(run: Run, user: User, conv_id: str, payload: dict) -> None:
         ))
         db.commit()
     # final marker so a tail learns the (already-known) conversation id and can stop
+    if cancelled:
+        await manager.append(run, {"type": "done", "citations": citations, "artifacts": artifacts,
+                                   "refused": False, "stopped": True})
     await manager.append(run, {"type": "conversation", "id": conv_id})
 
 

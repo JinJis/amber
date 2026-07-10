@@ -570,6 +570,21 @@ export default function Chat({ name, email, image, features }: { name: string; e
                               </div>
                             ) : <span className="af-spacer" />}
                             {showShare && (
+                              <>
+                              <button type="button" className="ans-share" title="답변 텍스트 복사"
+                                onClick={async (e) => { e.stopPropagation();
+                                  try { await navigator.clipboard.writeText(m.content.replace(/\{\{figure:\d+\}\}/g, "")); } catch {} }}>
+                                ⧉ 복사
+                              </button>
+                              {i === messages.length - 1 && !busy && messages[i - 1]?.role === "user" && (
+                                <button type="button" className="ans-share" title="같은 질문으로 다시 생성"
+                                  onClick={(e) => { e.stopPropagation(); send(messages[i - 1].content); }}>
+                                  ↻ 재생성
+                                </button>
+                              )}
+                              </>
+                            )}
+                            {showShare && (
                               <button type="button" className="ans-share" title="이 답변을 공개 링크로 공유해요"
                                 onClick={(e) => { e.stopPropagation();
                                   const q = messages[i - 1]?.role === "user" ? messages[i - 1].content : m.content;
@@ -634,6 +649,12 @@ export default function Chat({ name, email, image, features }: { name: string; e
               )}
               <form className={messages.length === 0 ? "hero" : undefined}
                 onSubmit={(e) => { e.preventDefault(); if (mention.length) { pickHandle(mention[0]); return; } send(input); }}>
+                {busy && conversationId && (
+                  <button type="button" className="btn ghost stop-btn" title="답변 생성 중지"
+                    onClick={() => { fetch(`/api/conversations/${conversationId}/stop`, { method: "POST" }).catch(() => {}); }}>
+                    ⏹ 중지
+                  </button>
+                )}
                 <input ref={inputRef} className="input" value={input} onChange={(e) => onInput(e.target.value)}
                   onBlur={() => setTimeout(() => setMention([]), 120)}
                   placeholder={messages.length === 0 && todayQs.length

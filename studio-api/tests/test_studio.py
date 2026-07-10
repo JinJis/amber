@@ -696,3 +696,27 @@ def test_rc1_tap_recorded_and_feed_reranked_by_taste(monkeypatch):
     out = rerank_by_taste(cards, kinds)
     assert out[0]["kind"] == "valuation"            # 취향 1순위로
     assert [c["kind"] for c in rerank_by_taste(cards, {})] == [c["kind"] for c in cards]  # 무신호=원순서
+
+
+async def test_uxq2_stop_cancels_active_run_and_persists_partial():
+    """UXQ-2: 중지 → 런 취소, 부분 답변은 정상 영속 경로로 보존(유실 없음)."""
+    from studioapi.runs import RunManager
+
+    mgr = RunManager()
+    gate = asyncio.Event()
+    done = asyncio.Event()
+
+    async def driver(run):
+        try:
+            await mgr.append(run, {"type": "token", "text": "부분 답변"})
+            await gate.wait()          # 여기서 취소됨
+        except asyncio.CancelledError:
+            await mgr.append(run, {"type": "done", "stopped": True})  # 취소-세이프 경로
+            done.set()
+
+    run = mgr.start("convS", driver)
+    await asyncio.sleep(0.02)
+    assert mgr.active_run_id("convS") == run.id
+    assert mgr.cancel("convS") is True          # 진행 중 → 취소 성공
+    await asyncio.wait_for(done.wait(), 2)      # 드라이버가 취소를 흡수하고 마무리
+    assert mgr.cancel("convS") is False         # 이미 끝난 런 → False

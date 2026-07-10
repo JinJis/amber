@@ -133,6 +133,14 @@ async def users_onboarded(user: User = Depends(current_user)) -> dict:
     return {"email": user.email, "onboarded": True}
 
 
+@app.post("/conversations/{conversation_id}/stop", tags=["Conversations"],
+          dependencies=[Depends(require_service)])
+async def stop_run(conversation_id: str, user: User = Depends(current_user)) -> dict:
+    """UXQ-2: 스트리밍 중지 — 서버측 런 취소(생성은 서버에 사니 클라 이탈만으론 안 멈춤)."""
+    from studioapi.runs import manager
+    return {"stopped": manager.cancel(conversation_id)}
+
+
 @app.get("/conversations", tags=["Conversations"], dependencies=[Depends(require_service)])
 async def list_conversations(user: User = Depends(current_user)) -> dict:
     with SessionLocal() as db:

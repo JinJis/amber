@@ -2005,3 +2005,7 @@ img, svg, video { max-width: 100%; }
 .st-theme-row .chip.on { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
 html[data-theme="dark"] img.ticker-logo, html[data-theme="dark"] .avatar:not(.mg) {
   background: #ECECEF; }   /* 투명 PNG 로고가 다크 배경에 안 묻히게 밝은 타일 유지 */
+
+/* UXQ-2: 응답 제어 — 중지(컴포저)·복사/재생성(답변 푸터) */
+.stop-btn { flex: none; white-space: nowrap; border-color: var(--stale); color: var(--stale); }
+.stop-btn:hover { background: var(--warn-bg); }
