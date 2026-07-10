@@ -188,3 +188,21 @@ def test_share_image_attach_and_public_serve(monkeypatch):
                       json={"data_url": "data:image/png;base64,Zm9v"}).status_code == 422  # 'foo' → not PNG
     client.delete(f"/shares/{tok}", headers=_hdr("img@u.com"))
     assert client.get(f"/shares/{tok}/image", headers={"X-Service-Token": SVC}).status_code == 404
+
+
+@respx.mock
+def test_view_beacon_counts_and_skips_revoked(monkeypatch):
+    """V-4: 공개 뷰 비콘 — +1 실측, revoked/만료엔 안 셈. 서비스 토큰만(비로그인 뷰어)."""
+    from studioapi.config import settings
+    monkeypatch.setattr(settings, "control_plane_url", "http://cp.test")
+    _cp()
+    tok = client.post("/shares", headers=_hdr("vw@u.com"), json={
+        "kind": "artifact", "title": "t", "payload": ART}).json()["token"]
+    assert client.post(f"/shares/{tok}/view", headers={"X-Service-Token": SVC}).json()["views"] == 1
+    client.post(f"/shares/{tok}/view", headers={"X-Service-Token": SVC})
+    pub = client.get(f"/shares/{tok}", headers={"X-Service-Token": SVC}).json()
+    assert pub["views"] == 2
+    mine = client.get("/shares", headers=_hdr("vw@u.com")).json()["shares"]
+    assert next(s for s in mine if s["token"] == tok)["views"] == 2
+    client.delete(f"/shares/{tok}", headers=_hdr("vw@u.com"))
+    assert client.post(f"/shares/{tok}/view", headers={"X-Service-Token": SVC}).json()["ok"] is False

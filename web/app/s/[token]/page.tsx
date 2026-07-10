@@ -6,7 +6,8 @@ import type { Metadata } from "next";
 import { ShareView } from "@/components/ShareView";
 import { plainText } from "@/lib/shareCard";
 
-export const dynamic = "force-dynamic";
+// V-3: 스냅샷 불변 — Next data cache로 바이럴 트래픽 흡수 (revoke 반영 ≤1h 지연 허용)
+export const revalidate = 3600;
 
 type Share = {
   token: string; kind: string; title: string; payload: Record<string, unknown>;
@@ -18,7 +19,7 @@ async function fetchShare(token: string): Promise<{ status: number; share: Share
   try {
     const r = await fetch(`${base}/shares/${encodeURIComponent(token)}`, {
       headers: { "X-Service-Token": process.env.SERVICE_TOKEN ?? "dev-service-token" },
-      cache: "no-store",
+      next: { revalidate: 3600 },
     });
     return { status: r.status, share: r.status === 200 ? await r.json() : null };
   } catch {

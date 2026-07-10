@@ -77,7 +77,8 @@ def _share_urls(token: str, title: str) -> dict:
 def _out(s: ShareLink) -> dict:
     return {"token": s.token, "kind": s.kind, "title": s.title,
             "created_at": s.created_at.isoformat() if s.created_at else None,
-            "revoked": s.revoked, "share_urls": _share_urls(s.token, s.title)}
+            "revoked": s.revoked, "views": int(s.views or 0),
+            "share_urls": _share_urls(s.token, s.title)}
 
 
 @router.post("/shares", summary="공유 만들기 — 스냅샷 + 공개 링크 + SNS 인텐트 URL")
@@ -151,6 +152,18 @@ async def get_share_image(token: str) -> Response:
                     headers={"Cache-Control": "public, max-age=86400"})
 
 
+@router.post("/shares/{token}/view", summary="V-4: 공개 페이지 뷰 비콘 (+1, best-effort)")
+async def count_view(token: str) -> dict:
+    """공개 페이지의 sendBeacon이 호출 — 서비스 토큰만(뷰어는 비로그인). revoked/만료엔 안 셈."""
+    with SessionLocal() as db:
+        s = db.get(ShareLink, token)
+        if s is None or s.revoked or (s.expires_at and s.expires_at < datetime.utcnow()):
+            return {"ok": False}
+        s.views = int(s.views or 0) + 1
+        db.commit()
+        return {"ok": True, "views": s.views}
+
+
 @router.get("/shares/{token}", summary="공개 읽기 — 스냅샷 페이로드 (유저 인증 불필요)")
 async def read_share(token: str) -> dict:
     """The web /s/{token} page calls this server-side with the service token only — no user."""
@@ -164,6 +177,6 @@ async def read_share(token: str) -> dict:
         raise HTTPException(410, "이 공유는 만료되었습니다.")
     return {"token": s.token, "kind": s.kind, "title": s.title,
             "payload": json.loads(s.payload), "image_path": s.image_path,
-            "has_image": bool(s.og_image),
+            "has_image": bool(s.og_image), "views": int(s.views or 0),
             "created_at": s.created_at.isoformat() if s.created_at else None,
             "share_urls": _share_urls(s.token, s.title)}

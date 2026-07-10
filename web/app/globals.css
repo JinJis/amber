@@ -1894,3 +1894,9 @@ img, svg, video { max-width: 100%; }
   .onb { height: 100vh; height: 100dvh; border-radius: 0; }
   .m-topbar { padding-top: 6px; padding-bottom: 6px; }
 }
+
+/* V-2: 네이티브 공유 + 시트 미리보기 한 줄 */
+.share-preview-line { font-size: 13px; color: var(--text); background: var(--panel-2);
+  border-radius: 10px; padding: 9px 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-preview-line .mono { color: var(--muted); font-size: 11px; }
+.btn.share-native { width: 100%; padding: 12px 0; font-size: 15px; }

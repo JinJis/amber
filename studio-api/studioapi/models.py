@@ -112,6 +112,8 @@ class ShareLink(Base):
     # and referenced by the public page's og:image. Stored with the share so it needs no volume.
     og_image: Mapped[str | None] = mapped_column(Text, nullable=True)
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    # V-4: 공개 페이지 뷰 카운터 (sendBeacon 실측 — 허수 없음)
+    views: Mapped[int] = mapped_column(Integer, default=0)
     # IMP-13: shares expire (+90d default) — corrected/deleted research must not stay public forever
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

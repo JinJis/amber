@@ -57,6 +57,18 @@ export function ShareSheet({ a, answer, audit, onClose }: {
     })();
   }, [a, answer, audit]);
 
+  const previewTitle = answer?.title || a?.title || "ValueGraph 자료";
+  const previewSrc = (answer?.citations ?? []).filter((c) => c.used || c.index != null).length;
+  const canNative = typeof navigator !== "undefined" && !!navigator.share;
+
+  async function nativeShare() {
+    if (!urls) return;
+    try {
+      await navigator.share({ title: previewTitle,
+        text: `${previewTitle} — 출처·기준일 포함 · ValueGraph`, url: urls.page });
+    } catch { /* 사용자가 시트를 닫음 — 무해 */ }
+  }
+
   async function copy() {
     if (!urls) return;
     try { await navigator.clipboard.writeText(urls.page); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {}
@@ -78,6 +90,14 @@ export function ShareSheet({ a, answer, audit, onClose }: {
         {state === "ready" && urls && (
           <>
             <p className="share-note mono">이 링크를 열면 답변 전체를 출처·기준일과 함께 볼 수 있어요 · 90일 후 만료 · 언제든 해제 가능</p>
+            <div className="share-preview-line">
+              <b>{previewTitle}</b>{previewSrc > 0 ? <span className="mono"> · 출처 {previewSrc}곳</span> : null}
+            </div>
+            {canNative && (
+              <button type="button" className="btn share-native" onClick={nativeShare}>
+                📤 공유하기
+              </button>
+            )}
             <div className="share-linkrow">
               <input className="share-link mono" readOnly value={urls.page} onFocus={(e) => e.currentTarget.select()} />
               <button className="chip" onClick={copy}>{copied ? "복사됨 ✓" : "링크 복사"}</button>

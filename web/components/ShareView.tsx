@@ -4,7 +4,7 @@
 // the provenance footer + (history) label travel with the artifact, and the CTA closes the
 // growth loop (share → page → sign-up).
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArtifactCard } from "./ArtifactCard";
 import type { Artifact, Citation, Msg } from "@/lib/types";
 import { Mascot } from "./ui";
@@ -19,6 +19,11 @@ type Share = {
 };
 
 export function ShareView({ status, share }: { status: number; share: Share | null }) {
+  // V-4: 실측 뷰 비콘 — 렌더가 캐시돼도(페이지 revalidate) 뷰는 클라이언트에서 센다.
+  useEffect(() => {
+    if (!share?.token) return;
+    try { navigator.sendBeacon?.(`/api/shares/${encodeURIComponent(share.token)}/view`); } catch {}
+  }, [share?.token]);
   return (
     <div className="share-page">
       <header className="share-head">
