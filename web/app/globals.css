@@ -2023,3 +2023,19 @@ html[data-theme="dark"] img.ticker-logo, html[data-theme="dark"] .avatar:not(.mg
 .rail-conv-act:hover { color: var(--text); background: var(--panel); }
 .rail-conv-act.danger:hover { color: var(--danger); }
 @media (pointer: coarse) { .rail-conv-act { display: inline-block; } }  /* 터치는 상시 노출 */
+
+/* UXQ-3: ⌘K 커맨드 팔레트 */
+.cmdk { width: 560px; max-width: calc(100vw - 32px); background: var(--panel); border-radius: 14px;
+  box-shadow: var(--shadow-pop); border: 1px solid var(--line-2); overflow: hidden;
+  align-self: flex-start; margin-top: 12vh; display: flex; flex-direction: column; }
+.cmdk-input { border: none; outline: none; background: transparent; color: var(--text);
+  font-size: 15px; padding: 15px 16px; border-bottom: 1px solid var(--line); font-family: inherit; }
+.cmdk-list { max-height: 320px; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 1px; }
+.cmdk-item { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: none;
+  background: none; border-radius: 8px; cursor: pointer; text-align: left; color: var(--text); font-size: 13.5px; }
+.cmdk-item.on { background: var(--rail-active); }
+.cmdk-ic { width: 18px; text-align: center; flex: none; }
+.cmdk-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmdk-kind { font-size: 10px; color: var(--muted); flex: none; }
+.cmdk-empty { padding: 18px 12px; font-size: 11.5px; color: var(--muted); text-align: center; }
+.cmdk-foot { padding: 8px 14px; border-top: 1px solid var(--line); font-size: 10px; color: var(--faint); }

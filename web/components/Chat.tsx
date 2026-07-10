@@ -11,6 +11,7 @@ import Watchlists, { Watchlist } from "./Watchlists";
 import { MentionChip } from "./MentionChip";
 import { TickerLogo } from "./TickerLogo";
 import { Settings } from "./Settings";
+import { CommandPalette } from "./CommandPalette";
 import { ContextPanel, evidenceOf, uniqueTools } from "./EvidencePanel";
 import { type LedgerRow } from "../lib/evidence";
 import { useIsMobile } from "../lib/useIsMobile";
@@ -107,6 +108,17 @@ export default function Chat({ name, email, image, features }: { name: string; e
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [convs, setConvs] = useState<{ id: string; title: string }[]>([]);
   const [convQuery, setConvQuery] = useState("");   // UXQ-4: 레일 대화 검색
+  // UXQ-3: ⌘K 커맨드 팔레트
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault(); setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   async function loadHistory() {
     try {
@@ -407,6 +419,9 @@ export default function Chat({ name, email, image, features }: { name: string; e
     {shareArt && (
       <ShareSheet a={shareArt} audit={panelMsg?.audit ?? null} onClose={() => setShareArt(null)} />
     )}
+    <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)}
+      convs={convs} groups={groups} onOpenConv={openConversation}
+      onAsk={(q) => { setView("explore"); setInput(q); inputRef.current?.focus(); }} />
     {shareMsg && (
       <ShareSheet answer={{ title: shareMsg.title, content: shareMsg.msg.content,
         artifacts: shareMsg.msg.artifacts, citations: shareMsg.msg.citations,
