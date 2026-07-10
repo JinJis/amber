@@ -77,6 +77,20 @@ export function TradeChart(
   const [drawMode, setDrawMode] = useState<null | "trend" | "hline">(null);
   const pending = useRef<{ time: string; price: number } | null>(null);
 
+  // Rebuild the chart only when the DATA actually changes — not when a parent re-render hands
+  // down new object identities. Streaming recreates the message (and its artifacts) on every SSE
+  // event, so identity-based deps tore the chart down at stream end and re-fit it (the "suddenly
+  // zooms out / goes blank" bug). The signature captures content: lengths + last timestamps.
+  const dataSig = [
+    a.kind, a.title, a.chart_style ?? "",
+    candleData.length, candleData[candleData.length - 1]?.time ?? "",
+    lineData.map((s) => `${s.label}:${s.points?.length ?? 0}:${s.points?.[s.points.length - 1]?.x ?? ""}`).join("|"),
+    overlays.map((o) => `${o.key}:${o.lines?.length ?? 0}`).join("|"),
+    a.markers?.length ?? 0, a.pricelines?.length ?? 0,
+    (a.annotations?.lines?.length ?? 0) + (a.annotations?.hlines?.length ?? 0) + (a.annotations?.zones?.length ?? 0),
+    (userAnn?.lines?.length ?? 0) + (userAnn?.hlines?.length ?? 0),
+  ].join("§");
+
   useEffect(() => {
     const el = box.current;
     if (!el) return;
@@ -386,12 +400,16 @@ export function TradeChart(
     }
 
     chartRef.current = chart;
-    const ro = new ResizeObserver(() => chart.applyOptions({
-      width: el.clientWidth, ...(fillHeight ? { height: el.clientHeight || 220 } : {}),
-    }));
+    // never apply a 0 width — a temporarily hidden container (view/tab switch, sheet transition)
+    // reports clientWidth 0 and a 0-width chart renders blank ("차트가 꺼짐").
+    const ro = new ResizeObserver(() => {
+      const w = el.clientWidth;
+      if (w > 0) chart.applyOptions({ width: w, ...(fillHeight ? { height: el.clientHeight || 220 } : {}) });
+    });
     ro.observe(el);
     return () => { ro.disconnect(); detachZones?.(); chart.remove(); chartRef.current = null; };
-  }, [a, bars, series, currency, range, logScale, rebase, isCandle, userAnn, drawMode, onDraw, fillHeight, underwater]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataSig, currency, range, logScale, rebase, isCandle, drawMode, onDraw, fillHeight, underwater]);
 
   const hasDrawings = (userAnn?.lines?.length || 0) + (userAnn?.hlines?.length || 0) > 0;
 

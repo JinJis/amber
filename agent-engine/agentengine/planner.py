@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from functools import cache
 
 from agentengine.config import settings
+from agentengine.usage import report as report_usage
 
 # `resolve_ticker` (+ `_user_text`) normalize the ticker the MODEL produces (e.g. "Apple" →
 # "AAPL") on the gemini path, so they stay; the rest of routing.py is legacy keyword-routing
@@ -202,13 +203,17 @@ class GeminiPlanner:
             except StopIteration:
                 return None
 
+        last_chunk = None
         while True:
             chunk = await asyncio.to_thread(_next, it)
             if chunk is None:
                 break
+            last_chunk = chunk
             t = getattr(chunk, "text", "") or ""
             if t:
                 yield t
+        if last_chunk is not None:
+            report_usage("synthesis", model, last_chunk)   # usage_metadata rides the final chunk
 
     async def _run(self, task: str, tools: dict, history: list, system: str | None = None,
                    conversation: list | None = None, force_final: bool = False,
@@ -231,6 +236,7 @@ class GeminiPlanner:
             # use the dedicated (light) response model, falling back to the planner model.
             model = settings.synthesis_model or self.model
             resp = await asyncio.to_thread(self._client.models.generate_content, model=model, contents=contents, config=config)
+            report_usage("synthesis", model, resp)
             return [Decision(final=_get_text_from_response(resp))]
 
         decls = [
@@ -244,6 +250,7 @@ class GeminiPlanner:
         )
 
         resp = await asyncio.to_thread(self._client.models.generate_content, model=self.model, contents=contents, config=config)
+        report_usage("plan", self.model, resp)
         calls = getattr(resp, "function_calls", None)
         if calls:
             # Gemini parallel function calling: return EVERY call this step so the caller fans them

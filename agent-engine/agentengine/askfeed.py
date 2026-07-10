@@ -28,6 +28,7 @@ import logging
 from pydantic import BaseModel
 
 from agentengine.config import settings
+from agentengine.usage import report as report_usage
 from agentengine.deskfeed import (
     DeskCard,
     _CARD_ITEM,
@@ -203,6 +204,7 @@ async def _gen_json(prompt: str, schema: dict) -> dict:
                           model=settings.budget_model, contents=prompt, config=cfg),
         timeout=settings.gemini_timeout_seconds,
     )
+    report_usage("askfeed", settings.budget_model, resp)
     return _loads_obj(_get_text_from_response(resp) or "")
 
 

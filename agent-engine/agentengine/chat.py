@@ -263,11 +263,8 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                 results[i] = res
                 yield {"type": "subagent", "id": i, "title": res.title, "status": "done",
                        "sources": len({(c.source, c.url) for c in res.citations}), "steps": res.steps}
-
-            for res in results:  # unify evidence (global de-dup + 1-based [n]), artifacts, history
-                if not res:
-                    continue
-                history.extend(res.history)
+                # stream this facet's evidence NOW (global de-dup + 1-based [n]) — the 근거 패널
+                # fills live as each sub-agent lands, not in one dump after the slowest one.
                 for c in res.citations:
                     cit = c.model_dump()
                     key = (cit.get("source"), cit.get("url"))
@@ -285,6 +282,10 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                     art = a.model_dump()
                     artifacts.append(art)
                     yield {"type": "artifact", "artifact": art}
+
+            for res in results:  # history stays in SUB ORDER (deterministic synthesis grounding)
+                if res:
+                    history.extend(res.history)
 
             # combine: ONE rich synthesis weaving every facet, citing the unified sources. Pass the
             # full sub-agent `history` (the actual tool results) so the deep synthesis model grounds

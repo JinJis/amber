@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 
+from agentengine.usage import report as report_usage
 from agentengine.models import (
     Artifact,
     ChartAnnotations,
@@ -92,6 +93,7 @@ async def _gemini_annotate(model: str, question: str, digest: str, ticker: str) 
         resp = await asyncio.to_thread(
             client.models.generate_content, model=model,
             contents=[types.Content(role="user", parts=[types.Part.from_text(text=user)])], config=cfg)
+        report_usage("annotations", model, resp)
         return json.loads(resp.text or "{}")
     except Exception as exc:  # noqa: BLE001 — degrade to no annotations, never crash the turn
         log.warning("annotate: gemini failed for %s: %s", ticker, exc)

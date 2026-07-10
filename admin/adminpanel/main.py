@@ -486,6 +486,116 @@ S&amp;P·코스피·코스닥 전체는 직접 입력란에 티커를 붙여넣�
     return HTMLResponse(page("/pipelines", "Pipelines", body, refresh=running))
 
 
+# --- Costs (COST-1) ---------------------------------------------------------
+@app.get("/costs", response_class=HTMLResponse)
+async def costs_view(request: Request):
+    """API 비용 대시보드 — LLM/임베딩 토큰 사용(컨트롤플레인 llm_usage)을 요율표로 달러화하고,
+    게이트웨이 호출량·고정 구독까지 한눈에. 요율은 데이터(.env PRICING_JSON), 코드가 아니다."""
+    from adminpanel.pricing import cost_usd, fixed_costs, registry
+
+    reg = registry()
+    rows: list = []
+    daily: list = []
+    conn_rows: list = []
+    err = ""
+    try:
+        eng = ENGINES.get("controlplane")
+        if eng is None:
+            raise RuntimeError("controlplane DB not mounted")
+        from datetime import datetime as _dt, timedelta as _td
+        d30, d14 = _dt.utcnow() - _td(days=30), _dt.utcnow() - _td(days=14)
+        with eng.connect() as conn:  # type: ignore[union-attr]
+            # dialect-neutral (runtime = Postgres, unit/dev = SQLite): cutoffs as bind params,
+            # MAX(estimated) needs an int cast on Postgres (no MAX(bool)).
+            rows = conn.execute(sa_text(
+                "SELECT service, model, kind, SUM(input_tokens) i, SUM(output_tokens) o, "
+                "SUM(calls) c, MAX(CAST(estimated AS INT)) e FROM llm_usage "
+                "WHERE ts >= :since GROUP BY service, model, kind ORDER BY SUM(input_tokens)+SUM(output_tokens) DESC"
+            ), {"since": d30}).all()
+            daily = conn.execute(sa_text(
+                "SELECT date(ts) d, SUM(input_tokens) i, SUM(output_tokens) o, SUM(calls) c "
+                "FROM llm_usage WHERE ts >= :since GROUP BY date(ts) ORDER BY d DESC"
+            ), {"since": d14}).all()
+            conn_rows = conn.execute(sa_text(
+                "SELECT connector_id, COUNT(*) n, SUM(cost_units) cu FROM usage_events "
+                "WHERE ts >= :since AND connector_id IS NOT NULL "
+                "GROUP BY connector_id ORDER BY COUNT(*) DESC LIMIT 30"
+            ), {"since": d30}).all()
+    except Exception as exc:  # noqa: BLE001 — first boot: table may not exist yet
+        err = f"{type(exc).__name__}: {exc}"
+
+    # --- LLM rows priced by the registry -------------------------------------------------------
+    total_usd, unknown_models = 0.0, set()
+    llm_tr = []
+    for s, m, k, i, o, c, e in rows:
+        usd = cost_usd(m, int(i or 0), int(o or 0))
+        if usd is None:
+            unknown_models.add(m)
+        else:
+            total_usd += usd
+        est = "~" if e else ""
+        llm_tr.append(
+            f"<tr><td class=mono>{_esc(s)}</td><td class=mono>{_esc(m)}</td><td>{_esc(k)}</td>"
+            f"<td class=mono style='text-align:right'>{int(i or 0):,}</td>"
+            f"<td class=mono style='text-align:right'>{int(o or 0):,}</td>"
+            f"<td class=mono style='text-align:right'>{int(c or 0):,}</td>"
+            f"<td class=mono style='text-align:right'>{'요율 미설정' if usd is None else f'{est}${usd:,.4f}'}</td></tr>")
+    llm_table = ("<table class=t><tr><th>서비스</th><th>모델</th><th>용도</th><th>입력 토큰</th>"
+                 "<th>출력 토큰</th><th>호출</th><th>비용(USD)</th></tr>" + "".join(llm_tr) + "</table>"
+                 ) if llm_tr else "<div class=empty>아직 기록이 없어요 — 서비스 재빌드 후 첫 질문/인제스트부터 쌓여요.</div>"
+
+    daily_tr = "".join(
+        f"<tr><td class=mono>{_esc(d)}</td><td class=mono style='text-align:right'>{int(i or 0):,}</td>"
+        f"<td class=mono style='text-align:right'>{int(o or 0):,}</td>"
+        f"<td class=mono style='text-align:right'>{int(c or 0):,}</td></tr>" for d, i, o, c in daily)
+    daily_table = ("<table class=t><tr><th>날짜</th><th>입력</th><th>출력</th><th>호출</th></tr>" + daily_tr + "</table>") if daily_tr else ""
+
+    conn_tr = "".join(
+        f"<tr><td class=mono>{_esc(cid)}</td><td class=mono style='text-align:right'>{int(n):,}</td>"
+        f"<td class=mono style='text-align:right'>{int(cu or 0):,}</td></tr>" for cid, n, cu in conn_rows)
+    conn_table = ("<table class=t><tr><th>커넥터</th><th>호출(30일)</th><th>내부 코스트 유닛</th></tr>" + conn_tr + "</table>"
+                  ) if conn_tr else "<div class=empty>게이트웨이 사용 기록이 없어요.</div>"
+
+    fixed = fixed_costs()
+    fixed_total = sum(f["usd"] for f in fixed)
+    fixed_tr = "".join(
+        f"<tr><td>{_esc(f['name'])}</td><td class=mono style='text-align:right'>${f['usd']:,.2f}/월</td>"
+        f"<td class=sub>{_esc(f['note'])}</td></tr>" for f in fixed)
+    fixed_table = ("<table class=t><tr><th>구독</th><th>월 요금</th><th>메모</th></tr>" + fixed_tr + "</table>"
+                   ) if fixed_tr else "<div class=empty>고정 구독이 등록되지 않았어요 — .env FIXED_COSTS_JSON에 선언하면 여기 합산돼요.</div>"
+
+    rules_tr = "".join(
+        f"<tr><td class=mono>*{_esc(r.get('match'))}*</td>"
+        f"<td class=mono style='text-align:right'>${float(r.get('in', 0)):,.2f}</td>"
+        f"<td class=mono style='text-align:right'>${float(r.get('out', 0)):,.2f}</td></tr>"
+        for r in reg.get("rules", []))
+    unknown_note = (f"<div class=sub>⚠ 요율 미설정 모델: {', '.join(sorted(_esc(u) for u in unknown_models))} — "
+                    "PRICING_JSON에 규칙을 추가하세요 (달러 표시는 절대 지어내지 않아요).</div>") if unknown_models else ""
+
+    body = (
+        (f"<div class=flash>{_esc(err)} — control-plane 재빌드 후 llm_usage 테이블이 생겨요.</div>" if err else "")
+        + "<p class=hint>모든 API 비용을 한곳에서 — LLM·임베딩 토큰은 실측(임베딩은 ~추정), 요율표로 달러화. "
+          "무료 API(Yahoo·SEC·DART·FRED·ECOS…)는 호출량만 집계돼요. 30초마다 자동 새로고침.</p>"
+        + "<h2>합계 (최근 30일)</h2><div class=grid>"
+        + f"<div class=card><h3>LLM+임베딩 비용</h3><div style='font-size:26px' class=mono>${total_usd:,.2f}</div>"
+          f"<div class=sub>요율 기준일: {_esc(reg.get('as_of'))}</div>{unknown_note}</div>"
+        + f"<div class=card><h3>고정 구독</h3><div style='font-size:26px' class=mono>${fixed_total:,.2f}/월</div>"
+          f"<div class=sub>.env FIXED_COSTS_JSON 선언분</div></div>"
+        + f"<div class=card><h3>월 추정 총액</h3><div style='font-size:26px' class=mono>${total_usd + fixed_total:,.2f}</div>"
+          f"<div class=sub>토큰 30일 합산 + 구독 (개략)</div></div>"
+        + "</div>"
+        + "<h2>LLM · 임베딩 사용 (모델 × 용도, 30일)</h2>" + llm_table
+        + ("<h2>일별 토큰 (14일)</h2>" + daily_table if daily_table else "")
+        + "<h2>게이트웨이 데이터 호출 (30일)</h2>"
+          "<div class=sub>커넥터별 호출량 — 상류 데이터 API는 무료 티어라 달러 비용은 0이고, "
+          "코스트 유닛은 내부 상대 가중치예요.</div>" + conn_table
+        + "<h2>고정 구독</h2>" + fixed_table
+        + "<h2>요율표 (per 1M tokens · USD)</h2>"
+          "<table class=t><tr><th>모델 매칭</th><th>입력</th><th>출력</th></tr>" + rules_tr + "</table>"
+    )
+    return HTMLResponse(page("/costs", "Costs", body, refresh=True))
+
+
 # --- Data -----------------------------------------------------------------
 @app.get("/upstream", response_class=HTMLResponse)
 async def upstream_view(request: Request):

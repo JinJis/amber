@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from controlplane.auth import generate_key
 from controlplane.config import settings
 from controlplane.db import SessionLocal
-from controlplane.models import Activation, ApiKey, AuditLog, Project, Tenant, UsageEvent
+from controlplane.models import Activation, ApiKey, AuditLog, LlmUsage, Project, Tenant, UsageEvent
 
 
 async def require_admin(x_admin_token: Annotated[str | None, Header(alias="X-Admin-Token")] = None) -> None:
@@ -99,6 +99,55 @@ async def list_activations(project_id: str) -> dict:
     with SessionLocal() as db:
         rows = db.execute(select(Activation).where(Activation.project_id == project_id)).scalars().all()
         return {"activations": [{"connector_id": a.connector_id, "enabled": a.enabled} for a in rows]}
+
+
+class LlmUsageIn(BaseModel):
+    service: str
+    kind: str
+    model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    calls: int = 1
+    estimated: bool = False
+
+
+@router.post("/llm-usage", summary="COST-1: record one LLM/embedding call's token usage")
+async def llm_usage_ingest(body: LlmUsageIn) -> dict:
+    with SessionLocal() as db:
+        db.add(LlmUsage(service=body.service[:24], kind=body.kind[:32], model=body.model[:64],
+                        input_tokens=max(0, body.input_tokens), output_tokens=max(0, body.output_tokens),
+                        calls=max(1, body.calls), estimated=body.estimated))
+        db.commit()
+    return {"ok": True}
+
+
+@router.get("/llm-usage/summary", summary="COST-1: token usage grouped by model × kind (+ per-day tail)")
+async def llm_usage_summary(days: int = 30) -> dict:
+    from datetime import datetime as _dt, timedelta as _td
+    since = _dt.utcnow() - _td(days=max(1, min(days, 365)))
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(LlmUsage.service, LlmUsage.model, LlmUsage.kind,
+                   func.count(), func.coalesce(func.sum(LlmUsage.input_tokens), 0),
+                   func.coalesce(func.sum(LlmUsage.output_tokens), 0),
+                   func.coalesce(func.sum(LlmUsage.calls), 0),
+                   func.max(LlmUsage.estimated))
+            .where(LlmUsage.ts >= since)
+            .group_by(LlmUsage.service, LlmUsage.model, LlmUsage.kind)
+        ).all()
+        daily = db.execute(
+            select(func.date(LlmUsage.ts), func.coalesce(func.sum(LlmUsage.input_tokens), 0),
+                   func.coalesce(func.sum(LlmUsage.output_tokens), 0), func.coalesce(func.sum(LlmUsage.calls), 0))
+            .where(LlmUsage.ts >= since).group_by(func.date(LlmUsage.ts)).order_by(func.date(LlmUsage.ts))
+        ).all()
+    return {
+        "since": since.isoformat(), "days": days,
+        "rows": [{"service": s, "model": m, "kind": k, "records": n,
+                  "input_tokens": int(i), "output_tokens": int(o), "calls": int(c),
+                  "estimated": bool(e)} for s, m, k, n, i, o, c, e in rows],
+        "daily": [{"date": str(d), "input_tokens": int(i), "output_tokens": int(o), "calls": int(c)}
+                  for d, i, o, c in daily],
+    }
 
 
 @router.get("/projects/{project_id}/usage", summary="Usage + cost summary")

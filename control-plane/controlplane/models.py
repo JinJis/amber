@@ -72,6 +72,24 @@ class UsageEvent(Base):
     ts: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class LlmUsage(Base):
+    """COST-1: every Gemini call (chat plan/synthesis, feeds, enrichment, RAG embeddings) reports
+    its token usage here — the admin cost dashboard prices these rows with the pricing registry.
+    `estimated` marks rows whose tokens were approximated (e.g. embeddings — the API returns no
+    usage metadata), so the dashboard can label them honestly."""
+
+    __tablename__ = "llm_usage"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    service: Mapped[str] = mapped_column(String(24), index=True)   # agent-engine | rag | studio-api
+    kind: Mapped[str] = mapped_column(String(32), index=True)      # plan|synthesis|intake|askfeed|…|embed
+    model: Mapped[str] = mapped_column(String(64), index=True)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    calls: Mapped[int] = mapped_column(Integer, default=1)
+    estimated: Mapped[bool] = mapped_column(Boolean, default=False)
+    ts: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

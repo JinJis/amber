@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     embedding_model: str = "gemini-embedding-2"   # latest (multimodal); or gemini-embedding-001
     embedding_dim: int = 1536                # 768 | 1536 | 3072 (1536 = strong + pgvector-indexable)
 
+    # COST-1: embedding token usage telemetry → control-plane admin API (best-effort).
+    # Env (RAG_ prefix): RAG_CONTROL_PLANE_URL / RAG_ADMIN_TOKEN.
+    control_plane_url: str = "http://control-plane:8001"
+    admin_token: str = "dev-admin-token"
+
     # --- reranker ----------------------------------------------------------
     reranker_backend: str = "none"           # none | gcp (Vertex Ranking API)
     reranker_model: str = "semantic-ranker-default-004"

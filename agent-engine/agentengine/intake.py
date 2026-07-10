@@ -13,6 +13,7 @@ import logging
 from dataclasses import dataclass, field
 
 from agentengine.config import settings
+from agentengine.usage import report as report_usage
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +215,7 @@ async def analyze_task(task: str, backend: str | None = None, conversation: list
             contents=_INTAKE_PROMPT.format(task=(task or "")[:800], context=_intake_context(conversation)),
             config=types.GenerateContentConfig(temperature=0, response_mime_type="application/json",
                                                response_schema=_INTAKE_SCHEMA, max_output_tokens=400))
+        report_usage("intake", settings.budget_model, resp)
         d = json.loads(getattr(resp, "text", "") or "{}")
         try:
             n = int(d.get("steps"))

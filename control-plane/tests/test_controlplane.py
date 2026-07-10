@@ -225,3 +225,23 @@ def test_catalog_index_carries_service():
     assert rag and rag[0]["service"] == "rag"
     yh = catalog_index.candidate_connectors("GET", "/prices", "US")
     assert yh and yh[0]["service"] == "datasets"  # default
+
+
+def test_llm_usage_ingest_and_summary():
+    """COST-1: services report token usage; the summary groups by model×kind for the cost page."""
+    r = client.post("/admin/llm-usage", headers=ADMIN, json={
+        "service": "agent-engine", "kind": "synthesis", "model": "gemini-flash-latest",
+        "input_tokens": 12000, "output_tokens": 900})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    client.post("/admin/llm-usage", headers=ADMIN, json={
+        "service": "rag", "kind": "embed_docs", "model": "gemini-embedding-2",
+        "input_tokens": 5000, "output_tokens": 0, "estimated": True})
+    s = client.get("/admin/llm-usage/summary", headers=ADMIN).json()
+    rows = {(x["model"], x["kind"]): x for x in s["rows"]}
+    syn = rows[("gemini-flash-latest", "synthesis")]
+    assert syn["input_tokens"] >= 12000 and syn["output_tokens"] >= 900 and syn["estimated"] is False
+    emb = rows[("gemini-embedding-2", "embed_docs")]
+    assert emb["estimated"] is True and emb["input_tokens"] >= 5000
+    assert s["daily"], "daily tail present"
+    # no admin token → 401 (telemetry is operator-plane only)
+    assert client.post("/admin/llm-usage", json={"service": "x", "kind": "k", "model": "m"}).status_code == 401

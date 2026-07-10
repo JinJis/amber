@@ -13,6 +13,7 @@ import logging
 import re
 
 from agentengine.config import settings
+from agentengine.usage import report as report_usage
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +151,7 @@ async def _followups_one(client, model: str, persona: str, task: str, answer: st
             logger.debug("followups[%s/%s]: attempt %d/%d", model, persona, i + 1, retries)
             resp = await asyncio.to_thread(client.models.generate_content, model=model,
                                            contents=contents, config=cfg)
+            report_usage("followups", model, resp)
             raw = getattr(resp, "text", "") or ""
             logger.debug("followups[%s/%s]: raw response = %s", model, persona, raw[:500])
             out = _loads_followups(raw)[:3]
@@ -339,6 +341,7 @@ async def refine_evidence(task: str, citations: list[dict], model: str,
                                                response_mime_type="application/json",
                                                response_schema=_REFINE_SCHEMA)),
             timeout=settings.gemini_enrich_timeout_seconds)
+        report_usage("verify", model, resp)
         d = json.loads(getattr(resp, "text", "") or "{}")
         brief = (str(d.get("brief") or "")).strip() or None
         scores: dict[int, dict] = {}

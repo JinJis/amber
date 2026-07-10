@@ -1809,3 +1809,104 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
   .st-plans { grid-template-columns: 1fr; }
   .st-usage-hero { flex-direction: column; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════════════
+   DEVICE COMPATIBILITY LAYER — every phone type renders cleanly (iPhone SE→Pro Max,
+   Galaxy S/Fold, Pixel…): base hygiene, dvh fallbacks, safe-areas on all four edges,
+   overflow-proof tables/popovers, touch targets, small-phone & landscape & tablet tiers.
+   Appended last so these rules win the cascade.
+   ══════════════════════════════════════════════════════════════════════════════════════ */
+
+/* — base hygiene (all viewports) — */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }   /* no iOS landscape font inflation */
+body { word-break: keep-all; overflow-wrap: break-word; }          /* Korean wraps on word boundaries */
+button, a { -webkit-tap-highlight-color: transparent; }
+img, svg, video { max-width: 100%; }
+/* popovers can never poke past the viewport edge */
+.num-tip { max-width: min(300px, calc(100vw - 32px)); }
+.mention-chip .mc-pop { max-width: min(300px, calc(100vw - 24px)); }
+
+/* — tablet tier (721–1080px: iPad portrait, Fold unfolded) — the desktop 3-column grid is too
+     wide here; compress rail+panel so the chat column keeps ≥50% (beats the inline resize style). */
+@media (min-width: 721px) and (max-width: 1080px) {
+  .shell.with-ctx { grid-template-columns: 170px minmax(0,1fr) 300px !important; }
+  .shell, .shell.no-right { grid-template-columns: 170px minmax(0,1fr); }
+}
+
+/* — phone tier (≤720px) — structural fixes on top of the earlier mobile block — */
+@media (max-width: 720px) {
+  /* dvh with vh fallback (older Android WebView has no dvh) */
+  .shell, .shell.with-ctx, .shell.no-right { height: 100vh; height: 100dvh; }
+  .shell.with-ctx .ctxpane, .ctxpane { height: 84vh; height: 84dvh; }
+  .sv { height: 92vh; height: 92dvh; }
+  .share-sheet { max-height: 90vh; max-height: 90dvh; }
+  .modal, .modal.wide, .modal.alert-sheet, .modal.widget-gallery { max-height: 92vh; max-height: 92dvh; }
+
+  /* safe areas on the horizontal edges too (landscape notch / Dynamic Island) */
+  .m-topbar { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+  .composer { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+  .ctxpane { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+  .rail { padding-left: max(12px, env(safe-area-inset-left)); }
+  .share-main { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+
+  /* every text control ≥16px — no iOS zoom-on-focus anywhere (search, selects, textareas) */
+  input, select, textarea { font-size: 16px; }
+
+  /* wide content scrolls INSIDE its box — the page never scrolls sideways */
+  .md table, .md.article table, .artifact-table, .sp-table {
+    display: block; overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+  .bubble, .md.article { min-width: 0; overflow-wrap: break-word; }
+  pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
+
+  /* two-pane screens collapse to one column */
+  .wl-layout { grid-template-columns: 1fr; }
+  .wl-groups { border-right: none; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+  .nbview { grid-template-columns: 1fr; height: auto; overflow: visible; }
+  .df-grid { grid-template-columns: 1fr; }
+  .sources-grid { grid-template-columns: 1fr 1fr; }
+  .settings { padding: 18px 14px 48px; }
+
+  /* onboarding becomes a full-screen sheet (was a 640px centered modal) */
+  .onb-backdrop { padding: 0; align-items: stretch; }
+  .onb { width: 100%; max-height: none; height: 100vh; height: 100dvh; border-radius: 0;
+    padding-bottom: env(safe-area-inset-bottom); }
+
+  /* sheets shouldn't chain-scroll the page behind them */
+  .ctxpane, .sv, .share-sheet, .modal, .onb { overscroll-behavior: contain; }
+
+  /* drawer sits above the topbar and respects the notch */
+  .m-backdrop { z-index: 38; }
+}
+
+/* — touch ergonomics (any coarse pointer, incl. tablets) — comfortable tap targets */
+@media (pointer: coarse) {
+  .chip { padding: 7px 13px; min-height: 34px; }
+  .fu-chip { padding: 11px 13px; }
+  .st-tab { padding: 11px 16px; }
+  .rail-item, .rail-conv { padding-top: 10px; padding-bottom: 10px; }
+  .sv-x, .ctx-sheet-x, .m-menu, .m-newchat { min-width: 40px; min-height: 40px; }
+  .qc-main { padding-bottom: 10px; }
+}
+
+/* — small phones (≤380px: iPhone SE/13 mini, compact Galaxy A) — tighten without breaking — */
+@media (max-width: 380px) {
+  .m-topbar .m-brand .wordmark { font-size: 14px; }
+  .signin-card { padding: 26px 20px; }
+  .signin-h { font-size: 21px; }
+  .msg.assistant .md.article { font-size: 14.5px; }
+  .composer { padding-left: 8px; padding-right: 8px; }
+  .composer form { gap: 6px; }
+  .btn { padding: 0 14px; }
+  .tk-chip { padding: 6px 9px; }
+  .share-sns { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .st-usage-name { width: 96px; }
+  .onb { font-size: 14px; }
+}
+
+/* — landscape phones (short viewport) — sheets go full-height so content stays usable — */
+@media (max-width: 940px) and (max-height: 500px) {
+  .shell.with-ctx .ctxpane, .ctxpane, .sv { height: 100vh; height: 100dvh; border-radius: 0; }
+  .share-sheet { max-height: 100vh; max-height: 100dvh; border-radius: 0; }
+  .onb { height: 100vh; height: 100dvh; border-radius: 0; }
+  .m-topbar { padding-top: 6px; padding-bottom: 6px; }
+}

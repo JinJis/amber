@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 from agentengine.client import PlatformClient
 from agentengine.config import settings
+from agentengine.usage import report as report_usage
 from agentengine.freshness import compute_freshness
 from agentengine.models import Citation
 from agentengine.provenance import _canonical_provenance
@@ -259,6 +260,7 @@ async def _synthesize(req: DeskFeedRequest, gathered: list[dict]) -> list[dict]:
                           model=settings.budget_model, contents=prompt, config=cfg),
         timeout=settings.gemini_timeout_seconds,
     )
+    report_usage("deskfeed", settings.budget_model, resp)
     return _parse_cards(_get_text_from_response(resp) or "")
 
 

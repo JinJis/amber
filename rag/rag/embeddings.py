@@ -103,6 +103,7 @@ class GeminiEmbedder:
             out.extend(_normalize(v) for v in vecs)
         if out:
             self.dim = len(out[0])
+        _report_usage(self.model, texts, query=query)
         return out
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
@@ -117,3 +118,32 @@ class GeminiEmbedder:
 @cache
 def get_embedder() -> Embedder:
     return GeminiEmbedder()
+
+
+# --- COST-1: embedding usage telemetry (best-effort, detached) --------------------------------
+# The embed API returns no usage metadata, so tokens are ESTIMATED (~4 chars/token) and flagged
+# `estimated` — the cost dashboard labels them as such (never presented as an exact figure).
+def _report_usage(model: str, texts: list[str], *, query: bool) -> None:
+    try:
+        import asyncio as _aio
+
+        import httpx as _hx
+
+        chars = sum(len(t or "") for t in texts)
+        if not chars:
+            return
+        payload = {"service": "rag", "kind": "embed_query" if query else "embed_docs",
+                   "model": model, "input_tokens": max(1, chars // 4), "output_tokens": 0,
+                   "calls": 1, "estimated": True}
+
+        async def _post() -> None:
+            try:
+                async with _hx.AsyncClient(timeout=3.0) as c:
+                    await c.post(f"{settings.control_plane_url}/admin/llm-usage", json=payload,
+                                 headers={"X-Admin-Token": settings.admin_token})
+            except Exception:  # noqa: BLE001 — telemetry never fails a search/ingest
+                pass
+
+        _aio.get_running_loop().create_task(_post())
+    except Exception:  # noqa: BLE001 — incl. no running loop (sync tests)
+        pass
