@@ -62,6 +62,22 @@ async def create_project(tenant_id: str, body: NameIn) -> dict:
         return {"id": p.id, "tenant_id": tenant_id, "name": p.name}
 
 
+class ProjectPatchIn(BaseModel):
+    plan: str | None = None      # guest | free | pro — drives the gateway's per-key rate tier
+
+
+@router.patch("/projects/{project_id}", summary="Update a project (PLAN-2: set its plan tier)")
+async def patch_project(project_id: str, body: ProjectPatchIn) -> dict:
+    with SessionLocal() as db:
+        p = db.get(Project, project_id)
+        if p is None:
+            raise HTTPException(404, "Unknown project.")
+        if body.plan is not None:
+            p.plan = body.plan
+        db.commit()
+        return {"id": p.id, "tenant_id": p.tenant_id, "name": p.name, "plan": p.plan}
+
+
 @router.post("/projects/{project_id}/keys", summary="Create an API key (shown once)")
 async def create_key(project_id: str, body: KeyIn) -> dict:
     with SessionLocal() as db:

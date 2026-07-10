@@ -40,7 +40,18 @@ class User(Base):
     # Profile (seeded from the OAuth provider on first login; display name is user-editable).
     name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     image: Mapped[str | None] = mapped_column(String(512), nullable=True)   # avatar URL (provider or set)
-    plan: Mapped[str] = mapped_column(String(24), default="free")           # free | pro | team (display-only)
+    # PLAN-1: guest | free | pro — quotas.py가 턴 한도, prepare_turn이 모델 티어,
+    # apply_plan이 커넥터 엔타이틀먼트를 이 값에서 끌어낸다 (더 이상 display-only 아님).
+    plan: Mapped[str] = mapped_column(String(24), default="free")
+    plan_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # REF-2: 피추천 가입 보너스 — bonus_turns_until까지 일일 한도에 +bonus_daily_turns.
+    bonus_daily_turns: Mapped[int] = mapped_column(Integer, default=0)
+    bonus_turns_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # REF-1: 내 추천 코드(lazy 발급) + 나를 추천한 유저의 이메일.
+    referral_code: Mapped[str | None] = mapped_column(String(16), unique=True, nullable=True)
+    referred_by: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # AUTH-4: 메일 발송 가능 여부 — 카카오 무이메일 센티널 계정은 False (메일러 게이트).
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=True)
     onboarded: Mapped[bool] = mapped_column(Boolean, default=False)  # completed the F1 onboarding
     # M-DESK: previous visit timestamp — bounds the desk feed's "since last visit" windows
     # (새로 들어온 공시 etc.). Updated each time the feed is served.
@@ -129,6 +140,20 @@ class ShareLink(Base):
     # IMP-13: shares expire (+90d default) — corrected/deleted research must not stay public forever
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class TurnUsage(Base):
+    """PLAN-1: 쿼터·과금의 단위인 '턴' 원장 — 답변 시작 시 1행. Message 카운트를 쓰지 않는
+    이유: 대화 삭제가 메시지를 지워 쿼터가 '환불'되는 구멍이 생긴다. day/month는 KST 기준
+    문자열(YYYY-MM-DD / YYYY-MM) — "내일 0시에 충전돼요"가 유저의 자정과 일치해야 한다."""
+
+    __tablename__ = "turn_usage"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_email: Mapped[str] = mapped_column(String(256), index=True)
+    conversation_id: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    day: Mapped[str] = mapped_column(String(10), index=True)    # KST YYYY-MM-DD
+    month: Mapped[str] = mapped_column(String(7), index=True)   # KST YYYY-MM
+    ts: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class Conversation(Base):

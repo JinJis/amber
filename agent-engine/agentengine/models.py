@@ -6,13 +6,21 @@ from pydantic import BaseModel
 
 
 class AgentSpec(BaseModel):
-    """Declarative ('SDK') agent definition a tenant can save and reuse."""
+    """Declarative ('SDK') agent definition a tenant can save and reuse.
+
+    PLAN-3: the spec is also the PLAN-TIER carrier — studio-api merges the user's plan
+    (guest/free/pro) into it per turn: synthesis model tier, step budget, sub-agent fan-out,
+    and the connector set. Resource configuration, not reasoning rules (invariant #9)."""
 
     system: str | None = None
     # restrict to a subset of activated tools. Entries may be full tool names
     # (``yahoo__prices``) or connector ids (``yahoo`` → all of its tools).
     allowed_tools: list[str] | None = None
     max_steps: int | None = None
+    # PLAN-3: per-turn synthesis model override (e.g. free tier → flash). None = engine default.
+    synthesis_model: str | None = None
+    # PLAN-3: cap the A2A sub-agent fan-out (0/1 disables decomposition). None = engine default.
+    max_subagents: int | None = None
     backend: str | None = None  # legacy field — ignored; the platform is Gemini-only (invariant #7)
 
 

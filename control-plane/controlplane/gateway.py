@@ -17,12 +17,44 @@ from controlplane.auth import resolve_key
 from controlplane.catalog_index import candidate_connectors, cost_units, is_governed
 from controlplane.config import settings
 from controlplane.db import SessionLocal
-from controlplane.models import Activation, AuditLog, UsageEvent
+from controlplane.models import Activation, AuditLog, Project, UsageEvent
 from controlplane.ratelimit import RateLimiter
 
 router = APIRouter()
 _client = httpx.AsyncClient(timeout=settings.http_timeout_seconds)
 _limiter = RateLimiter(settings.rate_limit_per_minute)
+
+# PLAN-2: per-plan gateway rate tiers (abuse backstop — the product quota lives in studio).
+# Env-overridable; a project with no/unknown plan keeps the global default, so existing ops/test
+# projects behave exactly as before.
+import json as _json
+import os as _os
+
+_PLAN_RATE_DEFAULTS = {"guest": 240, "free": 60, "pro": 240}
+try:
+    _PLAN_RATES = {**_PLAN_RATE_DEFAULTS, **_json.loads(_os.environ.get("PLAN_RATE_LIMITS_JSON", "{}"))}
+except Exception:  # noqa: BLE001 — a bad override never takes the gateway down
+    _PLAN_RATES = dict(_PLAN_RATE_DEFAULTS)
+
+_plan_cache: dict[str, tuple[float, str | None]] = {}   # project_id → (expires, plan)
+_PLAN_CACHE_TTL = 60.0
+
+
+def _project_plan(project_id: str) -> str | None:
+    """The project's plan tier, cached ~60s — one tiny lookup per key per minute, not per call."""
+    hit = _plan_cache.get(project_id)
+    if hit and hit[0] > time.monotonic():
+        return hit[1]
+    with SessionLocal() as db:
+        row = db.get(Project, project_id)
+        plan = getattr(row, "plan", None) if row else None
+    _plan_cache[project_id] = (time.monotonic() + _PLAN_CACHE_TTL, plan)
+    return plan
+
+
+def _rate_limit_for(project_id: str) -> int | None:
+    plan = _project_plan(project_id)
+    return _PLAN_RATES.get(plan) if plan else None
 
 _HOP = {"host", "content-length", "x-api-key", "x-admin-token", "connection", "x-tenant-id"}
 
@@ -124,8 +156,8 @@ async def gateway(full_path: str, request: Request) -> Response:
     # 2) entitlement (only catalog-governed paths)
     connector_id, cost, base_url, extra_headers = _resolve_entitlement(project_id, key_id, method, path, market)
 
-    # 3) rate limit
-    if not _limiter.allow(key_id):
+    # 3) rate limit (plan-tiered backstop — None plan keeps the global default)
+    if not _limiter.allow(key_id, _rate_limit_for(project_id)):
         raise HTTPException(429, "Rate limit exceeded.")
 
     # 4) proxy + meter + audit

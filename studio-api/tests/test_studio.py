@@ -486,8 +486,13 @@ def test_chat_with_agent_sends_spec_and_records_agent(monkeypatch):
                     json={"messages": [{"role": "user", "content": "AAPL filings?"}], "agent_id": "tpl_desk"})
     assert r.status_code == 200
     spec = captured["body"]["spec"]
-    # default desk = Gemini + unrestricted tools (data_sources [] → allowed_tools None = every tool)
-    assert spec["backend"] == "gemini" and spec["allowed_tools"] is None
+    # default desk = Gemini; PLAN-3: free 플랜이 스펙에 병합된다 — 무제한이던 allowed_tools가
+    # 무료 커넥터 셋으로, 합성 모델은 flash 티어로 좁혀진다 (pro면 그대로 None/무제한).
+    from studioapi import plans as _plans
+    assert spec["backend"] == "gemini"
+    assert spec["allowed_tools"] == _plans.limits("free")["connectors"]
+    assert spec["synthesis_model"].startswith("gemini-flash")
+    assert spec["max_steps"] == _plans.limits("free")["max_steps"]
     # the conversation remembers which agent drove it
     conv = client.get("/conversations", headers=_hdr(email)).json()["conversations"][0]
     assert conv["agent_id"] == "tpl_desk"

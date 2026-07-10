@@ -82,7 +82,12 @@ def _add_missing_columns() -> None:
     add_cols("pinned_artifacts",
              {"board_id": "VARCHAR(48)", "x": "INTEGER", "y": "INTEGER", "w": "INTEGER", "h": "INTEGER"})
     add_cols("users", {  # F1 onboarding flag · M-DESK last-visit window
-        "onboarded": f"BOOLEAN DEFAULT {bool_default}", "last_seen_at": ts})
+        "onboarded": f"BOOLEAN DEFAULT {bool_default}", "last_seen_at": ts,
+        # PLAN-1/REF-1/AUTH-4: 플랜 게이팅 + 레퍼럴 + 메일 게이트 (기존 유저는 verified 취급 —
+        # 지금까지의 가입 경로는 전부 구글 OAuth라 이메일이 실재한다)
+        "plan_updated_at": ts, "bonus_daily_turns": "INTEGER DEFAULT 0", "bonus_turns_until": ts,
+        "referral_code": "VARCHAR(16)", "referred_by": "VARCHAR(256)",
+        "email_verified": ("BOOLEAN DEFAULT true" if dialect == "postgresql" else "BOOLEAN DEFAULT 1")})
     add_cols("messages", {"artifacts": "TEXT", "audit": "TEXT",   # inline figures + number audit
                           "suggestions": "TEXT"})                 # 더 파고들기 chips survive reload
     add_cols("share_links", {"expires_at": ts, "og_image": "TEXT"})  # IMP-13 expiry · SH-2b OG image

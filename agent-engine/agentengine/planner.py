@@ -113,6 +113,9 @@ class GeminiPlanner:
         self._genai = genai
         self._client = genai_client()  # bounded request timeout (no infinite SSE hang)
         self.model = model
+        # PLAN-3: per-turn synthesis tier override (set from AgentSpec by the chat loop —
+        # a fresh planner is built per turn, so this never leaks across users/requests).
+        self.synthesis_override: str | None = None
 
     async def plan(self, task: str, tools: dict, history: list, system: str | None = None,
                    conversation: list | None = None, force_final: bool = False,
@@ -195,7 +198,7 @@ class GeminiPlanner:
         contents = _to_gemini_contents(conversation, history, task)
         contents.append(types.Content(role="user", parts=[types.Part.from_text(text=_SYNTHESIS_PROMPT)]))
         config = types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.3)
-        model = settings.synthesis_model or self.model
+        model = self.synthesis_override or settings.synthesis_model or self.model
         it = await asyncio.to_thread(self._client.models.generate_content_stream,
                                      model=model, contents=contents, config=config)
 
@@ -236,7 +239,7 @@ class GeminiPlanner:
                 temperature=0.3,   # finance: grounded + accurate over flowery (still natural prose)
             )
             # use the dedicated (light) response model, falling back to the planner model.
-            model = settings.synthesis_model or self.model
+            model = self.synthesis_override or settings.synthesis_model or self.model
             resp = await asyncio.to_thread(self._client.models.generate_content, model=model, contents=contents, config=config)
             report_usage("synthesis", model, resp)
             return [Decision(final=_get_text_from_response(resp))]

@@ -260,3 +260,25 @@ def test_production_refuses_dev_admin_token(monkeypatch):
         assert_production_secrets()
     monkeypatch.setattr(settings, "admin_token", "real-token-xyz")
     assert_production_secrets()  # 실 토큰 → 통과
+
+
+def test_plan_rate_limit_tiers(monkeypatch):
+    """PLAN-2: 플랜별 게이트웨이 rate 백스톱 — limit 인자가 전역 기본을 오버라이드."""
+    from controlplane.ratelimit import RateLimiter
+
+    rl = RateLimiter(per_minute=100)
+    key = "key_plan_test"
+    assert rl.allow(key, 2) is True
+    assert rl.allow(key, 2) is True
+    assert rl.allow(key, 2) is False        # 플랜 한도 2 → 3번째 거부
+    assert rl.allow("other_key") is True    # limit 미지정 → 전역 기본(100)
+
+
+def test_admin_patch_project_plan():
+    """PLAN-2: PATCH /admin/projects/{id} — 플랜 티어 설정 (apply_plan이 호출)."""
+    t = client.post("/admin/tenants", headers=ADMIN, json={"name": "plan-t"}).json()
+    p = client.post(f"/admin/tenants/{t['id']}/projects", headers=ADMIN, json={"name": "d"}).json()
+    r = client.patch(f"/admin/projects/{p['id']}", headers=ADMIN, json={"plan": "pro"})
+    assert r.status_code == 200 and r.json()["plan"] == "pro"
+    assert client.patch("/admin/projects/prj_nope", headers=ADMIN, json={"plan": "free"}).status_code == 404
+    assert client.patch(f"/admin/projects/{p['id']}", json={"plan": "free"}).status_code == 401  # no admin token

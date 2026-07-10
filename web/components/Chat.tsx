@@ -256,6 +256,11 @@ export default function Chat({ name, email, image, features }: { name: string; e
         a.clarify = { prompt: ev.prompt, options: ev.options || [], multi: !!ev.multi, origin };
       }
       else if (ev.type === "suggestions") a.suggestions = (ev.items || []) as string[];
+      else if (ev.type === "quota") {
+        // PLAN-2: 한도 판정 — blocked(턴 시작 안 됨) / degraded(표준 모델로 강등하고 계속)
+        a.quota = { mode: ev.mode, scope: ev.scope, plan: ev.plan, used: ev.used,
+                    limit: ev.limit ?? null, reset_at: ev.reset_at ?? null, message: ev.message || "" };
+      }
       else if (ev.type === "subagent") {
         const list = [...(a.subagents || [])];
         const card: SubAgent = { id: ev.id, title: ev.title, status: ev.status, sources: ev.sources, steps: ev.steps };
@@ -645,6 +650,12 @@ export default function Chat({ name, email, image, features }: { name: string; e
                   )}
                   {m.role === "assistant" && m.refused && (
                     <GuardrailLabel>매수·매도, 목표가, 전망은 답하지 않아요 — 신뢰를 위해 항상 지키는 원칙이에요.</GuardrailLabel>
+                  )}
+                  {m.role === "assistant" && m.quota && (
+                    <div className={`quota-note ${m.quota.mode}`} role="status">
+                      <b>{m.quota.mode === "degraded" ? "지금은 표준 모델로 답해요" : "한도에 도달했어요"}</b>
+                      <p>{m.quota.message}</p>
+                    </div>
                   )}
                   {m.role === "assistant" && (m.suggestions?.length || 0) > 0 && (
                     <div className="followups">

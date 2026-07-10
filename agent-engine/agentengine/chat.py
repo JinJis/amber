@@ -166,6 +166,10 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
         yield {"type": "thinking", "phase": "plan", "text": "밸류체인(공급망 구조)으로 정리할게요…"}
         system = ((system or "") + _VALUE_CHAIN_GUIDE).strip()
     planner = get_planner(bk)
+    # PLAN-3: plan-tier synthesis override (free/guest → flash) — resource config from the
+    # spec studio-api merged per turn; the planner instance is per-turn, so no cross-talk.
+    if spec and getattr(spec, "synthesis_model", None) and hasattr(planner, "synthesis_override"):
+        planner.synthesis_override = spec.synthesis_model
     from agentengine.planner import resolve_ticker
     history: list = []
     citations: list[dict] = []
@@ -288,9 +292,12 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
 
         # A2A: a complex, multi-facet request → dispatch focused sub-agents in PARALLEL (each
         # gathers its own evidence), stream their live cards, then COMBINE into one cited answer.
-        if intake.subtasks and len(intake.subtasks) >= 2:
+        # PLAN-3: the plan tier caps the fan-out (guest/free → 0/1 = no decomposition; the
+        # request still runs as one normal loop, so the answer never disappears — just narrower).
+        max_sub = spec.max_subagents if (spec and spec.max_subagents is not None) else None
+        if intake.subtasks and len(intake.subtasks) >= 2 and (max_sub is None or max_sub >= 2):
             from agentengine.orchestrator import run_subagent, SUBAGENT_BUDGET
-            subs = intake.subtasks
+            subs = intake.subtasks if max_sub is None else intake.subtasks[:max_sub]
             yield {"type": "thinking", "phase": "plan",
                    "text": f"분석을 {len(subs)}개 작업으로 나눠 동시에 진행할게요…"}
             for i, st in enumerate(subs):

@@ -32,6 +32,9 @@ class Project(Base):
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: _uid("prj"))
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
     name: Mapped[str] = mapped_column(String(128))
+    # PLAN-2: the product plan tier (guest|free|pro), set by studio's apply_plan. Drives the
+    # per-key gateway rate limit (abuse backstop). NULL = legacy/ops project → global default.
+    plan: Mapped[str | None] = mapped_column(String(24), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

@@ -916,6 +916,13 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .fu-chip:disabled { opacity: .5; cursor: default; }
 .fu-chip .fu-arrow { color: var(--accent); flex: none; }
 
+/* PLAN-2: 쿼터 카드 — blocked(한도 도달) / degraded(pro fair-use 초과, 표준 모델 강등) */
+.quota-note { max-width: 80%; margin-top: 8px; padding: 10px 14px; border-radius: 10px;
+  border: 1px solid var(--line-2); background: var(--panel); font-size: 13px; line-height: 1.5; }
+.quota-note b { display: block; margin-bottom: 2px; font-size: 12px; letter-spacing: .02em; }
+.quota-note p { margin: 0; color: var(--muted); }
+.quota-note.blocked { border-color: var(--accent); background: var(--accent-bg); }
+
 .sources { max-width: 80%; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; font-size: 13px; }
 .sources summary { cursor: pointer; color: var(--muted); }
 /* CLARIFY-WITH-OPTIONS: the agent's planning choices, rendered as pickable chips */
