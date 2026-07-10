@@ -38,6 +38,39 @@
   --shadow-card: 0 1px 2px rgba(0,0,0,.04), 0 6px 20px rgba(0,0,0,.04);
   --shadow-pop: 0 8px 26px rgba(0,0,0,.06);
 }
+/* UXQ-1 다크모드 — 같은 토큰, 매트 다크그레이 팔레트. html[data-theme]가 승자;
+   무속성이면 시스템(prefers-color-scheme)을 따른다. 문서 뷰어(.sv)는 실제 서류라 라이트 유지. */
+html[data-theme="dark"] {
+  --bg: #131417; --panel: #1C1D21; --panel-2: #17181B; --panel-3: #16171A;
+  --text: #E7E7EA; --text-2: #B9B9C0; --muted: #8A8A92; --faint: #64646C;
+  --line: #2A2B30; --line-2: #34353B; --line-3: #222327;
+  --ink: #E9E9EC; --paper: #E9E9EC; --on-ink: #17181B; --focus: #E9E9EC;
+  --accent: #9297D6; --accent-bg: #232532; --accent-fg: #ABAFE0;
+  --rail-active: #24252A;
+  --fresh: #2BB673; --aging: #E0B12F; --stale: #E06154; --gap: #64646C;
+  --danger: #E06154;
+  --warn-fg: #E3C36A; --warn-bg: #2A2413; --warn-line: #4A3F1C;
+  --mark: #4A3F1C;
+  --shadow-card: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+  --shadow-pop: 0 8px 26px rgba(0,0,0,.5);
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) {
+  --bg: #131417; --panel: #1C1D21; --panel-2: #17181B; --panel-3: #16171A;
+  --text: #E7E7EA; --text-2: #B9B9C0; --muted: #8A8A92; --faint: #64646C;
+  --line: #2A2B30; --line-2: #34353B; --line-3: #222327;
+  --ink: #E9E9EC; --paper: #E9E9EC; --on-ink: #17181B; --focus: #E9E9EC;
+  --accent: #9297D6; --accent-bg: #232532; --accent-fg: #ABAFE0;
+  --rail-active: #24252A;
+  --fresh: #2BB673; --aging: #E0B12F; --stale: #E06154; --gap: #64646C;
+  --danger: #E06154;
+  --warn-fg: #E3C36A; --warn-bg: #2A2413; --warn-line: #4A3F1C;
+  --mark: #4A3F1C;
+  --shadow-card: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+  --shadow-pop: 0 8px 26px rgba(0,0,0,.5);
+  }
+}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text);
   font-family: var(--ui); -webkit-font-smoothing: antialiased; }
@@ -821,7 +854,7 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .msg.user { align-items: flex-end; }
 .bubble { line-height: 1.6; }
 /* user message = ink chip (our identity); assistant = flush document text (no card box) */
-.msg.user .bubble { background: var(--ink); border: 1px solid var(--ink); color: #EDEDEF;
+.msg.user .bubble { background: var(--ink); border: 1px solid var(--ink); color: var(--on-ink);
   padding: 10px 14px; border-radius: 15px; border-bottom-right-radius: 5px; max-width: 80%; white-space: pre-wrap; }
 .msg.assistant .bubble { background: transparent; border: none; box-shadow: none; padding: 0; max-width: 100%; }
 
@@ -1947,8 +1980,8 @@ img, svg, video { max-width: 100%; }
   .m-live-pill > * { flex: none; }
   .m-live-pill .mono { font-weight: 400; opacity: .85; flex: 0 1 auto; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; }
-  .m-live-pill .tl-spin { width: 12px; height: 12px; border: 2px solid rgba(255,255,255,.35);
-    border-top-color: var(--on-ink); }
+  .m-live-pill .tl-spin { width: 12px; height: 12px;
+    border: 2px solid color-mix(in srgb, var(--on-ink) 30%, transparent); border-top-color: var(--on-ink); }
   .m-live-pill .mlp-open { opacity: .7; font-size: 10px; }
   @media (max-width: 380px) { .m-live-pill { font-size: 11.5px; padding: 0 13px; gap: 6px; } }
 
@@ -1966,3 +1999,9 @@ img, svg, video { max-width: 100%; }
   .ctxpane .ctx-trust { width: 100%; box-sizing: border-box; }
   .ctxpane .ctxpane-head { margin-left: -2px; }
 }
+
+/* UXQ-1: 테마 세그먼트 + 다크에서 밝게 유지할 것들(실서류 뷰어·OG는 종이) */
+.st-theme-row { display: flex; gap: 8px; }
+.st-theme-row .chip.on { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
+html[data-theme="dark"] img.ticker-logo, html[data-theme="dark"] .avatar:not(.mg) {
+  background: #ECECEF; }   /* 투명 PNG 로고가 다크 배경에 안 묻히게 밝은 타일 유지 */

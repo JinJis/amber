@@ -37,6 +37,23 @@ export function Settings({ name, email, image }: { name: string; email: string; 
   const [editName, setEditName] = useState(name);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  // UXQ-1: 테마 — 쿠키(vg_theme) + <html data-theme> 즉시 적용. auto=속성 제거(시스템 추종).
+  const [theme, setTheme] = useState<"auto" | "light" | "dark">(() => {
+    if (typeof document === "undefined") return "auto";
+    const m = document.cookie.match(/(?:^|; )vg_theme=(light|dark)/);
+    return (m?.[1] as "light" | "dark") ?? "auto";
+  });
+  function applyTheme(v: "auto" | "light" | "dark") {
+    setTheme(v);
+    const root = document.documentElement;
+    if (v === "auto") {
+      root.removeAttribute("data-theme");
+      document.cookie = "vg_theme=; Max-Age=0; path=/";
+    } else {
+      root.setAttribute("data-theme", v);
+      document.cookie = `vg_theme=${v}; Max-Age=31536000; path=/; SameSite=Lax`;
+    }
+  }
 
   useEffect(() => {
     (async () => {
@@ -91,6 +108,16 @@ export function Settings({ name, email, image }: { name: string; email: string; 
             </div>
           </label>
           <p className="st-note mono">프로필 사진은 로그인한 계정(Google·카카오·네이버)에서 가져와요.</p>
+          <div className="st-field">
+            <span className="st-label">테마</span>
+            <div className="st-theme-row">
+              {([["auto", "자동"], ["light", "라이트"], ["dark", "다크"]] as const).map(([v, l]) => (
+                <button key={v} type="button" className={`chip ${theme === v ? "on" : ""}`}
+                  onClick={() => applyTheme(v)}>{l}</button>
+              ))}
+            </div>
+            <p className="st-note mono">자동은 기기 설정(라이트/다크)을 따라가요.</p>
+          </div>
           <div className="st-account">
             <a className="btn ghost" href="/api/auth/signout">로그아웃</a>
           </div>
