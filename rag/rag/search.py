@@ -92,6 +92,21 @@ async def search(query: str, top_k: int | None = None, filters: dict | None = No
     if not hits:
         return []
 
+    # RQ-6: 신선도 부스트 — 호출자가 명시적으로 doc_type=news를 필터한 검색만(키워드 추론
+    # 없음, 인바리언트 준수). RRF 점수에 as_of 지수감쇠 가점을 블렌드: 오늘=+0.5·30일 반감.
+    if (filters or {}).get("doc_type") == "news":
+        import math
+        from datetime import datetime
+
+        def _recency(chunk) -> float:
+            try:
+                d = datetime.fromisoformat(str(chunk.provenance().get("as_of") or "")[:10])
+                age = max(0.0, float((datetime.utcnow() - d).days))
+                return 0.5 * math.exp(-age / 30.0)
+            except Exception:  # noqa: BLE001 — as_of 없으면 가점 0 (불이익 아님)
+                return 0.0
+        hits = sorted(((c, sc + _recency(c)) for c, sc in hits), key=lambda t: -t[1])
+
     if settings.reranker_backend != "none":
         # Reranking is a precision boost ON TOP of the fused order — never let a reranker
         # outage (API not enabled, quota, transient 5xx) break search. On failure, keep the
