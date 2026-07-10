@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     ask_feed_refresh_seconds: int = 300                  # ASK_FEED_REFRESH_SECONDS (Macro Trends, 5 min)
     ask_feed_ticker_ttl_seconds: int = 1800              # ASK_FEED_TICKER_TTL_SECONDS (per-ticker cache, 30 min)
     ask_feed_generate_timeout_seconds: float = 45.0      # ASK_FEED_GENERATE_TIMEOUT_SECONDS (one gather+synth)
+    # GUEST-1: 익명 체험 — 비로그인 방문자가 게스트로 2~3턴 맛보고 가입으로 이어지는 퍼널.
+    feature_guest: bool = False                          # FEATURE_GUEST
+    guest_turns_max: int = 3                             # GUEST_TURNS_MAX (디바이스당 평생)
+    guest_turns_per_ip_day: int = 10                     # GUEST_TURNS_PER_IP_DAY (어뷰즈 백스톱)
+    guest_ip_salt: str = "dev-guest-salt"                # GUEST_IP_SALT (ip_hash 솔트)
 
 
 settings = Settings()

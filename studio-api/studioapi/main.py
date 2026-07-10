@@ -19,7 +19,7 @@ from studioapi.chat import sse_tail, start_turn
 from studioapi.config import settings
 from studioapi.runs import manager as run_manager
 from studioapi.db import SessionLocal, init_db
-from studioapi.deps import current_user, require_service
+from studioapi.deps import current_actor, current_user, require_service
 from studioapi.models import Conversation, Message, User
 from studioapi.orm_helpers import get_owned
 from studioapi.market import router as market_router
@@ -84,7 +84,7 @@ def _profile(user: User) -> dict:
 
 
 @app.get("/users/me", tags=["Users"], dependencies=[Depends(require_service)])
-async def users_me(user: User = Depends(current_user)) -> dict:
+async def users_me(user: User = Depends(current_actor)) -> dict:
     return _profile(user)
 
 
@@ -137,14 +137,14 @@ async def users_onboarded(user: User = Depends(current_user)) -> dict:
 
 @app.post("/conversations/{conversation_id}/stop", tags=["Conversations"],
           dependencies=[Depends(require_service)])
-async def stop_run(conversation_id: str, user: User = Depends(current_user)) -> dict:
+async def stop_run(conversation_id: str, user: User = Depends(current_actor)) -> dict:
     """UXQ-2: 스트리밍 중지 — 서버측 런 취소(생성은 서버에 사니 클라 이탈만으론 안 멈춤)."""
     from studioapi.runs import manager
     return {"stopped": manager.cancel(conversation_id)}
 
 
 @app.get("/conversations", tags=["Conversations"], dependencies=[Depends(require_service)])
-async def list_conversations(user: User = Depends(current_user)) -> dict:
+async def list_conversations(user: User = Depends(current_actor)) -> dict:
     with SessionLocal() as db:
         rows = db.execute(
             select(Conversation).where(Conversation.user_email == user.email).order_by(Conversation.created_at.desc())
@@ -186,7 +186,7 @@ async def delete_conversation(conversation_id: str, user: User = Depends(current
 
 
 @app.get("/conversations/{conversation_id}/messages", tags=["Conversations"], dependencies=[Depends(require_service)])
-async def conversation_messages(conversation_id: str, user: User = Depends(current_user)) -> dict:
+async def conversation_messages(conversation_id: str, user: User = Depends(current_actor)) -> dict:
     with SessionLocal() as db:
         rows = db.execute(
             select(Message).where(Message.conversation_id == conversation_id).order_by(Message.id)
@@ -203,14 +203,14 @@ async def conversation_messages(conversation_id: str, user: User = Depends(curre
 
 
 @app.post("/chat/stream", tags=["Chat"], dependencies=[Depends(require_service)])
-async def chat_stream(body: ChatIn, user: User = Depends(current_user)) -> StreamingResponse:
+async def chat_stream(body: ChatIn, user: User = Depends(current_actor)) -> StreamingResponse:
     # generation runs in the BACKGROUND (survives the client leaving); the response tails it
     run = start_turn(user, body.conversation_id, body.messages, body.agent_id)
     return StreamingResponse(sse_tail(run, 0), media_type="text/event-stream")
 
 
 @app.get("/conversations/{conversation_id}/active-run", tags=["Chat"], dependencies=[Depends(require_service)])
-async def conversation_active_run(conversation_id: str, user: User = Depends(current_user)) -> dict:
+async def conversation_active_run(conversation_id: str, user: User = Depends(current_actor)) -> dict:
     """The run still generating for this conversation, if any — so re-entering resumes it live."""
     with SessionLocal() as db:
         conv = db.get(Conversation, conversation_id)
@@ -220,7 +220,7 @@ async def conversation_active_run(conversation_id: str, user: User = Depends(cur
 
 
 @app.get("/runs/{run_id}/stream", tags=["Chat"], dependencies=[Depends(require_service)])
-async def run_stream(run_id: str, user: User = Depends(current_user), from_index: int = 0) -> StreamingResponse:
+async def run_stream(run_id: str, user: User = Depends(current_actor), from_index: int = 0) -> StreamingResponse:
     """Tail (resume) an in-flight or finished run from ``from_index`` — replay buffered events,
     then live ones. Used when the user re-enters a conversation whose answer is still generating."""
     run = run_manager.get(run_id)

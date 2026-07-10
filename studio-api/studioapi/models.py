@@ -142,6 +142,29 @@ class ShareLink(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class ServiceState(Base):
+    """GUEST-1: 서비스 수준 KV — 예: 공유 게스트 테넌트의 project/key(JSON). 서버 사이드 전용;
+    브라우저에는 절대 내려가지 않는다."""
+
+    __tablename__ = "service_state"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)  # JSON
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class GuestSession(Base):
+    """GUEST-1: 익명 체험 세션(디바이스 단위) — httpOnly 쿠키의 id가 PK. 평생 턴 캡의 주체이자
+    IP 어뷰즈 원장(ip_hash = sha256(salt+ip)); 가입으로 이어지면 claimed_by에 이메일이 남고
+    같은 세션은 다시 못 쓴다(GUEST-3)."""
+
+    __tablename__ = "guest_sessions"
+    id: Mapped[str] = mapped_column(String(48), primary_key=True)
+    ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    turns_used: Mapped[int] = mapped_column(Integer, default=0)
+    claimed_by: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class TurnUsage(Base):
     """PLAN-1: 쿼터·과금의 단위인 '턴' 원장 — 답변 시작 시 1행. Message 카운트를 쓰지 않는
     이유: 대화 삭제가 메시지를 지워 쿼터가 '환불'되는 구멍이 생긴다. day/month는 KST 기준

@@ -66,20 +66,25 @@ _DEFAULT_PLANS: dict[str, dict] = {
 }
 
 
+def _apply_env_shortcuts(plans: dict[str, dict]) -> dict[str, dict]:
+    """자주 만지는 단일 값의 env 숏컷 — GUEST_TURNS_MAX (전체 오버라이드는 PLANS_JSON)."""
+    gmax = os.environ.get("GUEST_TURNS_MAX", "")
+    if gmax.isdigit():
+        plans["guest"]["lifetime_turns"] = int(gmax)
+    return plans
+
+
 def _plans() -> dict[str, dict]:
     """PLANS_JSON env를 플랜 단위로 얕게 병합 — 운영 중 캡/모델을 코드 배포 없이 조정한다."""
+    merged = {k: dict(v) for k, v in _DEFAULT_PLANS.items()}
     raw = os.environ.get("PLANS_JSON", "")
-    if not raw:
-        return _DEFAULT_PLANS
-    try:
-        override = json.loads(raw)
-        merged = {k: dict(v) for k, v in _DEFAULT_PLANS.items()}
-        for name, patch in (override or {}).items():
-            merged.setdefault(name, {}).update(patch or {})
-        return merged
-    except Exception as exc:  # noqa: BLE001 — 잘못된 오버라이드가 서비스를 죽이면 안 됨
-        logger.error("PLANS_JSON invalid (%s) — using defaults", exc)
-        return _DEFAULT_PLANS
+    if raw:
+        try:
+            for name, patch in (json.loads(raw) or {}).items():
+                merged.setdefault(name, {}).update(patch or {})
+        except Exception as exc:  # noqa: BLE001 — 잘못된 오버라이드가 서비스를 죽이면 안 됨
+            logger.error("PLANS_JSON invalid (%s) — using defaults", exc)
+    return _apply_env_shortcuts(merged)
 
 
 def limits(plan: str) -> dict:

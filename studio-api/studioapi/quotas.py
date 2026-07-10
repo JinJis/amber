@@ -51,6 +51,25 @@ def _next_month_first(now: datetime) -> str:
     return now.replace(year=y, month=m, day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
 
 
+def _guest_ip_turns_today(db, email: str, day: str) -> int | None:
+    """같은 IP의 게스트 세션들이 오늘 소비한 턴 합계 — 쿠키를 지워 새 세션을 파는 우회를 막는
+    어뷰즈 백스톱. IP를 모르는 세션(ip_hash 없음)은 None(백스톱 미적용)."""
+    from studioapi.guest import gid_of, guest_email
+    from studioapi.models import GuestSession
+
+    gid = gid_of(email)
+    if not gid:
+        return None
+    sess = db.get(GuestSession, gid)
+    if sess is None or not sess.ip_hash:
+        return None
+    sibling_ids = db.execute(select(GuestSession.id).where(
+        GuestSession.ip_hash == sess.ip_hash)).scalars().all()
+    emails = [guest_email(s) for s in sibling_ids]
+    return db.execute(select(func.count()).select_from(TurnUsage).where(
+        TurnUsage.user_email.in_(emails), TurnUsage.day == day)).scalar() or 0
+
+
 def _daily_limit(user: User, lim: dict, now: datetime) -> int | None:
     """플랜 일일 한도 + REF-2 가입 보너스(+N턴/일, 만료일까지)."""
     base = lim.get("daily_turns")
@@ -80,6 +99,7 @@ def check_and_consume(user: User, conversation_id: str | None = None) -> QuotaVe
         # 게스트: 평생 캡(디바이스당) — 일/월이 아니라 총 사용량으로 판정 (GUEST-1)
         lifetime_limit = lim.get("lifetime_turns")
         if lifetime_limit is not None:
+            from studioapi.config import settings as _settings
             total_used = db.execute(select(func.count()).select_from(TurnUsage).where(
                 TurnUsage.user_email == user.email)).scalar() or 0
             if total_used >= lifetime_limit:
@@ -87,6 +107,14 @@ def check_and_consume(user: User, conversation_id: str | None = None) -> QuotaVe
                     mode="blocked", scope="guest", plan=plan, used=total_used, limit=lifetime_limit,
                     message=(f"게스트 체험 {lifetime_limit}회를 모두 사용했어요. 가입하면 지금까지 "
                              "나눈 대화 그대로, 바로 이어갈 수 있어요."))
+            # 어뷰즈 백스톱: 같은 IP의 게스트 세션들이 오늘 쓴 턴 합계 (쿠키 삭제 우회 차단)
+            ip_used = _guest_ip_turns_today(db, user.email, day)
+            if ip_used is not None and ip_used >= _settings.guest_turns_per_ip_day:
+                return QuotaVerdict(
+                    mode="blocked", scope="guest", plan=plan, used=ip_used,
+                    limit=_settings.guest_turns_per_ip_day, reset_at=_tomorrow_midnight(now),
+                    message=("오늘은 이 네트워크의 게스트 체험이 모두 소진됐어요. 가입하면 "
+                             "지금 바로 이어갈 수 있어요."))
 
         daily_limit = _daily_limit(user, lim, now)
         if daily_limit is not None and daily_used >= daily_limit:
@@ -109,6 +137,13 @@ def check_and_consume(user: User, conversation_id: str | None = None) -> QuotaVe
                              "다시 충전돼요 — Pro로 업그레이드하면 지금 바로 이어갈 수 있어요."))
 
         db.add(TurnUsage(user_email=user.email, conversation_id=conversation_id, day=day, month=month))
+        if lifetime_limit is not None:   # 게스트: 세션 카운터도 동기(빠른 잔여 표시용)
+            from studioapi.guest import gid_of
+            from studioapi.models import GuestSession
+            gid = gid_of(user.email)
+            sess = db.get(GuestSession, gid) if gid else None
+            if sess is not None:
+                sess.turns_used = (sess.turns_used or 0) + 1
         db.commit()
 
     if degraded:
