@@ -44,7 +44,8 @@ def _last_user(messages: list[dict]) -> str:
 
 
 async def _followups_event(task: str, final_text: str, citations: list[dict],
-                           bk: str | None, conversation: list | None = None) -> dict | None:
+                           bk: str | None, conversation: list | None = None,
+                           audit: dict | None = None, artifacts: list[dict] | None = None) -> dict | None:
     """Build the 'suggestions' SSE event for a finished answer. Always non-empty when there's an
     answer — suggest_followups uses the deep LLM on gemini and a deterministic capability-aware
     fallback otherwise — so the chip row renders on EVERY answer path (conceptual + data). The
@@ -59,6 +60,16 @@ async def _followups_event(task: str, final_text: str, citations: list[dict],
         ctx_bits.append("다룬 종목: " + ", ".join(tickers[:5]))
     if kinds:
         ctx_bits.append("사용한 데이터: " + ", ".join(kinds))
+    # RC-2: 이번 답변의 검증된 수치·그린 차트 종류를 문맥으로 — 후속질문이 "그 12%가 왜"처럼
+    # 구체 수치를 파고들게 한다 (검증 통과분만 — 날조 수치로 유도하지 않음).
+    if audit and audit.get("ledger"):
+        nums = [str(r.get("raw")) for r in audit["ledger"] if r.get("supported")][:6]
+        if nums:
+            ctx_bits.append("검증된 핵심 수치: " + ", ".join(nums))
+    if artifacts:
+        akinds = sorted({str(a.get("kind")) for a in artifacts if a.get("kind")})[:4]
+        if akinds:
+            ctx_bits.append("그린 차트·표: " + ", ".join(akinds))
     # recent prior turns → the suggester builds on the conversation (심화), not generic chips
     transcript = _intake_context(conversation) if conversation else ""
     conv_block = f"최근 대화:\n{transcript}\n\n" if transcript and transcript != "(no prior turns)" else ""
@@ -498,7 +509,7 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
 
     # PH-THINK: capability-aware follow-up chips — ALWAYS shown after a real answer (deep LLM when
     # gemini, deterministic capability-aware fallback otherwise), so the chip row is never empty.
-    sev = await _followups_event(task, final_text, citations, bk, conversation=messages)
+    sev = await _followups_event(task, final_text, citations, bk, conversation=messages, audit=audit, artifacts=artifacts)
     if sev:
         yield sev
 
