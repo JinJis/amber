@@ -1935,14 +1935,22 @@ img, svg, video { max-width: 100%; }
 /* ── 모바일: 근거 수집 라이브 필 + 근거 패널 fit ─────────────────────────────────────── */
 .m-live-pill { display: none; }
 @media (max-width: 720px) {
-  .m-live-pill { position: fixed; left: 50%; transform: translateX(-50%); z-index: 36;
-    bottom: calc(86px + env(safe-area-inset-bottom)); display: inline-flex; align-items: center;
-    gap: 8px; background: var(--ink); color: var(--on-ink); border: none; border-radius: 999px;
-    padding: 10px 16px; font-size: 12.5px; font-weight: 600; box-shadow: 0 8px 24px rgba(0,0,0,.28);
-    animation: fade-in .2s ease; }
-  .m-live-pill .mono { font-weight: 400; opacity: .85; }
-  .m-live-pill .tl-spin { border-color: var(--on-ink); border-top-color: transparent; }
+  /* 어떤 폭에서도 안 깨지는 필: transform 센터링 대신 left/right+margin:auto(오버플로 시
+     자동 축소), 한 줄 고정(nowrap) + 말줄임, 모든 자식 flex 수축 금지(스피너 타원화 방지). */
+  .m-live-pill { position: fixed; left: 12px; right: 12px; margin: 0 auto; width: max-content;
+    max-width: calc(100% - 24px); box-sizing: border-box; z-index: 36;
+    bottom: calc(92px + env(safe-area-inset-bottom)); display: flex; align-items: center;
+    gap: 8px; white-space: nowrap; overflow: hidden; height: 40px;
+    background: var(--ink); color: var(--on-ink); border: none; border-radius: 999px;
+    padding: 0 16px; font-size: 12.5px; font-weight: 600; line-height: 1;
+    box-shadow: 0 8px 24px rgba(0,0,0,.28); animation: fade-in .2s ease; }
+  .m-live-pill > * { flex: none; }
+  .m-live-pill .mono { font-weight: 400; opacity: .85; flex: 0 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; }
+  .m-live-pill .tl-spin { width: 12px; height: 12px; border: 2px solid rgba(255,255,255,.35);
+    border-top-color: var(--on-ink); }
   .m-live-pill .mlp-open { opacity: .7; font-size: 10px; }
+  @media (max-width: 380px) { .m-live-pill { font-size: 11.5px; padding: 0 13px; gap: 6px; } }
 
   /* 근거 패널 내부가 폭에 정확히 맞도록 — 카드·프리뷰가 레이아웃을 벗어나지 않게 */
   .ctxpane { padding-left: max(12px, env(safe-area-inset-left));
