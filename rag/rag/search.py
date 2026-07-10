@@ -112,7 +112,14 @@ async def search(query: str, top_k: int | None = None, filters: dict | None = No
         # outage (API not enabled, quota, transient 5xx) break search. On failure, keep the
         # fused hits so retrieval still works; the reranker re-engages once it recovers.
         try:
-            docs = [c.text for c, _ in hits]
+            # RQ-7: provenance 헤더 프리픽스 — 랭커가 [10-K·2026-05 AAPL] 같은 문맥을 보고
+            # 판단(동점 텍스트에서 문서 종류/시점이 결정적). 반환 텍스트는 원문 그대로 유지.
+            def _hdr(c) -> str:
+                pv = c.provenance()
+                bits = [str(pv.get("doc_type") or "")] +                        [str(x) for x in (str(pv.get("as_of") or "")[:10], pv.get("ticker")) if x]
+                head = "·".join(b for b in bits if b)
+                return f"[{head}] " if head else ""
+            docs = [_hdr(c) + c.text for c, _ in hits]
             ranked = await get_reranker().rerank(query, docs, min(top_k, len(docs)))
             hits = [(hits[i][0], score) for i, score in ranked]
         except Exception as exc:  # noqa: BLE001 — degrade gracefully, don\'t fail the query

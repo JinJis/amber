@@ -239,6 +239,14 @@ def _curate(obj: dict, limit: int) -> list[dict]:
     return out
 
 
+def _session_hint() -> str:
+    """RC-4: 한국시간 기준 세션 문맥 — 어떤 카드가 '지금' 유용한지는 모델이 판단(규칙 없음)."""
+    from datetime import datetime, timedelta, timezone
+    h = datetime.now(timezone(timedelta(hours=9))).hour
+    phase = "장 시작 전" if h < 9 else ("장중" if h < 16 else "장 마감 후")
+    return f"\n\n[시간 문맥] 지금은 한국시간 {h}시, {phase}입니다. 이 시점에 눌러볼 가치가 큰 질문을 우선하세요."
+
+
 async def build_ask_feed(req: AskFeedRequest, api_key: str | None) -> dict:
     """Gather → signature check (skip Gemini when nothing changed) → synthesize → audit → cards."""
     client = PlatformClient(api_key)
@@ -262,7 +270,7 @@ async def build_ask_feed(req: AskFeedRequest, api_key: str | None) -> dict:
     limit = max(3, min(req.limit, 6))
     prompt = (_TICKER_PROMPT.format(name=req.name or req.ticker, limit=limit, snippets=_snippets(gathered))
               if is_ticker
-              else _NEWS_PROMPT.format(limit=limit, snippets=_snippets(gathered)))
+              else _NEWS_PROMPT.format(limit=limit, snippets=_snippets(gathered)) + _session_hint())
     raw_cards: list[dict] = []
     try:
         if is_ticker:

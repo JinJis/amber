@@ -54,6 +54,16 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence }: {
         if (r.ok && !dead) {
           const d = await r.json();
           setTickers(d.tickers ?? []); setGroups(d.groups ?? []); setNews(d.news_feed ?? []);
+          // RC-3: 콜드스타트 0 — 뉴스 캐시가 비면(가입 직후) 온보딩 쇼케이스 카드로 즉시 채움.
+          if (!(d.news_feed ?? []).length) {
+            try {
+              const sr = await fetch("/api/onboarding-showcase");
+              if (sr.ok) {
+                const sj = await sr.json();
+                if (sj?.cards?.length) setNews(sj.cards.slice(0, 4));
+              }
+            } catch { /* 빈 상태 유지 — 정직한 갭 */ }
+          }
           const qs = (d.news_feed ?? []).map((c: AskCard) => c.question).slice(0, 6);
           if (qs.length) onQuestions?.(qs);
         }
