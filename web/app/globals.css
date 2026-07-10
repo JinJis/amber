@@ -1907,3 +1907,11 @@ img, svg, video { max-width: 100%; }
 .share-followups { display: flex; flex-direction: column; gap: 6px; }
 .share-followups .sf-label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .share-followups .fu-chip { text-decoration: none; }
+
+/* V-2 잔여: 답변 우상단 공유 진입점 — 긴 아티클에서도 공유가 한 시선 안에 */
+.ans-share-top { position: absolute; top: 6px; right: 6px; z-index: 2; width: 30px; height: 30px;
+  border-radius: 8px; border: 1px solid var(--line-2); background: var(--panel); color: var(--text-2);
+  font-size: 14px; cursor: pointer; opacity: 0; transition: opacity .15s, border-color .15s; }
+.answer-focusable:hover .ans-share-top, .ans-share-top:focus-visible { opacity: 1; }
+.ans-share-top:hover { border-color: var(--ink); color: var(--ink); }
+@media (pointer: coarse) { .ans-share-top { opacity: .75; } }   /* 터치엔 상시 노출 */

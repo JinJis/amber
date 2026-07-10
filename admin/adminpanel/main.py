@@ -486,6 +486,38 @@ S&amp;P·코스피·코스닥 전체는 직접 입력란에 티커를 붙여넣�
     return HTMLResponse(page("/pipelines", "Pipelines", body, refresh=running))
 
 
+# --- Shares (V-4) -----------------------------------------------------------
+@app.get("/shares", response_class=HTMLResponse)
+async def shares_view(request: Request):
+    """공유 랭킹 — 뭐가 퍼졌는지(실측 views desc). 그로스의 눈: 다음 짤을 결정하는 데이터."""
+    rows, err = [], ""
+    try:
+        eng = ENGINES.get("studio")
+        if eng is None:
+            raise RuntimeError("studio DB not mounted")
+        with eng.connect() as conn:  # type: ignore[union-attr]
+            rows = conn.execute(sa_text(
+                "SELECT token, title, kind, COALESCE(views,0) v, revoked, created_at "
+                "FROM share_links ORDER BY COALESCE(views,0) DESC, created_at DESC LIMIT 100"
+            )).all()
+    except Exception as exc:  # noqa: BLE001 — 첫 부팅엔 테이블/컬럼이 없을 수 있음
+        err = f"{type(exc).__name__}: {exc}"
+    tr = "".join(
+        f"<tr><td class=mono style='text-align:right'>{int(v):,}</td>"
+        f"<td>{_esc(t or '')[:80]}</td><td class=mono>{_esc(k)}</td>"
+        f"<td class=mono>{'해제됨' if r else '공개'}</td>"
+        f"<td class=mono>{_esc(str(c)[:16])}</td>"
+        f"<td class=mono>/s/{_esc(tok)[:14]}…</td></tr>"
+        for tok, t, k, v, r, c in rows)
+    body = ((f"<div class=flash>{_esc(err)}</div>" if err else "")
+            + "<p class=hint>공유 링크 성과 — 공개 페이지의 실측 뷰(sendBeacon)만 셉니다. "
+              "어떤 훅·콘텐츠가 퍼지는지가 다음 콘텐츠 결정의 근거예요.</p>"
+            + ("<table class=t><tr><th>views</th><th>제목(훅)</th><th>종류</th><th>상태</th>"
+               "<th>생성</th><th>토큰</th></tr>" + tr + "</table>" if tr
+               else "<div class=empty>아직 공유가 없어요.</div>"))
+    return HTMLResponse(page("/shares", "Shares", body, refresh=True))
+
+
 # --- Costs (COST-1) ---------------------------------------------------------
 @app.get("/costs", response_class=HTMLResponse)
 async def costs_view(request: Request):

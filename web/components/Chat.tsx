@@ -527,10 +527,17 @@ export default function Chat({ name, email, image, features }: { name: string; e
                       className="answer-focusable"
                       role="button"
                       tabIndex={0}
+                      style={{ position: "relative" }}
                       aria-pressed={panelIdx === i}
                       onClick={() => { setFocusIdx(i); if (isMobile) setCtxSheet(true); }}
                       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setFocusIdx(i); if (isMobile) setCtxSheet(true); } }}
                     >
+                      {m.content && !(busy && i === messages.length - 1) && (
+                        <button type="button" className="ans-share-top" title="이 답변 공유"
+                          onClick={(e) => { e.stopPropagation();
+                            const q = messages[i - 1]?.role === "user" ? messages[i - 1].content : m.content;
+                            setShareMsg({ title: (m.hook || q || "ValueGraph 리서치").slice(0, 90), msg: m }); }}>↗</button>
+                      )}
                       <div className="bubble">
                         {m.content
                           ? <AnswerArticle content={m.content} artifacts={m.artifacts}
