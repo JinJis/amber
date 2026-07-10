@@ -1941,6 +1941,77 @@ def test_fallback_followups_always_nonempty_and_capability_aware():
     assert 3 <= len(generic) <= 4 and any("출처" in s for s in generic)  # provenance showcase
 
 
+def test_pulse_plan_is_tools_guarded_and_market_aware():
+    # 팔로업 실시간 펄스 계획: US는 SEC 공시+어닝 일정, KR은 DART 공시+KIS 수급; 카탈로그에 없는
+    # 툴은 조용히 스킵; task가 있으면 RAG 원문 프로브 1건. 티커는 최대 2개.
+    from agentengine.agent import _pulse_plan
+    tools = {n: {"name": n} for n in (
+        "yahoo__price_snapshot", "sec_edgar__filings", "opendart__filings", "google_news__news",
+        "fmp__earnings_calendar", "kis__investor_flow", "rag__search")}
+    plan = _pulse_plan(tools, [("AAPL", "US"), ("005930", "KR"), ("MSFT", "US")], "애플 실적")
+    names = [n for n, _a, _w in plan]
+    assert names.count("yahoo__price_snapshot") == 2          # top-2 tickers only (MSFT dropped)
+    assert "sec_edgar__filings" in names and "fmp__earnings_calendar" in names   # US angles
+    assert "opendart__filings" in names and "kis__investor_flow" in names        # KR angles
+    assert names[-1] == "rag__search"                          # 보유 원문 프로브
+    rag_args = next(a for n, a, _w in plan if n == "rag__search")
+    assert rag_args["query"] == "애플 실적"
+    # tools-guarded: an empty catalog (or no targets+no task) → empty plan, never a KeyError
+    assert _pulse_plan({}, [("AAPL", "US")], "q") == []
+    assert _pulse_plan(tools, [], "") == []
+
+
+async def test_live_pulse_formats_lines_and_drops_failures():
+    # 펄스는 best-effort: 200이 아닌/터진 소스는 그 줄만 빠지고, 성공분은 as_of + JSON 헤드로
+    # 한 줄씩 포맷된다. 아무것도 못 모으면 "" (제안은 조용히 기존 문맥만으로 돈다).
+    from agentengine.agent import live_pulse
+    tools = {n: {"name": n} for n in ("yahoo__price_snapshot", "sec_edgar__filings",
+                                      "google_news__news", "fmp__earnings_calendar", "rag__search")}
+
+    async def call_tool(tool, args):
+        n = tool["name"]
+        if n == "yahoo__price_snapshot":
+            return {"status": 200, "data": {"as_of": "2026-07-10", "price": 212.4, "change_pct": -1.2}}
+        if n == "sec_edgar__filings":
+            return {"status": 502, "data": None}          # dead upstream → line dropped
+        if n == "google_news__news":
+            raise RuntimeError("boom")                     # exception → line dropped
+        return {"status": 200, "data": {"next_earnings": "2026-07-31"}}
+
+    out = await live_pulse(call_tool, tools, [("AAPL", "US")], "애플 지금 어때")
+    lines = out.splitlines()
+    assert any("AAPL 오늘 가격" in l and "as_of 2026-07-10" in l and "212.4" in l for l in lines)
+    assert any("2026-07-31" in l for l in lines)           # earnings calendar line survived
+    assert not any("최신 공시" in l or "헤드라인" in l for l in lines)  # failures dropped silently
+
+    async def all_dead(tool, args):
+        raise RuntimeError("down")
+    assert await live_pulse(all_dead, tools, [("AAPL", "US")], "q") == ""
+    assert await live_pulse(call_tool, {}, [("AAPL", "US")], "q") == ""  # no tools → no pulse
+
+
+async def test_suggest_followups_injects_live_pulse_block(monkeypatch):
+    # 실시간 스냅샷이 주어지면 제안 프롬프트에 그 데이터+지침이 실린다(없으면 빈 슬롯).
+    pytest.importorskip("google.genai")
+    from unittest.mock import MagicMock
+    import google.genai
+    from agentengine.agent import suggest_followups
+    mc = MagicMock(); mr = MagicMock()
+    mr.text = '{"followups": ["8일 나온 8-K 내용 보여줘", "오늘 -1.2% 배경 뉴스 정리해줘", "어닝 일정 알려줘"]}'
+    mc.models.generate_content.return_value = mr
+    monkeypatch.setattr(google.genai, "Client", lambda *a, **k: mc)
+    live = "- AAPL 오늘 가격 (as_of 2026-07-10): {\"price\": 212.4}"
+    out = await suggest_followups("애플 어때", "답변 본문…", "gemini-x", "gemini", live=live)
+    assert out and out[0].startswith("8일")
+    sent = mc.models.generate_content.call_args.kwargs["contents"]
+    assert "실시간 스냅샷" in sent and "212.4" in sent      # 펄스 데이터가 프롬프트에 실렸다
+    # without a pulse the block is absent (no stray header confusing the model)
+    mc.models.generate_content.reset_mock()
+    await suggest_followups("애플 어때", "답변 본문…", "gemini-x", "gemini")
+    sent2 = mc.models.generate_content.call_args.kwargs["contents"]
+    assert "실시간 스냅샷" not in sent2
+
+
 def test_merge_followups_interleaves_and_dedups():
     from agentengine.agent import _merge_followups
     a = ["엔비디아 매출 비중은?", "마진 추이는?", "공급 리스크는?"]

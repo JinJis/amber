@@ -155,6 +155,9 @@ class Message(Base):
     audit: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
     # V-7: 공유 훅(발견 한 줄) — 재열람한 대화에서도 공유 제목으로 쓰인다.
     hook: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    # 더 파고들기 chips (JSON list of strings) — persisted so reopened conversations keep the
+    # follow-up row instead of losing it with the ephemeral SSE stream.
+    suggestions: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

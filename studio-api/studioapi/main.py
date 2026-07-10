@@ -194,7 +194,8 @@ async def conversation_messages(conversation_id: str, user: User = Depends(curre
              "citations": json.loads(m.citations) if m.citations else [],
              "artifacts": json.loads(m.artifacts) if m.artifacts else [],
              "audit": json.loads(m.audit) if m.audit else None,
-             "hook": m.hook}
+             "hook": m.hook,
+             "suggestions": json.loads(m.suggestions) if m.suggestions else []}
             for m in rows
         ]}
 

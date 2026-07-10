@@ -45,11 +45,15 @@ def _last_user(messages: list[dict]) -> str:
 
 async def _followups_event(task: str, final_text: str, citations: list[dict],
                            bk: str | None, conversation: list | None = None,
-                           audit: dict | None = None, artifacts: list[dict] | None = None) -> dict | None:
+                           audit: dict | None = None, artifacts: list[dict] | None = None,
+                           client: PlatformClient | None = None, tools: dict | None = None,
+                           cite_ctx: list | None = None) -> dict | None:
     """Build the 'suggestions' SSE event for a finished answer. Always non-empty when there's an
     answer — suggest_followups uses the deep LLM on gemini and a deterministic capability-aware
     fallback otherwise — so the chip row renders on EVERY answer path (conceptual + data). The
-    recent transcript is passed so the chips DEEPEN the thread instead of restarting it."""
+    recent transcript is passed so the chips DEEPEN the thread instead of restarting it. When the
+    turn had a gateway client, a LIVE PULSE (오늘 가격·최신 공시·헤드라인·수급/어닝·RAG 원문) is
+    fetched RIGHT NOW so the chips can point at real, current facts the answer didn't contain."""
     if not (final_text or "").strip():
         return None
     from agentengine.agent import _intake_context, suggest_followups
@@ -74,11 +78,29 @@ async def _followups_event(task: str, final_text: str, citations: list[dict],
     transcript = _intake_context(conversation) if conversation else ""
     conv_block = f"최근 대화:\n{transcript}\n\n" if transcript and transcript != "(no prior turns)" else ""
     eff_backend = bk or settings.llm_backend
-    logger.info("chat: requesting follow-up chips (backend=%s, answer_len=%d, tickers=%s, kinds=%s)",
-                eff_backend, len(final_text), tickers, kinds)
+    # 실시간 펄스: 이 턴이 다룬 종목의 "지금"(가격·새 공시·헤드라인·수급/어닝·보유 원문)을 방금
+    # 게이트웨이로 조회해 제안 프롬프트에 넣는다 — 칩이 답변에 없던 새 사실을 지목할 수 있게.
+    # (ticker, market)은 이 턴의 실제 툴 호출 인자에서 복원; best-effort — 실패해도 칩은 뜬다.
+    live = ""
+    if client is not None and tools and eff_backend == "gemini":
+        from agentengine.enrichment import live_pulse
+        targets: list[tuple[str, str | None]] = []
+        seen_t: set[str] = set()
+        for cit, tool, args, data in (cite_ctx or []):
+            tk = (args or {}).get("ticker")
+            if tk and tk not in seen_t:
+                seen_t.add(tk)
+                targets.append((tk, (args or {}).get("market") or _market_hint(tool, data)))
+        for tk in tickers:  # citations without a recorded call (e.g. resolved upstream)
+            if tk and tk not in seen_t:
+                seen_t.add(tk)
+                targets.append((tk, None))
+        live = await live_pulse(client.call_tool, tools, targets, task)
+    logger.info("chat: requesting follow-up chips (backend=%s, answer_len=%d, tickers=%s, kinds=%s, live_len=%d)",
+                eff_backend, len(final_text), tickers, kinds, len(live))
     sugg = await suggest_followups(task, final_text, settings.model, bk,
                                    context=" · ".join(ctx_bits) or None, tickers=tickers, kinds=kinds,
-                                   conversation=conv_block)
+                                   conversation=conv_block, live=live)
     logger.info("chat: follow-up chips → %d suggestion(s)", len(sugg))
     return {"type": "suggestions", "items": sugg} if sugg else None
 
@@ -509,7 +531,8 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
 
     # PH-THINK: capability-aware follow-up chips — ALWAYS shown after a real answer (deep LLM when
     # gemini, deterministic capability-aware fallback otherwise), so the chip row is never empty.
-    sev = await _followups_event(task, final_text, citations, bk, conversation=messages, audit=audit, artifacts=artifacts)
+    sev = await _followups_event(task, final_text, citations, bk, conversation=messages, audit=audit,
+                                 artifacts=artifacts, client=client, tools=tools, cite_ctx=cite_ctx)
     if sev:
         yield sev
 

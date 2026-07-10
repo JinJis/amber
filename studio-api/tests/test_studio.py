@@ -75,6 +75,7 @@ def test_chat_stream_proxies_and_persists(monkeypatch):
         'data: {"type":"tool","name":"yahoo__prices","args":{}}\n\n'
         'data: {"type":"token","text":"AAPL closed at 185. {{figure:1}}"}\n\n'
         'data: {"type":"citation","tool":"yahoo__prices","source":"Yahoo Finance"}\n\n'
+        'data: {"type":"suggestions","items":["185달러의 배경 뉴스 정리해줘","최근 공시 핵심 보여줘"]}\n\n'
         'data: {"type":"done","citations":[{"tool":"yahoo__prices","source":"Yahoo Finance"}],'
         '"artifacts":[{"kind":"timeseries","title":"AAPL 종가"}],'
         '"audit":{"checked":1,"supported":1,"unsupported":[],"ledger":[{"raw":"185","value":185.0,"span":[15,18],"citation_idx":1,"supported":true}]},"refused":false}\n\n'
@@ -98,6 +99,8 @@ def test_chat_stream_proxies_and_persists(monkeypatch):
     assert asst["artifacts"] and asst["artifacts"][0]["title"] == "AAPL 종가"
     # LG-4: 감사(원장)도 보존 → 다시 열어도 판정 스트립 + 본문 수치 하이라이트가 살아있다
     assert asst["audit"]["checked"] == 1 and asst["audit"]["ledger"][0]["raw"] == "185"
+    # 더 파고들기 chips도 보존 → 대화를 나갔다 다시 들어와도 팔로업 행이 살아있다
+    assert asst["suggestions"] == ["185달러의 배경 뉴스 정리해줘", "최근 공시 핵심 보여줘"]
 
 
 # --- title derivation -----------------------------------------------------

@@ -83,7 +83,8 @@ def _add_missing_columns() -> None:
              {"board_id": "VARCHAR(48)", "x": "INTEGER", "y": "INTEGER", "w": "INTEGER", "h": "INTEGER"})
     add_cols("users", {  # F1 onboarding flag · M-DESK last-visit window
         "onboarded": f"BOOLEAN DEFAULT {bool_default}", "last_seen_at": ts})
-    add_cols("messages", {"artifacts": "TEXT", "audit": "TEXT"})  # inline figures + number audit
+    add_cols("messages", {"artifacts": "TEXT", "audit": "TEXT",   # inline figures + number audit
+                          "suggestions": "TEXT"})                 # 더 파고들기 chips survive reload
     add_cols("share_links", {"expires_at": ts, "og_image": "TEXT"})  # IMP-13 expiry · SH-2b OG image
 
 

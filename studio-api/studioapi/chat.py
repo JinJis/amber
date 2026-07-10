@@ -73,6 +73,7 @@ async def drive_run(run: Run, user: User, conv_id: str, payload: dict) -> None:
     text_parts: list[str] = []
     citations: list[dict] = []
     artifacts: list[dict] = []
+    suggestions: list = []
     hook: str | None = None
     audit: dict | None = None
     cancelled = False
@@ -92,6 +93,10 @@ async def drive_run(run: Run, user: User, conv_id: str, payload: dict) -> None:
                 await manager.append(run, ev)
                 if ev.get("type") == "token":
                     text_parts.append(ev.get("text", ""))
+                elif ev.get("type") == "suggestions":
+                    # 더 파고들기 chips ride their own event (before `done`) — capture them so the
+                    # row survives leaving + reopening the conversation, not just the live stream.
+                    suggestions = ev.get("items") or suggestions
                 elif ev.get("type") == "done":
                     citations = ev.get("citations") or citations
                     artifacts = ev.get("artifacts") or artifacts
@@ -112,6 +117,7 @@ async def drive_run(run: Run, user: User, conv_id: str, payload: dict) -> None:
             citations=json.dumps(citations, ensure_ascii=False),
             artifacts=json.dumps(artifacts, ensure_ascii=False),
             audit=json.dumps(audit, ensure_ascii=False) if audit else None,
+            suggestions=json.dumps(suggestions, ensure_ascii=False) if suggestions else None,
         ))
         db.commit()
     # final marker so a tail learns the (already-known) conversation id and can stop

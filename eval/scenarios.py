@@ -22,6 +22,8 @@ honoured its data-source restrictions / guardrails.
   expect_clarify     : the intake offered scoping options (clarify-with-options) — True
   expect_subagents   : at least N sub-agents ran (A2A decomposition) — an int
   expect_suggestions : at least N follow-up questions were emitted — an int
+  suggestions_regex  : at least ONE follow-up chip matches this regex (specificity gate —
+                       a chip that names a concrete ticker/figure, not a generic invite)
   expect_confidence  : the verify pass scored per-source confidence — True
   judge              : run the deep-model rubric judge (see eval/RUBRIC.md)
 
@@ -626,8 +628,11 @@ SCENARIOS = [
         "agent": {"name": "Eval Research", "model": "gemini", "data_sources": ALL_SOURCES},
         "question": "삼성전자(005930)의 가장 최근 분기 매출을 알려줘.",
         "criteria": "분기 매출을 구체적 숫자·기간·OpenDART 출처로 제시.",
+        # suggestions_regex: 팔로업 칩이 실데이터 그라운딩(실시간 펄스) 후에도 구체 대상을
+        # 지목하는지의 회귀 게이트 — 숫자·티커·삼성 중 하나는 칩 문구에 실재해야 한다.
         "checks": {"expect_connector": "opendart__", "expect_status": 200, "expect_suggestions": 2,
-                   "answer_regex": r"\d", "expect_refused": False, "judge": True},
+                   "suggestions_regex": r"\d|삼성", "answer_regex": r"\d",
+                   "expect_refused": False, "judge": True},
     },
     {
         # A2A DECOMPOSITION: a genuinely multi-facet request → the intake splits it into subtasks

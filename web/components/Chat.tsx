@@ -137,7 +137,8 @@ export default function Chat({ name, email, image, features }: { name: string; e
       const r = await fetch(`/api/conversations/${id}/messages`);
       if (!r.ok) { setLoadError(id); return; }  // IMP-5: silent blank thread → visible banner
       const msgs = ((await r.json()).messages ?? []) as
-        { role: string; content: string; citations?: Citation[]; artifacts?: Artifact[]; audit?: Msg["audit"] }[];
+        { role: string; content: string; citations?: Citation[]; artifacts?: Artifact[]; audit?: Msg["audit"];
+          suggestions?: string[] }[];
       setMessages(msgs.map((m) => ({
         role: m.role === "assistant" ? "assistant" : "user",
         content: m.content,
@@ -145,6 +146,7 @@ export default function Chat({ name, email, image, features }: { name: string; e
         artifacts: m.artifacts ?? [],   // persisted → inline {{figure:N}} cards survive reload
         audit: m.audit ?? undefined,    // persisted → 판정 + 본문 수치 하이라이트 survive reload
         hook: (m as { hook?: string | null }).hook ?? undefined,
+        suggestions: m.suggestions ?? [],  // persisted → 더 파고들기 chips survive reload
         used: (m.citations ?? []).map((c) => c.index).filter((n): n is number => n != null),
       })));
       // resume an in-flight answer: if this conversation is still generating, tail its run live

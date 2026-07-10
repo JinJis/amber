@@ -67,7 +67,17 @@ _FOLLOWUP_PROMPT = (
     "'관련 지표/뉴스/섹터를 보여줘', '최근 동향 알려줘' 같은 일반적이고 뻔한 문구는 절대 쓰지 마세요 — 그 답변을 읽은 "
     "사람만 떠올릴 수 있는, 구체적이고 호기심을 자극하는 질문이어야 합니다.\n"
     'JSON만: {{"followups": ["…", "…", "…"]}}\n\n'
-    "{conversation}최근 사용자 질문: {task}\n{context}\n답변:\n{answer}"
+    "{conversation}최근 사용자 질문: {task}\n{context}\n{live}답변:\n{answer}"
+)
+
+# The real-time pulse block header — tells the suggester the snapshot is FRESHER than the answer
+# and that questions anchored in a NEW fact (just-published filing, today's move, upcoming event,
+# a flow reversal, an actual passage we hold) are the ones that make the user go "오, 이건 몰랐네".
+_LIVE_BLOCK = (
+    "[실시간 스냅샷 — 답변 직후 방금 게이트웨이로 조회한 최신 데이터]\n{live}\n"
+    "위 스냅샷에서 답변 본문에 없는 '새 사실'(막 나온 공시·오늘 등락·다가오는 이벤트·수급 변화·"
+    "원문 구절)이 보이면, 그 날짜·수치·문구를 그대로 지목하는 질문을 최소 2개 포함하세요 — "
+    "단, 스냅샷·답변에 없는 수치는 절대 지어내지 마세요.\n\n"
 )
 
 
@@ -127,8 +137,72 @@ def _loads_followups(raw: str) -> list[str]:
     return []
 
 
+# --- 실시간 펄스: 팔로업 제안 직전, 답변이 다룬 종목의 "지금"을 게이트웨이로 짧게 조회 ------------
+# The suggester used to see only the finished answer text — so chips could never point at anything
+# the user hadn't already read. The pulse gives it JUST-FETCHED live data (today's move, the newest
+# filing, fresh headlines, flows/earnings dates, an actual ingested passage via RAG) so a chip can
+# name a real, current, sourced fact the answer didn't contain. Data PLUMBING for the LLM
+# (invariant #9) — which questions matter is still entirely Gemini's judgment.
+_PULSE_TIMEOUT = 7.0     # the answer already streamed; the pulse must never stall `done`
+_PULSE_SNIPPET = 380     # per-source JSON head — enough for dates/figures, small enough for flash
+
+
+def _pulse_plan(tools: dict[str, dict], targets: list[tuple[str, str | None]],
+                task: str) -> list[tuple[str, dict, str]]:
+    """Bounded live-probe plan: for the answer's top tickers, the freshest angles the desk can
+    cite + one RAG probe over our ingested document text. Tools-guarded — a missing connector
+    just narrows the pulse, never errors."""
+    plan: list[tuple[str, dict, str]] = []
+
+    def want(tool: str, args: dict, why: str) -> None:
+        if tool in tools:
+            plan.append((tool, args, why))
+
+    for t, m in [(t, m) for t, m in targets if t][:2]:
+        mkt = (m or "US").upper()
+        us = mkt != "KR"
+        args = {"ticker": t, "market": mkt}
+        want("yahoo__price_snapshot", dict(args), f"{t} 오늘 가격·등락")
+        want("sec_edgar__filings" if us else "opendart__filings", dict(args), f"{t} 최신 공시")
+        want("google_news__news", dict(args), f"{t} 최신 헤드라인")
+        if us:
+            want("fmp__earnings_calendar", dict(args), f"{t} 어닝 일정·서프라이즈")
+        else:
+            want("kis__investor_flow", dict(args), f"{t} 외국인·기관 수급")
+    if (task or "").strip() and "rag__search" in tools:
+        plan.append(("rag__search", {"query": task[:200], "top_k": 3}, "보유 원문에서 관련 구절(RAG)"))
+    return plan
+
+
+async def live_pulse(call_tool, tools: dict[str, dict] | None,
+                     targets: list[tuple[str, str | None]] | None, task: str) -> str:
+    """Run the pulse plan in parallel (each call individually time-capped) and format one compact
+    Korean block — one line per live source with its as_of + a truncated JSON head. Best-effort:
+    a dead upstream / timeout just drops that line; returns '' when nothing came back."""
+    plan = _pulse_plan(tools or {}, targets or [], task)
+    if not plan:
+        return ""
+
+    async def one(name: str, args: dict, why: str) -> str | None:
+        try:
+            res = await asyncio.wait_for(call_tool(tools[name], args), timeout=_PULSE_TIMEOUT)
+            if res.get("status") != 200:
+                return None
+            data = res.get("data")
+            as_of = data.get("as_of") if isinstance(data, dict) else None
+            head = json.dumps(data, ensure_ascii=False, default=str)[:_PULSE_SNIPPET]
+            return f"- {why}" + (f" (as_of {as_of})" if as_of else "") + f": {head}"
+        except Exception as exc:  # noqa: BLE001 — the pulse never sinks the chips
+            logger.debug("followups pulse %s failed: %s", name, exc)
+            return None
+
+    lines = [l for l in await asyncio.gather(*(one(n, a, w) for n, a, w in plan)) if l]
+    logger.info("followups pulse: %d/%d live source(s) gathered", len(lines), len(plan))
+    return "\n".join(lines)
+
+
 async def _followups_one(client, model: str, persona: str, task: str, answer: str, context: str,
-                         conversation: str = "", retries: int = 3) -> list[str]:
+                         conversation: str = "", live: str = "", retries: int = 3) -> list[str]:
     """One persona's follow-ups with exponential backoff — rides out transient 429/503/timeouts
     (the two personas fire in parallel, so a paid pro key can momentarily hit per-minute RPM)."""
     import asyncio
@@ -144,7 +218,7 @@ async def _followups_one(client, model: str, persona: str, task: str, answer: st
                                       response_mime_type="application/json",
                                       response_schema=_FOLLOWUP_SCHEMA)
     contents = _FOLLOWUP_PROMPT.format(persona=persona, task=(task or "")[:400],
-                                       context=context, conversation=conversation,
+                                       context=context, conversation=conversation, live=live,
                                        answer=(answer or "")[:2500])
     last: Exception | None = None
     for i in range(retries):
@@ -210,7 +284,8 @@ def _fallback_followups(task: str, tickers: list[str] | None = None,
 
 async def suggest_followups(task: str, answer: str, model: str, backend: str | None = None,
                             context: str | None = None, tickers: list[str] | None = None,
-                            kinds: list[str] | None = None, conversation: str | None = None) -> list[str]:
+                            kinds: list[str] | None = None, conversation: str | None = None,
+                            live: str | None = None) -> list[str]:
     """PH-THINK / 고도화: capability-aware follow-up chips. On gemini, runs two personas in PARALLEL —
     one DEEPENS (the sharp analyst's next question, grounded in the answer's specifics), one CONNECTS
     (broadens via comparison / our differentiated data) — then merges to 3-4 DIVERSE suggestions.
@@ -228,6 +303,7 @@ async def suggest_followups(task: str, answer: str, model: str, backend: str | N
         logger.info("followups: backend=%s → deterministic fallback (%d chips)", eff_backend, len(fallback))
         return fallback
     ctx = f"맥락: {context}" if context else ""
+    live_block = _LIVE_BLOCK.format(live=live.strip()) if (live or "").strip() else ""
     # model chain — FLASH only: follow-up chips are short + low-stakes, and using the deep (pro)
     # model here competes with the answer's pro synthesis for the same low pro RPM, which causes
     # rate-limit backoff that stalls the turn. Flash has ample headroom + is plenty for chips.
@@ -244,14 +320,15 @@ async def suggest_followups(task: str, answer: str, model: str, backend: str | N
         logger.warning("followups: genai client init failed (%s: %s) → deterministic fallback",
                        type(exc).__name__, exc, exc_info=True)
         return fallback
-    logger.info("followups: generating (chain=%s, personas=%s, answer_len=%d, ctx=%r)",
-                chain, list(_FOLLOWUP_PERSONAS), len(answer), context)
+    logger.info("followups: generating (chain=%s, personas=%s, answer_len=%d, live_len=%d, ctx=%r)",
+                chain, list(_FOLLOWUP_PERSONAS), len(answer), len(live_block), context)
 
     async def _run_chain() -> list[str]:
         for m in chain:
             try:
                 results = await asyncio.gather(
-                    *[_followups_one(client, m, p, task, answer, ctx, conv) for p in _FOLLOWUP_PERSONAS.values()],
+                    *[_followups_one(client, m, p, task, answer, ctx, conv, live_block)
+                      for p in _FOLLOWUP_PERSONAS.values()],
                     return_exceptions=True)
                 lists = [r for r in results if isinstance(r, list) and r]
                 errs = [r for r in results if isinstance(r, Exception)]

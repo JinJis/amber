@@ -396,6 +396,13 @@ def grade(checks: dict, r: dict) -> list[tuple[str, bool, str]]:
         want = checks["expect_suggestions"]
         n = len(r.get("suggestions") or [])
         out.append((f"≥{want} follow-ups", n >= want, f"suggestions={n}"))
+    if "suggestions_regex" in checks:
+        # follow-up SPECIFICITY: at least one chip names something concrete (ticker/figure),
+        # not a generic "관련 뉴스 보여줘" — the live-pulse grounding regression gate.
+        pat = checks["suggestions_regex"]
+        sugg = r.get("suggestions") or []
+        ok = any(re.search(pat, s) for s in sugg)
+        out.append((f"follow-up ~ /{pat}/", ok, f"suggestions={sugg}"))
     if "expect_confidence" in checks:
         # verify pass scored per-source evidentiary confidence (high|medium|low).
         confs = r.get("confidences") or []
