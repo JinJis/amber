@@ -133,7 +133,7 @@ studio GET /shares/{token}/image 경로는 유지(구 링크 호환).
 3. eval 시나리오 +1: hook이 본문 수치와 일치하고 전망 문구가 없는지 judge.
 4. 테스트: done hook 파싱·폴백; audit에 hook 숫자 포함 검증(rigged draft).
 
-## 9. V-8 · 어닝 서프라이즈 카드 (EC-2 — API Ninjas로 해금)
+## 9. V-8 · 어닝 서프라이즈 카드 — ✅ done (2026-07-10, 기존 /earnings-calendar 공급원 교체로 달성)
 
 **컨셉**: 어닝 시즌 = SNS 금융 트래픽 피크. `earningscalendar`가 **추정·실제·차이·%**를
 그대로 주므로 "비트/미스" 아티팩트를 데이터플레인 정석 코스로 만든다.

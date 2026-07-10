@@ -325,15 +325,32 @@ def _h_earnings_calendar(ctx: _Ctx) -> list[Artifact]:
             return "—"
         return f"{v/1e9:,.1f}B" if abs(v) >= 1e9 else f"{v:,.2f}"
 
-    rows = [["발표일", "EPS 추정", "EPS 실제", "서프라이즈", "매출 실제"]]
+    src = str(data.get("source") or "FMP")   # V-8: 실제 공급원(API Ninjas/FMP)을 그대로 표기
+    sym = data.get("symbol", "")
+    rows = [["발표일", "EPS 추정", "EPS 실제", "서프라이즈", "서프%", "매출 실제"]]
+    pts_e, pts_a = [], []
     for ev in data["events"][:12]:
-        su = ev.get("eps_surprise")
-        rows.append([str(ev.get("date") or "")[:10], _b2(ev.get("eps_estimated")), _b2(ev.get("eps_actual")),
-                     (f"{su:+,.2f}" if isinstance(su, (int, float)) else "—"), _b2(ev.get("revenue_actual"))])
+        su, sp = ev.get("eps_surprise"), ev.get("eps_surprise_pct")
+        d = str(ev.get("date") or "")[:10]
+        rows.append([d, _b2(ev.get("eps_estimated")), _b2(ev.get("eps_actual")),
+                     (f"{su:+,.2f}" if isinstance(su, (int, float)) else "—"),
+                     (f"{sp:+.1f}%" if isinstance(sp, (int, float)) else "—"),
+                     _b2(ev.get("revenue_actual"))])
+        if isinstance(ev.get("eps_estimated"), (int, float)):
+            pts_e.append({"x": d, "y": ev["eps_estimated"]})
+        if isinstance(ev.get("eps_actual"), (int, float)):
+            pts_a.append({"x": d, "y": ev["eps_actual"]})
+    out: list[Artifact] = []
+    # V-8 비트/미스 차트: 분기별 컨센서스 vs 실제 EPS — 발표된 분기(실제 존재)만, 과거→최신.
+    if len(pts_a) >= 2:
+        out.append(Artifact(kind="compare", title=f"{sym} 어닝 서프라이즈 — 컨센서스 vs 실제 EPS".strip(),
+                            series=[{"label": "컨센서스 EPS", "points": sorted(pts_e, key=lambda p: p["x"])},
+                                    {"label": "실제 EPS", "points": sorted(pts_a, key=lambda p: p["x"])}],
+                            source=src, tool=name, ticker=sym))
     if len(rows) > 1:
-        return [Artifact(kind="table", title=f"{data.get('symbol', '')} 실적 캘린더".strip(),
-                         table=rows, source="FMP", tool=name, ticker=data.get("symbol"))]
-    return []
+        out.append(Artifact(kind="table", title=f"{sym} 실적 캘린더".strip(),
+                            table=rows, source=src, tool=name, ticker=sym))
+    return out
 
 
 def _h_news(ctx: _Ctx) -> list[Artifact]:

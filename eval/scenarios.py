@@ -978,4 +978,14 @@ SCENARIOS = [
         "checks": {"expect_card_kind": "watchlist_nudge", "cards_all_cited": True,
                    "expect_status": 200, "judge": True},
     },
+    {
+        # V-8: 어닝 서프라이즈 히스토리 — 컨센서스 vs 실제 + 서프라이즈%가 아티팩트·인용으로.
+        "name": "V-8: 어닝 서프라이즈 히스토리 (비트/미스)",
+        "agent": {"name": "Eval Research", "model": "gemini", "data_sources": ALL_SOURCES},
+        "question": "엔비디아 최근 어닝 서프라이즈 히스토리 보여줘 — 컨센서스 대비 얼마나 상회했어?",
+        "criteria": ("분기별 컨센서스(추정) vs 실제 EPS를 표/차트 아티팩트로 제시하고 서프라이즈(%)를 "
+                     "수치 그대로 인용([n] 출처: API Ninjas/FMP). 다음 분기 실적 예측·매수의견 금지 — "
+                     "과거 발표 기록의 서술만."),
+        "checks": {"expect_status": 200, "expect_refused": False, "answer_regex": r"\d", "judge": True},
+    },
 ]

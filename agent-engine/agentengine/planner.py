@@ -149,6 +149,7 @@ class GeminiPlanner:
             "10. For '어느 섹터가 강하고 약한가 / 섹터 히트맵' use 'yahoo__sector_heatmap' (ALL 11 sectors' moves) — NOT news.\n"
             "11. For a price TREND / CHART / '최근 흐름' use 'yahoo__prices' (a date range of daily bars) — NOT 'yahoo__price_snapshot' (that's one current quote).\n"
             "12. For a MULTI-YEAR ratio TREND (margin/return '추이·몇 년간') use 'datasets_store__metrics_history' — NOT the single-point 'metrics_snapshot'.\n"
+            "12b. 어닝 서프라이즈/비트·미스/컨센서스 대비 실적 질문 → fmp__earnings_calendar (분기별 추정 vs 실제 EPS·매출 + 서프라이즈%%, ~50분기).\n"
             "13. For a specific FACT stated in a filing (e.g. 'which supplier fabricates Apple's chips', 위험요소·공급망) use 'rag__search' / 'datasets_store__filing_search' to quote the passage — do NOT answer from general knowledge.\n\n"
             "Important Parameter Instructions:\n"
             "- 'ticker': Stock tickers MUST be official symbols (e.g., 'AAPL' for Apple, '005930' for Samsung Electronics). NEVER pass company names (e.g., 'Apple', '삼성전자') as the ticker parameter.\n"

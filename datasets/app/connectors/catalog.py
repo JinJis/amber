@@ -393,10 +393,11 @@ CONNECTORS: list[ConnectorManifest] = [
                      params=[P_TICKER_REQ, ResourceParam(name="period", enum=["annual", "quarter"]), P_LIMIT],
                      provenance=Provenance(source="FMP (애널리스트 컨센서스)", as_of_field="date", freshness=Freshness.periodic)),
             Resource(name="earnings_calendar",
-                     description="실적 캘린더 — 컨센서스 vs 실제 EPS/매출(서프라이즈), FMP 출처.",
+                     description="실적 캘린더 — 컨센서스 vs 실제 EPS/매출 + 서프라이즈%(어닝 비트/미스 히스토리 ~50분기). "
+                                 "API Ninjas 우선, FMP 폴백 — 응답 source가 실제 공급원을 명시.",
                      path="/earnings-calendar", output_model="EarningsCalendarResponse", markets=["US"], cost_tier=CostTier.medium,
                      params=[P_TICKER_REQ, P_LIMIT],
-                     provenance=Provenance(source="FMP", as_of_field="date", freshness=Freshness.periodic)),
+                     provenance=Provenance(source="API Ninjas / FMP", as_of_field="date", freshness=Freshness.periodic)),
         ],
     ),
     ConnectorManifest(
