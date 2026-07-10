@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 # Hard rules keep it trustworthy: every NUMBER/specific fact comes from a source and is cited;
 # no forecast/advice; no fabricated figures; no tool names or raw URLs in the prose.
 _SYNTHESIS_PROMPT = (
+    "인용 마커는 반드시 개별 대괄호로: [3][5]. [3,5]·[3, 5]·[3-5]처럼 묶어 쓰지 마.\n"
     "당신은 금융 리서치 데스크의 시니어 애널리스트입니다. 사용자의 질문에 같은 언어로, 잘 짜인 "
     "리서치 노트 — 전문 투자 블로그의 글 — 형식으로 답하세요. 당신의 지식과 분석이 글의 뼈대이고, "
     "아래 자료의 검증된 수치가 그 뼈대에 근거를 박습니다. 일반 챗봇만큼 풍부하게 쓰되, 숫자만은 "

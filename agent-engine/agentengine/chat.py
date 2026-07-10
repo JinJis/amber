@@ -184,12 +184,22 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
         figures = _figures_block()
         if hasattr(planner, "stream_final") and (bk or settings.llm_backend) == "gemini":
             got = False
+            # ANCHOR-NORM: 묶음 인용([1,2]·[3-5])을 스트림 중에 개별 [n]으로 정규화 — 클라
+            # 링크화·used 마킹·감사 스팬이 전부 단일 마커 규약 위에서 동작한다.
+            from agentengine.anchors import AnchorStream
+            ns = AnchorStream()
             async for delta in planner.stream_final(task, tools_arg, history_arg, system_arg,
                                                      conversation=messages, sources=sources,
                                                      figures=figures):
                 got = True
-                final_text += delta
-                yield {"type": "token", "text": delta}
+                out = ns.feed(delta)
+                if out:
+                    final_text += out
+                    yield {"type": "token", "text": out}
+            tail = ns.flush()
+            if tail:
+                final_text += tail
+                yield {"type": "token", "text": tail}
             if not got:
                 for ch in _chunks(fallback_answer(citations)):
                     final_text += ch
@@ -198,7 +208,8 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
             dec = await planner.plan(task, tools_arg, history_arg, system_arg,
                                      conversation=messages, force_final=True, sources=sources,
                                      figures=figures)
-            for ch in _chunks(dec.final or fallback_answer(citations)):
+            from agentengine.anchors import normalize_anchor_groups
+            for ch in _chunks(normalize_anchor_groups(dec.final or fallback_answer(citations))):
                 final_text += ch
                 yield {"type": "token", "text": ch}
 

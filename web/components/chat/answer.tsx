@@ -16,7 +16,18 @@ import type { Artifact, Citation } from "../../lib/types";
 // markdown link. The renderer turns them into live refs: hover ↔ panel-card highlight,
 // click → scroll+flash that card in the 근거 패널 (the footnote becomes a remote control).
 export function linkifyCitations(md: string): string {
-  return md.replace(/\[(\d{1,3})\](?!\()/g, "[[$1]](#cite-$1)");
+  // ANCHOR-NORM 벨트: 서버 정규화 이전에 저장된 묶음 마커([1,2]·[3-5])도 개별 [n]으로 펼친다.
+  const expanded = md.replace(/\[(\d{1,3}(?:\s*[,·\-–]\s*\d{1,3})+)\]/g, (_m, g: string) =>
+    g.split(/[,·]/).flatMap((part) => {
+      const r = part.trim().match(/^(\d{1,3})\s*[-–]\s*(\d{1,3})$/);
+      if (r) {
+        const a = Number(r[1]), b = Number(r[2]);
+        if (b - a > 0 && b - a <= 10) return Array.from({ length: b - a + 1 }, (_x, i) => a + i);
+        return [a, b];
+      }
+      return /^\d{1,3}$/.test(part.trim()) ? [Number(part.trim())] : [];
+    }).map((n) => `[${n}]`).join(""));
+  return expanded.replace(/\[(\d{1,3})\](?!\()/g, "[[$1]](#cite-$1)");
 }
 
 // ARTICLE: the answer body is a research note with figures INLINE — the synthesis model
