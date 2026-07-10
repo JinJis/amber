@@ -22,11 +22,14 @@ def setup_module(_module):
 
 
 def _reset_guest_state():
+    from studioapi.models import Conversation
+
     with SessionLocal() as db:
         db.query(ServiceState).delete()
         db.query(GuestSession).delete()
         db.query(User).filter(User.email.like("guest_%@guest.local")).delete(synchronize_session=False)
         db.query(TurnUsage).filter(TurnUsage.user_email.like("guest_%@guest.local")).delete(synchronize_session=False)
+        db.query(Conversation).filter(Conversation.user_email.like("guest_%@guest.local")).delete(synchronize_session=False)
         db.commit()
 
 
@@ -129,3 +132,42 @@ def test_guest_requires_feature_flag(monkeypatch):
     monkeypatch.setattr(settings, "feature_guest", False)
     r = client.get("/users/me", headers={"X-Service-Token": "dev-service-token", "X-Guest-Id": GID_A})
     assert r.status_code == 401
+
+
+@respx.mock
+def test_claim_guest_moves_conversations(monkeypatch):
+    """GUEST-3: 가입 직후 게스트 대화가 새 계정으로 넘어가고, 세션은 claimed로 잠긴다."""
+    _cfg(monkeypatch)
+    _reset_guest_state()
+    _mock_cp()
+    monkeypatch.setenv("GUEST_TURNS_MAX", "5")
+    sse = b'data: {"type":"token","text":"ok"}\n\ndata: {"type":"done","citations":[],"refused":false}\n\n'
+    respx.post("http://ae.test/agent/chat").mock(return_value=httpx.Response(200, content=sse))
+    ghdr = {"X-Service-Token": "dev-service-token", "X-Guest-Id": GID_A}
+    client.post("/chat/stream", headers=ghdr, json={"messages": [{"role": "user", "content": "체험 질문"}]})
+    assert len(client.get("/conversations", headers=ghdr).json()["conversations"]) == 1
+
+    # 새(기존) 계정 — 프로비저닝 왕복 없이 직접 심는다
+    with SessionLocal() as db:
+        db.merge(User(email="joined@u.com", tenant_id="t", project_id="p", api_key="k"))
+        db.commit()
+    uhdr = {"X-Service-Token": "dev-service-token", "X-User-Email": "joined@u.com"}
+    r = client.post("/users/claim-guest", headers={**uhdr, "X-Guest-Id": GID_A})
+    assert r.status_code == 200 and r.json()["claimed"] is True and r.json()["conversations"] == 1
+    # 대화가 새 계정 소유로 — "다시 원래 하던거부터"
+    assert len(client.get("/conversations", headers=uhdr).json()["conversations"]) == 1
+    # 게스트 User 행은 삭제, 세션은 잠김 → 같은 쿠키 재사용 401
+    with SessionLocal() as db:
+        assert db.get(User, guest_email(GID_A)) is None
+        assert db.get(GuestSession, GID_A).claimed_by == "joined@u.com"
+    r2 = client.post("/chat/stream", headers=ghdr, json={"messages": [{"role": "user", "content": "또"}]})
+    assert r2.status_code == 401
+    # 멱등: 재호출 no-op / 다른 계정의 가로채기 409
+    assert client.post("/users/claim-guest", headers={**uhdr, "X-Guest-Id": GID_A}).json()["claimed"] is True
+    with SessionLocal() as db:
+        db.merge(User(email="thief@u.com", tenant_id="t", project_id="p", api_key="k"))
+        db.commit()
+    r3 = client.post("/users/claim-guest",
+                     headers={"X-Service-Token": "dev-service-token", "X-User-Email": "thief@u.com",
+                              "X-Guest-Id": GID_A})
+    assert r3.status_code == 409

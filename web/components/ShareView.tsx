@@ -16,7 +16,15 @@ import { SourceCard } from "./SourceCard";
 type Share = {
   token: string; kind: string; title: string; payload: Record<string, unknown>;
   created_at?: string | null; views?: number;
+  referral_code?: string | null;  // GUEST-4: 공유자 추천 코드 — CTA·칩 ?ref= 귀속
 };
+
+// GUEST-4: 공유 페이지에서 앱으로 가는 모든 링크에 ?ref=공유자코드를 붙인다 — 이 링크로
+// 유입된 가입이 공유자에게 귀속된다(REF-1). 코드가 없으면 링크는 그대로.
+function withRef(href: string, ref?: string | null): string {
+  if (!ref) return href;
+  return href + (href.includes("?") ? "&" : "?") + "ref=" + encodeURIComponent(ref);
+}
 
 export function ShareView({ status, share }: { status: number; share: Share | null }) {
   // V-4: 실측 뷰 비콘 — 렌더가 캐시돼도(페이지 revalidate) 뷰는 클라이언트에서 센다.
@@ -28,14 +36,14 @@ export function ShareView({ status, share }: { status: number; share: Share | nu
     <div className="share-page">
       <header className="share-head">
         <span className="share-brand"><Mascot /> ValueGraph</span>
-        <a className="share-cta" href="/">직접 확인해보기 →</a>
+        <a className="share-cta" href={withRef("/", share?.referral_code)}>직접 확인해보기 →</a>
       </header>
       <main className="share-main">
         {share ? (
           <>
             <h1 className="share-title">{share.title}</h1>
             {share.kind === "answer" ? (
-              <AnswerShareView payload={share.payload} title={share.title} views={share.views ?? 0} />
+              <AnswerShareView payload={share.payload} title={share.title} views={share.views ?? 0} refCode={share.referral_code} />
             ) : share.kind === "quote" ? (
               <blockquote className="share-quote">
                 <p>“{String((share.payload as { passage?: string }).passage ?? "")}”</p>
@@ -72,7 +80,7 @@ type AnswerPayload = {
   audit?: { checked?: number; supported?: number; unsupported?: string[]; ledger?: LedgerRow[] } | null;
 };
 
-function AnswerShareView({ payload, title, views }: { payload: Record<string, unknown>; title?: string; views?: number }) {
+function AnswerShareView({ payload, title, views, refCode }: { payload: Record<string, unknown>; title?: string; views?: number; refCode?: string | null }) {
   const p = payload as AnswerPayload;
   const content = p.content ?? "";
   const artifacts = p.artifacts ?? [];
@@ -118,7 +126,7 @@ function AnswerShareView({ payload, title, views }: { payload: Record<string, un
       <div className="share-loop">
         {(views ?? 0) >= 50 && <span className="share-views mono">👀 {views!.toLocaleString()}명이 봤어요</span>}
         {stale && (
-          <a className="share-cta" href={`/?q=${encodeURIComponent(title ?? "")}`}>
+          <a className="share-cta" href={withRef(`/?q=${encodeURIComponent(title ?? "")}`, refCode)}>
             지금 데이터로 다시 보기 →
           </a>
         )}
@@ -126,7 +134,7 @@ function AnswerShareView({ payload, title, views }: { payload: Record<string, un
           <div className="share-followups">
             <div className="sf-label mono">이 질문에서 이어가기</div>
             {(p.suggestions ?? []).slice(0, 3).map((q, i) => (
-              <a key={i} className="fu-chip" href={`/?q=${encodeURIComponent(q)}`}>{q} <span className="fu-arrow">→</span></a>
+              <a key={i} className="fu-chip" href={withRef(`/?q=${encodeURIComponent(q)}`, refCode)}>{q} <span className="fu-arrow">→</span></a>
             ))}
           </div>
         )}

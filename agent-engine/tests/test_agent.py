@@ -2191,3 +2191,33 @@ async def test_inline_figure_markers_prompt_and_fallback(monkeypatch):
     assert done["type"] == "done" and done["artifacts"]
     # ③ QT-2 감사: 마커 속 '1'은 수치 주장이 아니다 (미확인 0건)
     assert done["audit"] and done["audit"]["unsupported"] == []
+
+
+async def test_usage_report_attributes_project(monkeypatch):
+    """METER-1: usage.report가 contextvar의 프로젝트 id를 텔레메트리에 싣는다 (없으면 None)."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from agentengine import usage
+    from agentengine.usage_context import current_project, set_project
+
+    sent: list[dict] = []
+
+    async def fake_post(payload):
+        sent.append(payload)
+
+    monkeypatch.setattr(usage, "_post", fake_post)
+    resp = SimpleNamespace(usage_metadata=SimpleNamespace(
+        prompt_token_count=10, candidates_token_count=5, thoughts_token_count=2))
+
+    set_project("prj_123")
+    assert current_project() == "prj_123"
+    usage.report("plan", "gemini-flash-latest", resp)
+    await asyncio.sleep(0.01)   # detached task 실행
+    assert sent and sent[-1]["project_id"] == "prj_123"
+    assert sent[-1]["input_tokens"] == 10 and sent[-1]["output_tokens"] == 7
+
+    set_project(None)           # 백그라운드/공용 작업 → None
+    usage.report("plan", "gemini-flash-latest", resp)
+    await asyncio.sleep(0.01)
+    assert sent[-1]["project_id"] is None

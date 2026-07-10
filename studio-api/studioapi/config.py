@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     guest_turns_max: int = 3                             # GUEST_TURNS_MAX (디바이스당 평생)
     guest_turns_per_ip_day: int = 10                     # GUEST_TURNS_PER_IP_DAY (어뷰즈 백스톱)
     guest_ip_salt: str = "dev-guest-salt"                # GUEST_IP_SALT (ip_hash 솔트)
+    # PLAN-4 롤아웃 스위치: true면 기존 유저도 다음 요청에서 플랜 기준으로 커넥터를 reconcile
+    # (free 유저의 fmp/kis 회수 포함). 기본 false — 켜기 전까지 기존 활성화는 건드리지 않는다.
+    plan_enforce_connectors: bool = False                # PLAN_ENFORCE_CONNECTORS
 
 
 settings = Settings()
@@ -66,9 +69,8 @@ def assert_production_secrets() -> None:
         raise RuntimeError(f"production requires real secrets for: {', '.join(leaked)}")
 
 
-# Connectors auto-activated for every project — the subscription model provides ALL data via
-# server-side keys, so every connector in the catalog is entitled (users pick TOOLS per agent, not
-# whole APIs). fmp (consensus/calendar, CE-11) + kis (KR realtime, CE-12) were missing, so those
-# tools 403'd through the gateway; include them.
-DEFAULT_CONNECTORS = ["sec_edgar", "yahoo", "fred", "opendart", "ecos", "google_news",
-                      "datasets_store", "rag", "fmp", "kis", "market_history"]
+# PLAN-4: connectors auto-activated at signup = the FREE plan set (single source: plans.py).
+# Premium connectors (fmp 컨센서스 · kis 실시간 수급) are flipped on by plans.apply_plan when a
+# user upgrades to pro — no longer part of every provisioning. Existing users keep whatever is
+# already activated until PLAN_ENFORCE_CONNECTORS=true turns on the reconcile (rollout switch).
+from studioapi.plans import FREE_CONNECTORS as DEFAULT_CONNECTORS  # noqa: E402

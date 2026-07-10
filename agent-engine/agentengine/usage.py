@@ -44,8 +44,10 @@ def report(kind: str, model: str, resp) -> None:
     got = _tokens(resp)
     if not got:
         return
+    from agentengine.usage_context import current_project
     payload = {"service": "agent-engine", "kind": kind, "model": model or "unknown",
-               "input_tokens": got[0], "output_tokens": got[1]}
+               "input_tokens": got[0], "output_tokens": got[1],
+               "project_id": current_project()}   # METER-1: 유저별 원가 귀속 (없으면 None=공용)
     try:
         asyncio.get_running_loop().create_task(_post(payload))
     except RuntimeError:  # no running loop (sync context) — skip rather than block

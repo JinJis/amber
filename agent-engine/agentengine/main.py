@@ -61,10 +61,15 @@ async def artifact_refresh(body: ArtifactRefreshRequest, x_api_key: Annotated[st
 
 
 @app.post("/agent/chat", tags=["Agent"], summary="Streaming multi-turn chat (SSE)")
-async def chat(body: ChatRequest, x_api_key: Annotated[str | None, Header(alias="X-API-KEY")] = None) -> StreamingResponse:
+async def chat(body: ChatRequest, x_api_key: Annotated[str | None, Header(alias="X-API-KEY")] = None,
+               x_project_id: Annotated[str | None, Header(alias="X-Project-Id")] = None) -> StreamingResponse:
     messages = [m.model_dump() for m in body.messages]
+    # METER-1: 이 턴의 모든 Gemini 콜 텔레메트리에 유저 프로젝트를 귀속 (contextvar — 동시
+    # 스트림 간 격리; StreamingResponse 제너레이터 안에서 심어야 스트림 태스크에 전파된다).
+    from agentengine.usage_context import set_project
 
     async def gen():
+        set_project(x_project_id)
         async for event in stream_chat(messages, x_api_key, body.spec):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 

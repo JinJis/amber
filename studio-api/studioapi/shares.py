@@ -175,8 +175,13 @@ async def read_share(token: str) -> dict:
         raise HTTPException(410, "이 공유는 게시자가 해제했습니다.")
     if s.expires_at and s.expires_at < datetime.utcnow():
         raise HTTPException(410, "이 공유는 만료되었습니다.")
+    # GUEST-4/REF-1: 공유자의 추천 코드 — 공개 페이지 CTA·이어 묻기 칩이 ?ref=로 달고 가면
+    # 이 링크로 유입된 가입이 공유자에게 귀속된다 (코드는 lazy 발급, 실패해도 공유는 정상).
+    from studioapi.referrals import ensure_referral_code
+    ref_code = ensure_referral_code(s.user_email)
     return {"token": s.token, "kind": s.kind, "title": s.title,
             "payload": json.loads(s.payload), "image_path": s.image_path,
             "has_image": bool(s.og_image), "views": int(s.views or 0),
             "created_at": s.created_at.isoformat() if s.created_at else None,
+            "referral_code": ref_code,
             "share_urls": _share_urls(s.token, s.title)}

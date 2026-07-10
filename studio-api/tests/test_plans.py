@@ -135,3 +135,76 @@ def test_start_turn_blocked_emits_quota_run(monkeypatch):
     # 대화·유저 메시지 미생성 (쿼터에 막힌 질문이 히스토리를 오염시키지 않음)
     with SessionLocal() as db:
         assert db.query(Conversation).filter(Conversation.user_email == u.email).count() == 0
+
+
+def test_apply_plan_flips_activations_and_rate_tier(monkeypatch):
+    """PLAN-4: free↔pro 전환 — 프리미엄 커넥터 토글 + rate 티어 PATCH + users.plan (순서 고정)."""
+    import httpx
+    import respx
+
+    from studioapi import plans as plans_mod
+    from studioapi.config import settings
+
+    monkeypatch.setattr(settings, "control_plane_url", "http://cp.test")
+    u = _user("flip@u.com", "free")
+    with SessionLocal() as db:
+        db.get(User, u.email).project_id = "prjF"
+        db.commit()
+
+    acts: list[dict] = []
+    patches: list[dict] = []
+
+    def _act(request):
+        import json as _json
+        acts.append(_json.loads(request.content))
+        return httpx.Response(200, json={})
+
+    def _patch(request):
+        import json as _json
+        patches.append(_json.loads(request.content))
+        return httpx.Response(200, json={})
+
+    with respx.mock:
+        respx.post("http://cp.test/admin/projects/prjF/activations").mock(side_effect=_act)
+        respx.patch("http://cp.test/admin/projects/prjF").mock(side_effect=_patch)
+        assert asyncio.run(plans_mod.apply_plan(u.email, "pro")) is True
+        by_id = {a["connector_id"]: a["enabled"] for a in acts}
+        assert by_id["kis"] is True and by_id["fmp"] is True and by_id["yahoo"] is True
+        assert patches[-1]["plan"] == "pro"
+        with SessionLocal() as db:
+            assert db.get(User, u.email).plan == "pro"
+
+        acts.clear()
+        assert asyncio.run(plans_mod.apply_plan(u.email, "free")) is True
+        by_id = {a["connector_id"]: a["enabled"] for a in acts}
+        assert by_id["kis"] is False and by_id["fmp"] is False and by_id["yahoo"] is True
+        with SessionLocal() as db:
+            assert db.get(User, u.email).plan == "free"
+
+
+def test_usage_snapshot_reads_without_consuming(monkeypatch):
+    monkeypatch.setenv("PLANS_JSON", '{"free": {"daily_turns": 5, "monthly_turns": 80}}')
+    from studioapi.quotas import usage_snapshot
+    u = _user("snap@u.com", "free")
+    quotas.check_and_consume(u)
+    s1 = usage_snapshot(u)
+    s2 = usage_snapshot(u)
+    assert s1["daily_used"] == s2["daily_used"] == 1     # 읽기만 — 소비 없음
+    assert s1["daily_limit"] == 5 and s1["monthly_limit"] == 80 and s1["plan"] == "free"
+
+
+def test_referral_code_and_attribution():
+    """REF-1(코어): 코드 lazy 발급(안정) · 가입 귀속 1회 · 자기추천/미존재 코드 무시."""
+    from studioapi.referrals import attribute_signup, ensure_referral_code
+
+    a = _user("ref_a@u.com", "free")
+    b = _user("ref_b@u.com", "free")
+    code = ensure_referral_code(a.email)
+    assert code and code == ensure_referral_code(a.email) and len(code) == 8
+    assert ensure_referral_code("guest_x@guest.local") is None   # 게스트는 코드 없음
+    assert attribute_signup(b.email, "NOPE1234") is False        # 미존재 코드
+    assert attribute_signup(a.email, code) is False              # 자기추천
+    assert attribute_signup(b.email, code.lower()) is True       # 대소문자 무관 귀속
+    with SessionLocal() as db:
+        assert db.get(User, b.email).referred_by == a.email
+    assert attribute_signup(b.email, code) is False              # 1회만

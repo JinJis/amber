@@ -7,7 +7,14 @@ import { useEffect, useState } from "react";
 
 type Me = { email: string; name: string; image?: string | null; plan: string };
 type ByConn = { connector_id: string; calls: number; cost_units: number };
-type Usage = { plan: string; usage: { total_calls?: number; total_cost_units?: number; by_connector?: ByConn[] } };
+type Usage = {
+  plan: string;
+  usage: { total_calls?: number; total_cost_units?: number; by_connector?: ByConn[] };
+  // PLAN-5: 턴(분석) 쿼터 스냅샷 — 프로그레스 바 표시용
+  turns?: { plan: string; label?: string; daily_used: number; daily_limit: number | null;
+    monthly_used: number; monthly_limit: number | null; degrade_over_monthly?: boolean;
+    daily_reset_at?: string; monthly_reset_at?: string };
+};
 
 const PLANS = [
   { id: "free", name: "Free", price: "₩0", tagline: "가볍게 둘러보기",
@@ -150,6 +157,27 @@ export function Settings({ name, email, image }: { name: string; email: string; 
             <div className="st-usage-big"><b className="mono">{calls.toLocaleString()}</b><span>총 도구 호출</span></div>
             <div className="st-usage-big"><b className="mono">{plan.toUpperCase()}</b><span>현재 플랜</span></div>
           </div>
+          {usage?.turns && (usage.turns.daily_limit != null || usage.turns.monthly_limit != null) && (
+            <div className="st-usage-list">
+              <div className="st-usage-h mono">분석(턴) 사용량</div>
+              {usage.turns.daily_limit != null && (
+                <div className="st-usage-row">
+                  <span className="st-usage-name">오늘 {usage.turns.daily_used}/{usage.turns.daily_limit}회를 사용했어요</span>
+                  <span className="st-usage-bar"><span style={{ width: `${Math.min(100, (usage.turns.daily_used / Math.max(1, usage.turns.daily_limit)) * 100)}%` }} /></span>
+                  <span className="st-usage-n mono">내일 0시 충전</span>
+                </div>
+              )}
+              {usage.turns.monthly_limit != null && (
+                <div className="st-usage-row">
+                  <span className="st-usage-name">이번 달 {usage.turns.monthly_used}/{usage.turns.monthly_limit}회를 사용했어요</span>
+                  <span className="st-usage-bar"><span style={{ width: `${Math.min(100, (usage.turns.monthly_used / Math.max(1, usage.turns.monthly_limit)) * 100)}%` }} /></span>
+                  <span className="st-usage-n mono">
+                    {usage.turns.degrade_over_monthly ? "초과해도 표준 모델로 계속" : "다음 달 1일 충전"}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
           {byConn.length > 0 ? (
             <div className="st-usage-list">
               <div className="st-usage-h mono">소스별 사용</div>

@@ -3,7 +3,8 @@ import { signIn } from "@/auth";
 // Sign-in / sign-up — one screen, social-first (Google · Kakao); each button appears only
 // when its OAuth app is configured. A dev-login stays for local use (never in production —
 // see web/auth.ts). First sign-in provisions the tenant + seeds the profile from the provider.
-export default function SignIn() {
+// AUTH-3: callbackUrl은 로그인 왕복에서 /?q= 딥링크를 보존한다 (전환 루프의 마지막 1인치).
+export default function SignIn({ callbackUrl = "/" }: { callbackUrl?: string } = {}) {
   const has = {
     google: Boolean(process.env.AUTH_GOOGLE_ID),
     kakao: Boolean(process.env.AUTH_KAKAO_ID),
@@ -19,12 +20,12 @@ export default function SignIn() {
 
         <div className="signin-providers">
           {has.google && (
-            <form action={async () => { "use server"; await signIn("google", { redirectTo: "/" }); }}>
+            <form action={async () => { "use server"; await signIn("google", { redirectTo: callbackUrl }); }}>
               <button className="sso sso-google" type="submit"><span className="sso-ic">G</span>Google로 계속하기</button>
             </form>
           )}
           {has.kakao && (
-            <form action={async () => { "use server"; await signIn("kakao", { redirectTo: "/" }); }}>
+            <form action={async () => { "use server"; await signIn("kakao", { redirectTo: callbackUrl }); }}>
               <button className="sso sso-kakao" type="submit"><span className="sso-ic" aria-hidden>💬</span>카카오로 계속하기</button>
             </form>
           )}
@@ -33,7 +34,7 @@ export default function SignIn() {
         {has.dev && (
           <>
             {anySocial && <div className="signin-or"><span>또는</span></div>}
-            <form className="signin-dev" action={async (fd: FormData) => { "use server"; await signIn("credentials", { email: String(fd.get("email") || ""), redirectTo: "/" }); }}>
+            <form className="signin-dev" action={async (fd: FormData) => { "use server"; await signIn("credentials", { email: String(fd.get("email") || ""), redirectTo: callbackUrl }); }}>
               <input className="input" name="email" type="email" placeholder="dev@example.com" required />
               <button className="btn ghost" type="submit">개발용 로그인</button>
             </form>

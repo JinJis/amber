@@ -6,6 +6,7 @@ import BoardCanvas from "./BoardCanvas";
 import BotHome from "./BotHome";
 import { ShareSheet } from "./ShareSheet";
 import Onboarding from "./Onboarding";
+import GuestWall from "./GuestWall";
 import CockpitEntry from "./CockpitEntry";
 import Watchlists, { Watchlist } from "./Watchlists";
 import { MentionChip } from "./MentionChip";
@@ -44,10 +45,17 @@ function toCitation(ev: any): Citation {
 }
 
 
-export default function Chat({ name, email, image, features }: { name: string; email?: string; image?: string | null; features: Features }) {
+export default function Chat({ name, email, image, features, guest = false, providers }: {
+  name: string; email?: string; image?: string | null; features: Features;
+  // GUEST-2: 익명 체험 모드 — 온보딩 스킵, 게스트 필 표시, 한도 도달 시 가입 월(GuestWall)
+  guest?: boolean; providers?: { google: boolean; kakao: boolean; dev?: boolean };
+}) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // GUEST-2: 남은 체험 턴(/api/me의 guest 블록) + 가입 월 상태
+  const [guestInfo, setGuestInfo] = useState<{ used: number; limit: number | null } | null>(null);
+  const [guestWall, setGuestWall] = useState<string | null>(null);  // 월에 띄울 안내 문구
   // background-run tracking: which conversation is currently DISPLAYED, and which one is
   // actively being streamed into the UI. Generation lives server-side, so leaving a chat
   // just stops rendering here (the server keeps going); re-entering resumes via its run.
@@ -210,7 +218,9 @@ export default function Chat({ name, email, image, features }: { name: string; e
     (async () => {
       try {
         const r = await fetch("/api/me");
-        setOnboarded(r.ok ? !!(await r.json()).onboarded : true);  // on error, don't block the app
+        const me = r.ok ? await r.json() : null;
+        setOnboarded(me ? !!me.onboarded : true);  // on error, don't block the app
+        if (me?.guest) setGuestInfo({ used: me.guest.used ?? 0, limit: me.guest.limit ?? null });
       } catch { setOnboarded(true); }
     })();
     (async () => {
@@ -332,6 +342,13 @@ export default function Chat({ name, email, image, features }: { name: string; e
           // user moved to a different conversation → stop rendering (the run keeps generating server-side)
           if (myConv && viewConvRef.current !== myConv) { try { await reader.cancel(); } catch {} return; }
           if (ev.type === "conversation") { setConversationId(ev.id); continue; }
+          if (ev.type === "quota" && ev.scope === "guest" && guest) {
+            // GUEST-2: 체험 한도 도달 → 가입 월. 마지막 질문은 로그인 왕복에서 /?q=로 보존된다.
+            setGuestWall(ev.message || "게스트 체험을 모두 사용했어요.");
+          }
+          if (ev.type === "done" && guest && !ev.quota) {
+            setGuestInfo((g) => (g ? { ...g, used: g.used + 1 } : g));
+          }
           applyEvent(ev);
         }
       }
@@ -420,8 +437,12 @@ export default function Chat({ name, email, image, features }: { name: string; e
 
   return (
     <FeaturesProvider value={features}>
-    {onboarded === false && (
+    {onboarded === false && !guest && (
       <Onboarding onDone={() => { setOnboarded(true); setView("explore"); loadHandles(); }} />
+    )}
+    {guestWall && (
+      <GuestWall message={guestWall} providers={providers}
+        pending={[...messages].reverse().find((m) => m.role === "user")?.content || ""} />
     )}
     {shareArt && (
       <ShareSheet a={shareArt} audit={panelMsg?.audit ?? null} onClose={() => setShareArt(null)} />
@@ -530,6 +551,12 @@ export default function Chat({ name, email, image, features }: { name: string; e
                 <FreshnessDot f="fresh" />
                 <span className="explore-title">탐구<span className="explore-sub"> — 출처와 함께 분석해요</span></span>
               </div>
+              {guest && (
+                <span className="guest-pill" title="가입하면 대화가 그대로 이어져요">
+                  게스트 체험 중
+                  {guestInfo?.limit != null && ` · 남은 질문 ${Math.max(0, guestInfo.limit - guestInfo.used)}개`}
+                </span>
+              )}
             </header>
 
             <main className="chat" ref={scrollRef}>

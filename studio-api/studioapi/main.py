@@ -6,7 +6,7 @@ import json
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -85,7 +85,46 @@ def _profile(user: User) -> dict:
 
 @app.get("/users/me", tags=["Users"], dependencies=[Depends(require_service)])
 async def users_me(user: User = Depends(current_actor)) -> dict:
-    return _profile(user)
+    out = _profile(user)
+    if (user.plan or "") == "guest":   # GUEST-2: 헤더 필의 "남은 질문 N개"
+        from studioapi.guest import gid_of
+        from studioapi.models import GuestSession
+        from studioapi.plans import limits
+        with SessionLocal() as db:
+            sess = db.get(GuestSession, gid_of(user.email) or "")
+        out["guest"] = {"used": (sess.turns_used if sess else 0) or 0,
+                        "limit": limits("guest").get("lifetime_turns")}
+    return out
+
+
+@app.post("/users/claim-guest", tags=["Users"], dependencies=[Depends(require_service)])
+async def claim_guest(user: User = Depends(current_user),
+                      x_guest_id: str | None = Header(default=None, alias="X-Guest-Id")) -> dict:
+    """GUEST-3: 게스트 대화를 방금 가입한 계정으로 이어붙인다 — "다시 원래 하던거부터".
+    단일 트랜잭션: 대화 소유권 이전 + 세션 claimed 마킹 + 게스트 User 삭제. 멱등(재호출 no-op);
+    다른 계정이 이미 claim한 세션은 거부. TurnUsage는 게스트 이메일에 남긴다(새 계정 쿼터에
+    게스트 체험이 계산되지 않게 — 관대한 방향)."""
+    from studioapi.guest import gid_of, guest_email
+    from studioapi.models import GuestSession
+
+    gid = x_guest_id or ""
+    with SessionLocal() as db:
+        sess = db.get(GuestSession, gid)
+        if sess is None:
+            return {"claimed": False, "conversations": 0}
+        if sess.claimed_by and sess.claimed_by != user.email:
+            raise HTTPException(409, "이미 다른 계정으로 이어진 체험이에요.")
+        gmail = guest_email(gid)
+        moved = db.execute(
+            Conversation.__table__.update()
+            .where(Conversation.user_email == gmail).values(user_email=user.email)
+        ).rowcount
+        sess.claimed_by = user.email
+        gu = db.get(User, gmail)
+        if gu is not None:
+            db.delete(gu)
+        db.commit()
+    return {"claimed": True, "conversations": int(moved or 0)}
 
 
 class ProfileIn(BaseModel):
@@ -122,7 +161,8 @@ async def usage_me(user: User = Depends(current_user)) -> dict:
         data = r.json() if r.status_code == 200 else {}
     except Exception:  # noqa: BLE001
         data = {}
-    return {"plan": user.plan or "free", "usage": data}
+    from studioapi.quotas import usage_snapshot
+    return {"plan": user.plan or "free", "usage": data, "turns": usage_snapshot(user)}
 
 
 @app.post("/users/onboarded", tags=["Users"], dependencies=[Depends(require_service)])

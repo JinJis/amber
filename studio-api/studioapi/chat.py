@@ -116,7 +116,9 @@ async def drive_run(run: Run, user: User, conv_id: str, payload: dict) -> None:
       async with httpx.AsyncClient(timeout=None) as client:
         async with client.stream(
             "POST", f"{settings.agent_engine_url}/agent/chat",
-            json=payload, headers={"X-API-KEY": user.api_key},
+            json=payload,
+            # METER-1: X-Project-Id → 이 턴의 모든 Gemini 콜이 유저 프로젝트로 원가 귀속된다.
+            headers={"X-API-KEY": user.api_key, "X-Project-Id": user.project_id or ""},
         ) as resp:
             async for line in resp.aiter_lines():
                 if not line.startswith("data:"):

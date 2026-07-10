@@ -40,12 +40,18 @@ async def _activate_defaults(project_id: str) -> None:
 _reconciled: set[str] = set()
 
 
-async def ensure_user(email: str, name: str | None = None, image: str | None = None) -> User:
+async def ensure_user(email: str, name: str | None = None, image: str | None = None,
+                      referral_code: str | None = None) -> User:
     with SessionLocal() as db:
         existing = db.get(User, email)
     if existing:
         if email not in _reconciled:
-            await _activate_defaults(existing.project_id)  # backfill connectors added since signup
+            if settings.plan_enforce_connectors:
+                # PLAN-4: 플랜 기준 reconcile — free 유저의 프리미엄 커넥터 회수 포함(1회, 로깅).
+                from studioapi.plans import apply_plan
+                await apply_plan(email, existing.plan or "free")
+            else:
+                await _activate_defaults(existing.project_id)  # backfill free-set connectors only
             # backfill profile from the provider if we never captured it (never overwrite a set value —
             # the user may have edited their display name).
             if name and not existing.name or image and not existing.image:
@@ -72,4 +78,7 @@ async def ensure_user(email: str, name: str | None = None, image: str | None = N
     with SessionLocal() as db:
         db.merge(user)
         db.commit()
+    if referral_code:  # REF-1: 가입 귀속 — 자기추천·미존재 코드는 내부에서 무시
+        from studioapi.referrals import attribute_signup
+        attribute_signup(email, referral_code)
     return user

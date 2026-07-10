@@ -916,6 +916,17 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .fu-chip:disabled { opacity: .5; cursor: default; }
 .fu-chip .fu-arrow { color: var(--accent); flex: none; }
 
+/* GUEST-2: 게스트 필 + 가입 월 */
+.guest-pill { margin-left: auto; padding: 4px 10px; border: 1px solid var(--line-2); border-radius: 999px;
+  background: var(--panel); color: var(--muted); font-size: 12px; white-space: nowrap; }
+.guest-wall { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(4px); }
+.gw-card { width: min(420px, calc(100vw - 32px)); padding: 28px; border: 1px solid var(--line-2);
+  border-radius: 16px; background: var(--panel); box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+.gw-h { margin: 14px 0 4px; font-size: 18px; line-height: 1.4; }
+.gw-sub { margin: 0 0 16px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.gw-actions { display: flex; flex-direction: column; gap: 8px; }
+
 /* PLAN-2: 쿼터 카드 — blocked(한도 도달) / degraded(pro fair-use 초과, 표준 모델 강등) */
 .quota-note { max-width: 80%; margin-top: 8px; padding: 10px 14px; border-radius: 10px;
   border: 1px solid var(--line-2); background: var(--panel); font-size: 13px; line-height: 1.5; }

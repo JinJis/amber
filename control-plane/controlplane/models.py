@@ -90,6 +90,9 @@ class LlmUsage(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     calls: Mapped[int] = mapped_column(Integer, default=1)
     estimated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # METER-1: which tenant project this call served — per-user cost attribution (unit economics).
+    # NULL = shared/background work (feeds, ops) or a pre-attribution row.
+    project_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
     ts: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 

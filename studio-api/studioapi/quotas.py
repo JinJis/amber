@@ -83,6 +83,24 @@ def _daily_limit(user: User, lim: dict, now: datetime) -> int | None:
     return base
 
 
+def usage_snapshot(user: User) -> dict:
+    """PLAN-5: '내 사용량' 표시용 스냅샷 — 소비 없이 읽기만. Settings의 프로그레스 바가 그린다."""
+    plan = plans.plan_of(user)
+    lim = plans.limits(plan)
+    now = datetime.now(KST)
+    day, month = now.strftime("%Y-%m-%d"), now.strftime("%Y-%m")
+    with SessionLocal() as db:
+        daily_used = db.execute(select(func.count()).select_from(TurnUsage).where(
+            TurnUsage.user_email == user.email, TurnUsage.day == day)).scalar() or 0
+        monthly_used = db.execute(select(func.count()).select_from(TurnUsage).where(
+            TurnUsage.user_email == user.email, TurnUsage.month == month)).scalar() or 0
+    return {"plan": plan, "label": lim.get("label") or plan,
+            "daily_used": daily_used, "daily_limit": _daily_limit(user, lim, now),
+            "monthly_used": monthly_used, "monthly_limit": lim.get("monthly_turns"),
+            "degrade_over_monthly": bool(lim.get("degrade_over_monthly")),
+            "daily_reset_at": _tomorrow_midnight(now), "monthly_reset_at": _next_month_first(now)}
+
+
 def check_and_consume(user: User, conversation_id: str | None = None) -> QuotaVerdict:
     """한도 판정 + 허용 시 같은 트랜잭션에서 TurnUsage 소비. blocked면 아무것도 쓰지 않는다."""
     plan = plans.plan_of(user)

@@ -21,13 +21,15 @@ async def current_user(
     x_user_email: Annotated[str | None, Header(alias="X-User-Email")] = None,
     x_user_name: Annotated[str | None, Header(alias="X-User-Name")] = None,
     x_user_image: Annotated[str | None, Header(alias="X-User-Image")] = None,
+    x_referral_code: Annotated[str | None, Header(alias="X-Referral-Code")] = None,
 ) -> User:
     if not x_user_email:
         raise HTTPException(401, "Missing authenticated user.")
     # name/image come from the OAuth session (via the web BFF), URI-encoded — seeded on first login.
     name = unquote(x_user_name) if x_user_name else None
     image = unquote(x_user_image) if x_user_image else None
-    return await ensure_user(x_user_email, name=name, image=image)
+    # REF-1: vg_ref 쿠키의 추천 코드 — 첫 프로비저닝(가입)에서만 귀속된다.
+    return await ensure_user(x_user_email, name=name, image=image, referral_code=x_referral_code)
 
 
 async def current_actor(

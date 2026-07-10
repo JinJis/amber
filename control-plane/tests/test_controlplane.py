@@ -282,3 +282,17 @@ def test_admin_patch_project_plan():
     assert r.status_code == 200 and r.json()["plan"] == "pro"
     assert client.patch("/admin/projects/prj_nope", headers=ADMIN, json={"plan": "free"}).status_code == 404
     assert client.patch(f"/admin/projects/{p['id']}", json={"plan": "free"}).status_code == 401  # no admin token
+
+
+def test_llm_usage_project_attribution():
+    """METER-1: llm-usage 행이 project_id를 실어 유저별 원가 롤업이 가능해진다."""
+    r = client.post("/admin/llm-usage", headers=ADMIN, json={
+        "service": "agent-engine", "kind": "synthesis", "model": "gemini-pro-latest",
+        "input_tokens": 100, "output_tokens": 50, "project_id": "prj_meter1"})
+    assert r.status_code == 200
+    from controlplane.db import SessionLocal
+    from controlplane.models import LlmUsage
+    from sqlalchemy import select
+    with SessionLocal() as db:
+        row = db.execute(select(LlmUsage).where(LlmUsage.project_id == "prj_meter1")).scalars().first()
+    assert row is not None and row.input_tokens == 100

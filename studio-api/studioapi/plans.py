@@ -99,6 +99,52 @@ def plan_of(user) -> str:
     return p if p in _plans() else "free"
 
 
+async def apply_plan(user_email: str, plan: str) -> bool:
+    """PLAN-4: 플랜 전환(free↔pro·게스트 승격·결제 상태 변화)의 **단일 경로**.
+
+    순서 고정: ① 커넥터 활성화 토글 → ② 게이트웨이 rate 티어 → ③ users.plan.
+    중간에 죽으면 '과소 권한'으로만 남는다(결제했는데 권한이 없으면 재시도로 복구,
+    결제 안 했는데 권한이 열리는 일은 없음). 멱등 — 몇 번을 불러도 같은 결과."""
+    from datetime import datetime
+
+    from studioapi.db import SessionLocal
+    from studioapi.models import User
+    from studioapi.provision import _admin
+
+    plan = (plan or "free").lower()
+    lim = limits(plan)
+    with SessionLocal() as db:
+        u = db.get(User, user_email)
+        if u is None:
+            return False
+        project_id = u.project_id
+    want = set(lim.get("connectors") or FREE_CONNECTORS)
+    ok = True
+    for cid in sorted(set(FREE_CONNECTORS) | set(PREMIUM_CONNECTORS)):
+        try:
+            await _admin("POST", f"/admin/projects/{project_id}/activations",
+                         {"connector_id": cid, "enabled": cid in want})
+        except Exception as exc:  # noqa: BLE001 — 일부 실패해도 계속; 요란하게 남긴다
+            ok = False
+            logger.error("apply_plan(%s→%s): activation %s=%s failed: %s",
+                         user_email, plan, cid, cid in want, exc)
+    try:
+        await _admin("PATCH", f"/admin/projects/{project_id}", {"plan": plan})
+    except Exception as exc:  # noqa: BLE001
+        ok = False
+        logger.error("apply_plan(%s→%s): rate tier patch failed: %s", user_email, plan, exc)
+    with SessionLocal() as db:
+        u = db.get(User, user_email)
+        if u is not None:
+            u.plan = plan
+            u.plan_updated_at = datetime.utcnow()
+            db.commit()
+    if not ok:
+        logger.error("apply_plan(%s→%s): completed WITH ERRORS — entitlements may be under-provisioned",
+                     user_email, plan)
+    return ok
+
+
 def spec_overrides(plan: str, degraded: bool = False) -> dict:
     """PLAN-3: 이 턴의 AgentSpec에 병합할 플랜 티어 필드들.
 
