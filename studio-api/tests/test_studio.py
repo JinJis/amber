@@ -675,3 +675,24 @@ def test_evidence_html_proxy_streams_html_or_204(monkeypatch):
     assert client.get(f"/evidence/html?{q}", headers=_hdr("e@u.com")).status_code == 204
 
 
+
+
+@respx.mock
+def test_rc1_tap_recorded_and_feed_reranked_by_taste(monkeypatch):
+    """RC-1: 탭 기록 → 유저별 kind 분포 → 공유 캐시 풀을 취향순으로 재정렬(콘텐츠 불변)."""
+    _cfg(monkeypatch)
+    _mock_control_plane()
+    email = "taste@u.com"
+    for _ in range(3):
+        assert client.post("/ask-feed/tap", headers=_hdr(email),
+                           json={"kind": "valuation", "ticker": "005930"}).json()["ok"]
+    from studioapi.askfeed import rerank_by_taste, recent_tap_kinds
+    from studioapi.db import SessionLocal
+    with SessionLocal() as db:
+        kinds = recent_tap_kinds(db, email)
+    assert kinds.get("valuation") == 3
+    cards = [{"kind": "news_probe", "question": "a"}, {"kind": "valuation", "question": "b"},
+             {"kind": "earnings", "question": "c"}]
+    out = rerank_by_taste(cards, kinds)
+    assert out[0]["kind"] == "valuation"            # 취향 1순위로
+    assert [c["kind"] for c in rerank_by_taste(cards, {})] == [c["kind"] for c in cards]  # 무신호=원순서

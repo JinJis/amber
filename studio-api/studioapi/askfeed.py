@@ -212,16 +212,18 @@ async def get_ticker_feed(market: str, ticker: str, name: str | None = None,
         row = db.get(AskFeedCache, scope)
         if row is not None and row.generated_at and datetime.utcnow() - row.generated_at < ttl:
             p = _payload_of(row)
-            return {"cards": (p.get("cards") or [])[:5], "generated_at": p.get("generated_at"),
-                    "cached": True}
+            taste = recent_tap_kinds(db, user.email)
+            return {"cards": rerank_by_taste((p.get("cards") or [])[:5], taste),
+                    "generated_at": p.get("generated_at"), "cached": True}
         async with httpx.AsyncClient() as client:
             await _refresh_scope(client, db, scope=scope, api_key=user.api_key,
                                  body={"scope": "ticker", "market": (market or "US").upper(),
                                        "ticker": ticker, "name": name or ticker, "limit": 5},
                                  timeout=settings.ask_feed_generate_timeout_seconds)
         p = _payload_of(db.get(AskFeedCache, scope))
-        return {"cards": (p.get("cards") or [])[:5], "generated_at": p.get("generated_at"),
-                "cached": False}
+        taste = recent_tap_kinds(db, user.email)
+        return {"cards": rerank_by_taste((p.get("cards") or [])[:5], taste),
+                "generated_at": p.get("generated_at"), "cached": False}
 
 
 # --- ONB-LIVE: 온보딩 쇼케이스 캐시 (하루 1회 갱신, read-through) ------------------------------
@@ -267,3 +269,42 @@ async def get_onboarding_showcase(user: User = Depends(current_user)) -> dict:
     if stale and (_onb_task is None or _onb_task.done()):
         _onb_task = asyncio.create_task(refresh_onboarding_once())
     return payload or {}
+
+
+# --- RC-1: 탭 피드백 루프 ---------------------------------------------------------------------
+from pydantic import BaseModel as _BM
+
+from studioapi.models import CardTap
+
+
+class TapIn(_BM):
+    kind: str
+    ticker: str | None = None
+
+
+@router.post("/ask-feed/tap", summary="RC-1: 질문 카드 탭 기록 (개인화 신호)")
+async def record_tap(body: TapIn, user: User = Depends(current_user)) -> dict:
+    with SessionLocal() as db:
+        db.add(CardTap(user_email=user.email, kind=body.kind[:32],
+                       ticker=(body.ticker or None) and body.ticker[:32]))
+        db.commit()
+    return {"ok": True}
+
+
+def rerank_by_taste(cards: list[dict], kind_counts: dict[str, int]) -> list[dict]:
+    """공유 캐시 풀을 유저의 탭 분포로 안정 재정렬 — 콘텐츠 불변(캐시 오염 없음), 순서만
+    유저가 실제 반응한 kind 우선. 동률은 원 큐레이션 순서 유지(결정적)."""
+    if not kind_counts:
+        return cards
+    return sorted(cards, key=lambda c: -kind_counts.get(str(c.get("kind") or ""), 0))
+
+
+def recent_tap_kinds(db: Session, email: str, days: int = 14, cap: int = 200) -> dict[str, int]:
+    """최근 N일 유저가 탭한 카드 kind 분포 — 티커 피드 요청에 개인화 힌트로 동봉."""
+    since = datetime.utcnow() - timedelta(days=days)
+    rows = db.execute(select(CardTap.kind).where(
+        CardTap.user_email == email, CardTap.ts >= since).limit(cap)).scalars().all()
+    out: dict[str, int] = {}
+    for k in rows:
+        out[k] = out.get(k, 0) + 1
+    return out

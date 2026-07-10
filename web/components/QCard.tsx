@@ -31,7 +31,12 @@ export function QCard({ c, name, onPick, onEvidence }: {
   const cit = c.citations?.[0];
   return (
     <div className="qc">
-      <button type="button" className="qc-main" onClick={() => onPick(c.query || c.question)}>
+      <button type="button" className="qc-main" onClick={() => {
+        // RC-1: 탭 신호(fire-and-forget) — 실패해도 UX 무영향
+        try { fetch("/api/ask-feed/tap", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: c.kind, ticker: c.ticker ?? null }) }).catch(() => {}); } catch {}
+        onPick(c.query || c.question);
+      }}>
         <div className="qc-top">
           {c.ticker ? <TickerLogo market={c.market} ticker={c.ticker} name={name || c.ticker} size={20} />
                     : <span className="qc-emoji" aria-hidden>{k.i}</span>}
