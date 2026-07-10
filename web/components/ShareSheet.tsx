@@ -7,7 +7,6 @@
 
 import { useEffect, useState } from "react";
 import type { Artifact, Citation } from "@/lib/types";
-import { renderOgCard, ogCardForAnswer, ogCardForArtifact } from "@/lib/shareCard";
 
 type Urls = { page: string; x: string; threads: string; telegram: string; kakao: string };
 
@@ -30,7 +29,6 @@ export function ShareSheet({ a, answer, audit, onClose }: {
   const [urls, setUrls] = useState<Urls | null>(null);
   const [detail, setDetail] = useState("");
   const [copied, setCopied] = useState(false);
-  const token = urls ? decodeURIComponent(urls.page.split("/s/")[1] || "") : "";
 
   useEffect(() => {
     (async () => {
@@ -58,26 +56,6 @@ export function ShareSheet({ a, answer, audit, onClose }: {
       } catch { setState("error"); }
     })();
   }, [a, answer, audit]);
-
-  // Silent OG image: render the real content into a 16:9 card (best for link unfurls) and upload
-  // it as the share's og:image. No UI — the user shares a link; the preview shows the answer.
-  useEffect(() => {
-    (async () => {
-      if (state !== "ready" || !urls || !token) return;
-      try {
-        const card = answer ? ogCardForAnswer(answer) : ogCardForArtifact(a!);
-        const blob = await renderOgCard(card, shortLink(urls.page));
-        const dataUrl: string = await new Promise((res) => {
-          const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.readAsDataURL(blob);
-        });
-        await fetch(`/api/shares/${encodeURIComponent(token)}/image`, {
-          method: "PUT", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ data_url: dataUrl }),
-        });
-      } catch { /* best-effort — the link works without the preview image */ }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, urls]);
 
   async function copy() {
     if (!urls) return;

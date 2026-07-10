@@ -35,11 +35,12 @@ export async function generateMetadata({ params }: { params: { token: string } }
     ? plainText(String((share.payload as { content?: string })?.content ?? "")).slice(0, 160)
     : "";
   const description = lead || "출처·기준일이 함께 담긴 검증 가능한 리서치 자료입니다. 원본 데이터로 직접 확인해보세요.";
-  // SH-2b: when the share carries a baked card image, use it as the OG/Twitter preview (large card).
-  const img = share?.has_image ? `/api/shares/${encodeURIComponent(params.token)}/image` : undefined;
+  // V-1: 서버사이드 OG — 링크가 생기는 순간 이미지도 존재(클라이언트 업로드 레이스 없음).
+  // 실데이터(차트 실루엣 포함)로 /og/s/{token}이 그린다; 구 링크의 저장 이미지는 그 라우트가 대체.
+  const img = share ? `/og/s/${encodeURIComponent(params.token)}` : undefined;
   return {
     title, description,
-    openGraph: { title, description, type: "article", ...(img ? { images: [{ url: img }] } : {}) },
+    openGraph: { title, description, type: "article", ...(img ? { images: [{ url: img, width: 1200, height: 630 }] } : {}) },
     twitter: { card: img ? "summary_large_image" : "summary", title, description,
                ...(img ? { images: [img] } : {}) },
   };
