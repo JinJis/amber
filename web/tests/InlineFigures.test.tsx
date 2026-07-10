@@ -86,8 +86,8 @@ describe("annotateNumerals (수치 → #num-i 링크)", () => {
 });
 
 describe("NumHighlight (본문 하이라이트 + 팝업)", () => {
-  const mk = (onEvidence = vi.fn(), onPinLedger = vi.fn()) =>
-    makeMdComponents(null, vi.fn(), vi.fn(), { rows: ROWS as any, citations: CITES, onEvidence, onPinLedger });
+  const mk = (onEvidence = vi.fn()) =>
+    makeMdComponents(null, vi.fn(), vi.fn(), { rows: ROWS as any, citations: CITES, onEvidence });
 
   it("검증 수치는 노란 하이라이트 + 팝업에 원자료 대조·출처 [n]·as_of", () => {
     render(<AnswerArticle mdComponents={mk()} content={annotateNumerals(CONTENT, ROWS as any)} />);
@@ -106,15 +106,12 @@ describe("NumHighlight (본문 하이라이트 + 팝업)", () => {
     expect(warn.getAttribute("role")).toBeNull();
   });
 
-  it("하이라이트 클릭 → 해당 인용으로 onEvidence, 팝업 📌 → 노트북 담기", () => {
-    const onEvidence = vi.fn(); const onPin = vi.fn();
-    render(<AnswerArticle mdComponents={mk(onEvidence, onPin)}
+  it("하이라이트 클릭 → 해당 인용으로 onEvidence", () => {
+    const onEvidence = vi.fn();
+    render(<AnswerArticle mdComponents={mk(onEvidence)}
       content={annotateNumerals(CONTENT, ROWS as any)} />);
     const hl = screen.getAllByTestId("num-hl")[0];
     fireEvent.click(hl);
     expect(onEvidence).toHaveBeenCalledWith(expect.objectContaining({ index: 1 }));
-    fireEvent.click(screen.getByText("📌 노트북에 담기"));
-    expect(onPin).toHaveBeenCalledWith(expect.objectContaining({ raw: "391.0B" }),
-      expect.objectContaining({ index: 1 }));
   });
 });

@@ -122,7 +122,6 @@ export type Artifact = {
   passage?: string | null;            // kind=quote (SH-4 원문 인용 카드) — verbatim highlighted text
   doc_title?: string | null;          // kind=quote: the document the passage came from
   url?: string | null;                // kind=quote: link back to the source document
-  blocks?: unknown[] | null;          // kind=note (NB-4): notebook block snapshots for sharing
   source?: string | null;
   as_of?: string | null;
   freshness?: string | null;

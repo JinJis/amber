@@ -380,7 +380,7 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 
 /* pin source button on a source card */
 .srcprev { position: relative; }
-/* "＋ 노트북" — unified add-to-notebook action in the source card's foot (matches the artifact
+/* "＋ 담기" — add action in the source card's foot (matches the artifact
    card's button; replaces the old 📌 pin icon). Sits at the right of the foot, wraps if narrow. */
 .sp-add { margin-left: auto; flex: none; white-space: nowrap; background: var(--panel-2);
   border: 1px solid var(--line-2); border-radius: 999px; color: var(--muted); cursor: pointer;
@@ -1461,45 +1461,20 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 /* Sharing is link-only (SH-2b image export removed) — the OG preview is generated silently. */
 
 /* ── NB: 리서치 노트북 ─────────────────────────────────────────── */
-.nbview { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 0; height: 100%; overflow: hidden; }
-.nb-list { border-right: 1px solid var(--line); background: var(--panel-2); padding: 14px 10px;
-  display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
-.nb-list-h { display: flex; align-items: center; justify-content: space-between; font-size: 12px;
-  font-weight: 600; color: var(--text); margin-bottom: 4px; }
-.nb-item { text-align: left; padding: 8px 10px; border: 1px solid transparent; border-radius: 8px;
-  background: none; color: var(--text-2); font-size: 12.5px; cursor: pointer; display: flex;
-  justify-content: space-between; gap: 6px; }
 .nb-item:hover { background: var(--panel-3); }
 .nb-item.on { background: var(--panel); border-color: var(--line-2); color: var(--text); font-weight: 600; }
 .nbp-count { font-size: 10px; color: var(--muted); }
-.nb-doc { overflow-y: auto; padding: 18px 22px; display: flex; flex-direction: column; gap: 12px; }
-.nb-doc-h { display: flex; align-items: center; gap: 8px; }
-.nb-title-input { font-size: 17px; font-weight: 700; color: var(--text); background: none; border: none;
-  border-bottom: 1.5px solid transparent; padding: 4px 2px; min-width: 200px; }
 .nb-title-input:focus { outline: none; border-bottom-color: var(--ink); }
-.nb-empty { color: var(--muted); font-size: 12.5px; line-height: 1.7; padding: 18px 4px; }
-.nb-block { border: 1px solid var(--line-3); border-radius: 10px; background: var(--panel);
-  padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; max-width: 720px; }
 .nb-block.text { background: var(--panel-2); }
-.nb-block-bar { display: flex; align-items: center; justify-content: space-between; }
-.nb-kind { font-size: 9.5px; letter-spacing: .05em; color: var(--muted); }
-.nb-tools { display: flex; gap: 2px; }
 .nb-tools button { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 11px;
   padding: 2px 5px; border-radius: 4px; }
 .nb-tools button:hover { background: var(--panel-3); color: var(--text); }
-.nb-text { cursor: text; font-size: 13px; }
 .nb-text-edit textarea { width: 100%; font-size: 13px; border: 1px solid var(--line-2); border-radius: 8px;
   padding: 8px 10px; background: var(--panel); color: var(--text); resize: vertical; }
-.nb-edit-actions { display: flex; gap: 6px; margin-top: 6px; }
-.nb-note { text-align: left; background: none; border: none; border-top: 1px dotted var(--line-3);
-  padding: 6px 2px 0; font-size: 11px; color: var(--text-2); cursor: pointer; }
 .nb-note.empty { color: var(--muted); }
 .nb-note:hover { color: var(--text); }
-.nb-note-edit { display: flex; gap: 6px; border-top: 1px dotted var(--line-3); padding-top: 6px; }
 .nb-note-edit input { flex: 1; font-size: 11.5px; border: 1px solid var(--line-2); border-radius: 6px;
   padding: 5px 8px; background: var(--panel); color: var(--text); }
-.nb-ledger { font-size: 12px; color: var(--text); }
-.nb-lg-src { color: var(--muted); font-size: 10.5px; }
 /* 담기 시트 */
 .nbp { background: var(--panel); border: 1px solid var(--line-2); border-radius: 13px; padding: 16px;
   width: min(430px, 92vw); display: flex; flex-direction: column; gap: 10px; }
@@ -1515,13 +1490,7 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .nbp-actions { display: flex; justify-content: flex-end; }
 /* 공개 노트 페이지 */
 .share-note-doc { display: flex; flex-direction: column; gap: 12px; }
-.share-nb-text { border-left: 3px solid var(--line-2); padding: 6px 12px; background: var(--panel-2);
-  border-radius: 0 8px 8px 0; }
-.share-nb-lbl { font-size: 9.5px; letter-spacing: .06em; color: var(--muted); }
 .share-nb-text p { margin: 4px 0 0; font-size: 13px; white-space: pre-wrap; }
-.share-nb-pin { border: 1px solid var(--line-3); border-radius: 10px; padding: 10px 12px; background: var(--panel); }
-.share-nb-ev { font-size: 12px; color: var(--text); }
-.share-nb-why { margin: 6px 0 0; font-size: 10.5px; color: var(--text-2); }
 .share-nb-pin .muted { color: var(--muted); }
 
 /* ── SA: 스탠딩 알림 (질문 구독) ─────────────────────────────── */
@@ -1877,7 +1846,6 @@ img, svg, video { max-width: 100%; }
   /* two-pane screens collapse to one column */
   .wl-layout { grid-template-columns: 1fr; }
   .wl-groups { border-right: none; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
-  .nbview { grid-template-columns: 1fr; height: auto; overflow: visible; }
   .df-grid { grid-template-columns: 1fr; }
   .sources-grid { grid-template-columns: 1fr 1fr; }
   .settings { padding: 18px 14px 48px; }

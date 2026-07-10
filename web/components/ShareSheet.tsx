@@ -42,11 +42,7 @@ export function ShareSheet({ a, answer, audit, onClose }: {
               payload: { content: answer.content, artifacts: answer.artifacts ?? [],
                          citations: answer.citations ?? [], audit: answer.audit ?? null },
               audit: answer.audit ?? null }
-          : a!.kind === "note"
-              ? { kind: "note", title: a!.title || "리서치 노트",
-                  payload: { blocks: (a as unknown as { blocks: unknown[] }).blocks },
-                  audit: null }  // pins carry provenance; user text is ATTRIBUTED, not audited
-              : a!.kind === "quote"
+          : a!.kind === "quote"
               ? { kind: "quote", title: a!.title || "원문 인용",
                   payload: { passage: a!.passage, source: a!.source, doc_title: a!.doc_title, url: a!.url, as_of: a!.as_of },
                   audit: null }  // a verbatim quote has no computed numbers to audit

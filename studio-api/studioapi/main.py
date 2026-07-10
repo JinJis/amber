@@ -23,7 +23,6 @@ from studioapi.deps import current_user, require_service
 from studioapi.models import Conversation, Message, User
 from studioapi.orm_helpers import get_owned
 from studioapi.market import router as market_router
-from studioapi.notebooks import router as notebooks_router
 from studioapi.standing import router as standing_router
 from studioapi.search import router as search_router
 from studioapi.templates import router as templates_router, seed_dashboard_templates
@@ -205,5 +204,4 @@ app.include_router(prices_router)
 app.include_router(financials_router)
 app.include_router(search_router)
 app.include_router(market_router)
-app.include_router(notebooks_router)
 app.include_router(standing_router)

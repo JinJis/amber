@@ -28,14 +28,14 @@ from studioapi.models import ShareLink, User
 
 router = APIRouter(tags=["Shares"], dependencies=[Depends(require_service)])
 
-_KINDS = {"artifact", "verdict", "note", "quote", "answer"}
+_KINDS = {"artifact", "verdict", "quote", "answer"}
 
 
 class ShareIn(BaseModel):
     # `answer` shares a WHOLE chat answer (prose + inline figures + citations + audit) — the payload
     # is a pure content snapshot with NO user identity (no email/conversation id), so the public
     # page shows the research, never the researcher.
-    kind: str = Field(pattern="^(artifact|verdict|note|quote|answer)$")
+    kind: str = Field(pattern="^(artifact|verdict|quote|answer)$")
     title: str = Field(min_length=1, max_length=160)
     payload: dict                      # the snapshot (artifact JSON / note blocks / quote card / answer)
     audit: dict | None = None          # QT-2 result from the turn ({checked, unsupported: []})

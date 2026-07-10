@@ -6,8 +6,6 @@ import BoardCanvas from "./BoardCanvas";
 import BotHome from "./BotHome";
 import { ShareSheet } from "./ShareSheet";
 import Onboarding from "./Onboarding";
-import NotebookView from "./NotebookView";
-import { NotebookPicker, type PinPayload } from "./NotebookPicker";
 import CockpitEntry from "./CockpitEntry";
 import Watchlists, { Watchlist } from "./Watchlists";
 import { MentionChip } from "./MentionChip";
@@ -65,9 +63,8 @@ export default function Chat({ name, email, image, features }: { name: string; e
 
   // shell view + watchlists / @groups. Dashboard is home (when enabled); 탐색(explore) is the chat
   // surface and the fallback when a feature-flagged surface is off.
-  const [view, setView] = useState<"dashboard" | "explore" | "watch" | "bot" | "notes" | "settings">(
+  const [view, setView] = useState<"dashboard" | "explore" | "watch" | "bot" | "settings">(
     features.dashboard ? "dashboard" : "explore");
-  const [nbPin, setNbPin] = useState<PinPayload | null>(null);   // NB-2: asset awaiting 노트 담기
   const [standingDone, setStandingDone] = useState<Set<number>>(new Set());  // SA-1: subscribed turns
   const [groups, setGroups] = useState<Watchlist[]>([]);   // @관심종목 groups (name + member items)
   const [mention, setMention] = useState<Watchlist[]>([]); // open @-autocomplete suggestions
@@ -151,16 +148,6 @@ export default function Chat({ name, email, image, features }: { name: string; e
     setFocusIdx(null);
   }
 
-  // ASK-2: 담기 언어는 "+노트북" 하나 — 모든 근거(차트/표·출처 카드·수치)는 리서치 노트북으로
-  // 직행한다 (보드 핀 분기 제거; FEATURE_BOARD는 FLAG-1로 꺼진 죽은 가지였음).
-  function pinArtifact(a: Artifact) {
-    setNbPin({ kind: "pin_artifact", payload: a as unknown as Record<string, unknown>,
-               title: a.title || "차트·표" });
-  }
-  function pinCitation(c: Citation) {
-    setNbPin({ kind: "pin_citation", payload: c as unknown as Record<string, unknown>,
-               title: c.source || "출처" });
-  }
   // SA-1: one-tap 질문 구독 — the question is THIS turn's user message; the probe is the
   // periodic source the answer actually used (recorded by the engine, cadence-gated).
   async function subscribeStanding(i: number, m: Msg) {
@@ -177,10 +164,6 @@ export default function Chat({ name, email, image, features }: { name: string; e
     } catch { /* the chip stays tappable */ }
   }
 
-  function pinLedger(row: Record<string, unknown>, c: Citation | null) {
-    setNbPin({ kind: "pin_ledger", title: `수치 ${row.raw}`,
-               payload: { ...row, source: c?.source ?? null, as_of: c?.as_of ?? null, url: c?.url ?? null } });
-  }
 
   async function loadAgents() {
     try {
@@ -443,9 +426,6 @@ export default function Chat({ name, email, image, features }: { name: string; e
             <span className="ic">📊</span><span className="lbl">대시보드</span>
           </button>
         )}
-        <button className={`rail-item ${view === "notes" ? "on" : ""}`} onClick={() => setView("notes")}>
-          <span className="ic">📓</span><span className="lbl">노트</span>
-        </button>
         <button className={`rail-item ${view === "watch" ? "on" : ""}`} onClick={() => setView("watch")}>
           <span className="ic">⭐</span><span className="lbl">관심종목</span>
         </button>
@@ -487,8 +467,6 @@ export default function Chat({ name, email, image, features }: { name: string; e
           <Settings name={name} email={email ?? name} image={image} />
         ) : view === "watch" ? (
           <Watchlists embedded onChanged={loadHandles} />
-        ) : view === "notes" ? (
-          <NotebookView onShare={(n) => setShareArt(n as unknown as Artifact)} />
         ) : view === "dashboard" && features.dashboard ? (
           <BoardCanvas onEvidence={setViewer} />
         ) : view === "bot" && features.alerts ? (
@@ -552,8 +530,8 @@ export default function Chat({ name, email, image, features }: { name: string; e
                               streaming={busy && i === messages.length - 1}
                               mdComponents={makeMdComponents(panelIdx === i ? hoverCite : null, setHoverCite, citeClickFor(i),
                                 { rows: (m.audit?.ledger ?? []) as LedgerRow[], citations: m.citations ?? [],
-                                  onEvidence: setViewer, onPinLedger: pinLedger })}
-                              onEvidence={setViewer} onPin={pinArtifact} onShare={(a) => setShareArt(a)} />
+                                  onEvidence: setViewer })}
+                              onEvidence={setViewer} onShare={(a) => setShareArt(a)} />
                           : (busy && !(m.thinking?.length) ? "…" : "")}
                       </div>
                       {/* Answer footer — one clean action row: evidence stats (left) + a clear
@@ -671,9 +649,7 @@ export default function Chat({ name, email, image, features }: { name: string; e
             msg={panelMsg}
             streaming={panelStreaming}
             onEvidence={setViewer}
-            onPinArtifact={pinArtifact}
             onShareArtifact={(a) => setShareArt(a)}
-            onPinCitation={pinCitation}
             onResizeStart={startCtxResize}
             onCloseMobile={isMobile ? () => setCtxSheet(false) : undefined}
           />
@@ -691,9 +667,6 @@ export default function Chat({ name, email, image, features }: { name: string; e
 
       {viewer && <SourceViewer c={viewer} onClose={() => setViewer(null)}
         onQuote={(q) => { setViewer(null); setShareArt(q); }} />}
-      {nbPin && (
-        <NotebookPicker pin={nbPin} onClose={() => setNbPin(null)} />
-      )}
     </div>
     </FeaturesProvider>
   );

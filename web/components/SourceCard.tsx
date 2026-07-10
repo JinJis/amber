@@ -94,8 +94,8 @@ export function SourceCard({ c, onExpand, onPin, hideTitle }: { c: Citation; onE
       <ConfBadge c={c} />
       {open}
       {onPin && (
-        <button type="button" className="sp-add" disabled={pinned} title="노트북에 담기"
-          onClick={(e) => { e.stopPropagation(); onPin(c); setPinned(true); }}>{pinned ? "✓ 노트북" : "＋ 노트북"}</button>
+        <button type="button" className="sp-add" disabled={pinned} title="담기"
+          onClick={(e) => { e.stopPropagation(); onPin(c); setPinned(true); }}>{pinned ? "✓ 담김" : "＋ 담기"}</button>
       )}
     </div>
   );

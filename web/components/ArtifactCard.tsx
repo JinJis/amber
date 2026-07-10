@@ -75,7 +75,7 @@ function TableArtifact(
         <span className="grow" />
         {onPin && (
           <button type="button" className="artifact-toggle" disabled={pinned}
-            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 노트북" : "＋ 노트북"}</button>
+            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 담김" : "＋ 담기"}</button>
         )}
         {onRemove && (
           <button type="button" className="artifact-toggle" onClick={onRemove} title="보드에서 제거">✕</button>
@@ -121,7 +121,7 @@ function NarrativeArtifact(
         <span className="grow" />
         {onPin && (
           <button type="button" className="artifact-toggle" disabled={pinned}
-            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 노트북" : "＋ 노트북"}</button>
+            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 담김" : "＋ 담기"}</button>
         )}
         {onRemove && (
           <button type="button" className="artifact-toggle" onClick={onRemove} title="보드에서 제거">✕</button>
@@ -245,7 +245,7 @@ export function ArtifactCard(
           <span className="grow" />
           {onPin && (
             <button type="button" className="artifact-toggle" disabled={pinned}
-              onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 노트북" : "＋ 노트북"}</button>
+              onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 담김" : "＋ 담기"}</button>
           )}
           {onRemove && <button type="button" className="artifact-toggle" onClick={onRemove} title="보드에서 제거">✕</button>}
         </div>
@@ -333,7 +333,7 @@ export function ArtifactCard(
         {onPin && (
           <button type="button" className="artifact-toggle" disabled={pinned}
             onClick={() => { onPin({ ...a, user_annotations: userAnn ?? undefined }); setPinned(true); }}>
-            {pinned ? "✓ 노트북" : "＋ 노트북"}
+            {pinned ? "✓ 담김" : "＋ 담기"}
           </button>
         )}
         {onRemove && (

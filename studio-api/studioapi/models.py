@@ -72,34 +72,6 @@ class AskFeedCache(Base):
     generated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
-class Notebook(Base):
-    """M-NB (리서치 노트북): a vertical block document — the successor of the grid Board.
-    Research accrues in TIME order (evidence blocks + the user's own notes between them),
-    not in canvas coordinates. The legacy boards/pinned_artifacts stay frozen behind
-    FEATURE_DASHBOARD; nothing is deleted."""
-
-    __tablename__ = "notebooks"
-    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: _uid("nb"))
-    user_email: Mapped[str] = mapped_column(ForeignKey("users.email"), index=True)
-    title: Mapped[str] = mapped_column(String(160))
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
-
-
-class NoteBlock(Base):
-    """One block in a notebook: a PINNED evidence snapshot (artifact / citation / ledger row)
-    or the user's own TEXT (markdown). Pins are immutable snapshots (a note read later shows
-    what was true then); `note` is the researcher's one-liner for WHY it was pinned — the
-    habit that separates a research notebook from a scrapbook."""
-
-    __tablename__ = "note_blocks"
-    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: _uid("blk"))
-    notebook_id: Mapped[str] = mapped_column(ForeignKey("notebooks.id"), index=True)
-    position: Mapped[int] = mapped_column(Integer, default=0)   # vertical order ("order" is reserved SQL)
-    kind: Mapped[str] = mapped_column(String(16))     # pin_artifact | pin_citation | pin_ledger | text
-    payload: Mapped[str] = mapped_column(Text)        # snapshot JSON (text blocks: {"md": ...})
-    note: Mapped[str | None] = mapped_column(Text, nullable=True)  # 왜 담았는지 (pin blocks)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class StandingQuestion(Base):

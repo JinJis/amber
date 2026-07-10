@@ -13,9 +13,9 @@ const PLANS = [
   { id: "free", name: "Free", price: "₩0", tagline: "가볍게 둘러보기",
     features: ["하루 질문 한도", "핵심 데이터 소스", "공유 링크"] },
   { id: "pro", name: "Pro", price: "₩19,000 / 월", tagline: "개인 리서처", featured: true,
-    features: ["질문 무제한", "전체 데이터 소스", "히스토리 랩 · 노트북", "우선 응답 속도"] },
+    features: ["질문 무제한", "전체 데이터 소스", "히스토리 랩 · 스탠딩 알림", "우선 응답 속도"] },
   { id: "team", name: "Team", price: "문의", tagline: "팀 · 기관",
-    features: ["팀 워크스페이스", "공유 노트북", "SSO 로그인", "전용 지원"] },
+    features: ["팀 워크스페이스", "공유 워크스페이스", "SSO 로그인", "전용 지원"] },
 ];
 
 function Avatar({ image, name, size = 72 }: { image?: string | null; name: string; size?: number }) {

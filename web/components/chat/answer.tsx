@@ -73,11 +73,10 @@ export function AnswerArticle({ content, artifacts, ledger, streaming, mdCompone
 
 // LG-4: 본문 속 수치 원장 — the audited numeral, highlighted in the prose. Hover → a small
 // popup with the 원자료 대조 result (출처 [n]·as_of·파생 🧮·📌담기); click → the source/derivation.
-function NumHighlight({ row, cit, children, setHoverCite, onEvidence, onPinLedger }: {
+function NumHighlight({ row, cit, children, setHoverCite, onEvidence }: {
   row: LedgerRow; cit: Citation | null; children: React.ReactNode;
   setHoverCite: (n: number | null) => void;
   onEvidence?: (c: Citation) => void;
-  onPinLedger?: (row: Record<string, unknown>, c: Citation | null) => void;
 }) {
   const [pinned, setPinned] = useState(false);
   const derived = !!cit?.computation;
@@ -96,12 +95,6 @@ function NumHighlight({ row, cit, children, setHoverCite, onEvidence, onPinLedge
               {cit ? <>[{cit.index}] {cit.source}{cit.as_of ? ` · ${cit.as_of}` : ""}</> : "차트·표 데이터와 일치"}
             </span>
             {cit && <span className="nt-hint">{derived ? "누르면 계산 과정을 볼 수 있어요" : "누르면 원문을 볼 수 있어요"}</span>}
-            {onPinLedger && (
-              <button type="button" className="nt-pin" disabled={pinned}
-                onClick={(e) => { e.stopPropagation(); onPinLedger(row as unknown as Record<string, unknown>, cit); setPinned(true); }}>
-                {pinned ? "✓ 노트북" : "📌 노트북에 담기"}
-              </button>
-            )}
           </>
         ) : (
           <span className="nt-line nt-warn">⚠ 이번 답변의 자료에서는 확인하지 못한 숫자예요</span>
@@ -114,7 +107,6 @@ function NumHighlight({ row, cit, children, setHoverCite, onEvidence, onPinLedge
 export type NumCtx = {
   rows: LedgerRow[]; citations: Citation[];
   onEvidence?: (c: Citation) => void;
-  onPinLedger?: (row: Record<string, unknown>, c: Citation | null) => void;
 };
 
 export function makeMdComponents(
@@ -143,7 +135,7 @@ export function makeMdComponents(
           ? num.citations.find((c) => c.index === row.citation_idx) ?? null : null;
         return (
           <NumHighlight row={row} cit={cit} setHoverCite={setHoverCite}
-            onEvidence={num.onEvidence} onPinLedger={num.onPinLedger}>{props.children}</NumHighlight>
+            onEvidence={num.onEvidence}>{props.children}</NumHighlight>
         );
       }
       return <a {...props} target="_blank" rel="noreferrer" />;
