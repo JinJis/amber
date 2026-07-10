@@ -1560,15 +1560,31 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
   padding: 18px 20px; font-size: 15px; }
 .share-quote footer { color: var(--muted); margin-top: 10px; font-size: 11px; }
 
-/* SH-ANSWER — a whole shared answer, read-only: the research body + 판정 strip + source cards. */
+/* SH-ANSWER — a whole shared answer, read-only: the research body + 판정 strip; the source panel
+   sits on the RIGHT (desktop) / below (mobile), folded by default — [n] clicks open it. */
 .share-answer { display: flex; flex-direction: column; gap: 16px; }
 .share-answer .msg.assistant { max-width: 100%; }
+.share-answer-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .share-answer .ctx-trust { align-self: flex-start; }
-.share-sources { display: flex; flex-direction: column; gap: 10px; margin-top: 6px;
-  border-top: 1px solid var(--line); padding-top: 16px; }
-.share-sources-h { font-size: 11px; color: var(--muted); margin: 0 0 2px; letter-spacing: .02em; }
+.share-sources { border: 1px solid var(--line-2); border-radius: 14px; background: var(--panel);
+  padding: 0; align-self: start; overflow: hidden; }
+.share-sources-h { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; font-size: 12px; color: var(--text-2); user-select: none; }
+.share-sources-h::-webkit-details-marker { display: none; }
+.share-sources-h:hover { background: var(--panel-2); }
+.share-sources-h .ss-hint { margin-left: auto; font-size: 10px; color: var(--faint); }
+.share-sources[open] .share-sources-h { border-bottom: 1px solid var(--line); }
+.share-src-list { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px 14px;
+  max-height: 70vh; overflow-y: auto; }
 .share-src-slot { border-radius: 12px; transition: box-shadow .2s, background .2s; }
 .share-src-slot.flash { box-shadow: 0 0 0 2px var(--accent); background: var(--panel-2); }
+/* desktop: right side panel (sticky) — the page widens to fit the second column */
+@media (min-width: 900px) {
+  .share-main:has(.share-answer.with-src) { max-width: 1080px; }
+  .share-answer.with-src { display: grid; grid-template-columns: minmax(0, 1fr) 340px;
+    gap: 24px; align-items: start; }
+  .share-answer.with-src .share-sources { position: sticky; top: 16px; }
+}
 
 /* SH-ANSWER — the answer footer: evidence stats (left) + a clear 공유 button (right). One row
    per finished answer so 공유 is always in the same, discoverable place. */

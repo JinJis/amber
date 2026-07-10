@@ -103,9 +103,11 @@ function AnswerShareView({ payload }: { payload: Record<string, unknown> }) {
   const ledger = (p.audit?.ledger ?? []) as LedgerRow[];
   const [hoverCite, setHoverCite] = useState<number | null>(null);
 
-  // read-only: a [n]/number click scrolls to (and flashes) its source card below — no in-app viewer
-  // (that needs a login); the source card links out to the original document.
+  // read-only: a [n]/number click opens the (default-folded) source panel, scrolls to and
+  // flashes that card — no in-app viewer (needs a login); the card links out to the original.
   const goCite = (n: number) => {
+    const panel = document.getElementById("share-sources") as HTMLDetailsElement | null;
+    if (panel && !panel.open) panel.open = true;
     const el = document.getElementById(`cite-${n}`);
     if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" });
       el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1200); }
@@ -121,25 +123,34 @@ function AnswerShareView({ payload }: { payload: Record<string, unknown> }) {
     .sort((a, b) => (a.index ?? 999) - (b.index ?? 999));
 
   return (
-    <div className="share-answer">
-      {!trust.conceptual && <TrustStrip s={trust} />}
-      {/* reuse the exact chat answer wrappers so article typography + inline figures + [n]/number
-          highlights render identically to the app (read-only — evidence opens the source page). */}
-      <div className="msg assistant"><div className="bubble">
-        <AnswerArticle content={content} artifacts={artifacts} ledger={ledger}
-          mdComponents={makeMdComponents(hoverCite, setHoverCite, goCite,
-            { rows: ledger, citations, onEvidence: openSource })}
-          onEvidence={openSource} />
-      </div></div>
+    <div className={`share-answer ${cited.length > 0 ? "with-src" : ""}`}>
+      <div className="share-answer-main">
+        {!trust.conceptual && <TrustStrip s={trust} />}
+        {/* reuse the exact chat answer wrappers so article typography + inline figures + [n]/number
+            highlights render identically to the app (read-only — evidence opens the source page). */}
+        <div className="msg assistant"><div className="bubble">
+          <AnswerArticle content={content} artifacts={artifacts} ledger={ledger}
+            mdComponents={makeMdComponents(hoverCite, setHoverCite, goCite,
+              { rows: ledger, citations, onEvidence: openSource })}
+            onEvidence={openSource} />
+        </div></div>
+      </div>
       {cited.length > 0 && (
-        <section className="share-sources">
-          <h2 className="share-sources-h mono">근거 · 출처 {cited.length}곳</h2>
-          {cited.map((c, i) => (
-            <div key={i} id={c.index != null ? `cite-${c.index}` : undefined} className="share-src-slot">
-              <SourceCard c={c} />
-            </div>
-          ))}
-        </section>
+        // 근거 패널: 데스크톱 = 우측 사이드 패널, 모바일 = 본문 아래 — 어느 쪽이든 기본 접힘.
+        // [n] 클릭이 펼치고 해당 카드로 스크롤한다 (goCite가 open을 강제).
+        <details className="share-sources" id="share-sources">
+          <summary className="share-sources-h">
+            <span className="mono">🔗 근거 · 출처 {cited.length}곳</span>
+            <span className="ss-hint mono">눌러서 펼치기</span>
+          </summary>
+          <div className="share-src-list">
+            {cited.map((c, i) => (
+              <div key={i} id={c.index != null ? `cite-${c.index}` : undefined} className="share-src-slot">
+                <SourceCard c={c} />
+              </div>
+            ))}
+          </div>
+        </details>
       )}
     </div>
   );

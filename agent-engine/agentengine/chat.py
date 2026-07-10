@@ -437,6 +437,18 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
         for c in (data_bearing or citations):
             c["used"] = True
 
+    # EV-PASSAGE: filings-LISTING citations the answer used still carry only the report TITLE
+    # (the index tool has no body) — swap in the REAL passage from the ingested filing text
+    # (RAG, accession-matched) so the viewer highlights content, not "주요사항보고서".
+    rag_tool = tools.get("rag__search") if isinstance(tools, dict) else None
+    if rag_tool and cite_ctx and final_text:
+        from agentengine.passages import enrich_listing_passages, looks_like_title
+        targets = [(cit, _market_hint(tool, data)) for cit, tool, data in cite_ctx
+                   if cit.get("kind") == "filing" and cit.get("used") and cit.get("page")
+                   and looks_like_title(cit.get("snippet"))]
+        if targets:
+            await enrich_listing_passages(client.call_tool, rag_tool, targets[:4], final_text)
+
     # PH-4c: if the prose carries no inline [n] markers, stream a trailing anchor group
     # for the EVIDENCE only (don't claim every consulted source produced the figures).
     if citations and final_text and not has_anchors(final_text):

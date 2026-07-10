@@ -143,6 +143,9 @@ on the image must have passed the number audit (§5). 텍스트 최소 12px(모�
     link · '과거 기록 · 전망 아님' on history kinds). The OG *description* is the answer lead
     (`plainText`, 160 chars) so text-only unfurls (카카오/텔레그램) also show real content. Pure
     builders `ogCardForAnswer`/`ogCardForArtifact` are unit-tested.
+  - **Folded source panel (2026-07-10).** The public answer page's 근거 is a RIGHT side panel on
+    desktop (sticky, ≥900px) / below the article on mobile — **collapsed by default**; a [n] click
+    opens it and scrolls to that card.
 
 - **MOBILE-1 · 전면 모바일 레이아웃 (web)** — ✅ done. A `useIsMobile()` (matchMedia ≤720px) switches
   the desktop 3-column grid into a single scrolling column: the rail becomes a left **drawer** (☰ in a
