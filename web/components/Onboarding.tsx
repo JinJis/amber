@@ -11,9 +11,15 @@
 // 프리뷰는 진짜 컴포넌트 + 가짜 데이터 + "예시 화면" 배지 (무날조 원칙). 스킵 없음:
 // ask-feed 첫 화면이 관심종목에서 나오므로, 등록이 곧 온보딩이다.
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { PRESETS } from "@/lib/presets";
 import { FIX_CITATIONS, FIX_FOLLOWUPS, FIX_QCARDS, FIX_TRUST } from "@/lib/onboardingFixtures";
+import type { AskCard } from "@/components/QCard";
+import type { Citation } from "@/lib/types";
+
+// ONB-LIVE: 라이브 쇼케이스(핫 KR 종목 · 일 1회 갱신). 로드 실패/빈 응답 → 픽스처 폴백(정직 배지).
+type Showcase = { question?: string; name?: string; cards?: AskCard[];
+  evidence?: Citation[]; followups?: string[] };
 import { Button } from "./ui";
 import { QCard } from "./QCard";
 import { SourceCard } from "./SourceCard";
@@ -28,10 +34,10 @@ const STEPS: StepKey[] = ["intro", "evidence", "cards", "chain", "watch", "land"
 const keyOf = (p: Pick) => `${p.market}:${p.ticker}`;
 
 // 프리뷰 래퍼 — 진짜 컴포넌트를 만질 수 없는 "예시 화면"으로 감싼다.
-function Preview({ children, testid }: { children: React.ReactNode; testid: string }) {
+function Preview({ children, testid, badge }: { children: React.ReactNode; testid: string; badge?: string }) {
   return (
     <div className="onb-preview" data-testid={testid} aria-hidden>
-      <span className="onb-demo-badge mono">예시 화면</span>
+      <span className="onb-demo-badge mono">{badge ?? "예시 화면"}</span>
       {children}
     </div>
   );
@@ -39,6 +45,24 @@ function Preview({ children, testid }: { children: React.ReactNode; testid: stri
 
 export default function Onboarding({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState(0);
+  const [live, setLive] = useState<Showcase | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch("/api/onboarding-showcase");
+        if (r.ok) { const j = await r.json(); if (j?.cards?.length) setLive(j); }
+      } catch { /* 픽스처 폴백 */ }
+    })();
+  }, []);
+  const liveBadge = live ? `실시간 데이터 · ${live.name ?? "삼성전자"}` : undefined;
+  const liveTrust = live ? {
+    checked: 0, unsupported: 0, sources: (live.evidence ?? []).length,
+    freshness: { fresh: (live.evidence ?? []).filter((c) => c.freshness === "fresh").length,
+                 aging: (live.evidence ?? []).filter((c) => c.freshness === "aging").length,
+                 stale: (live.evidence ?? []).filter((c) => c.freshness === "stale").length },
+    allClear: true, conceptual: false,
+  } : null;
+
   const key = STEPS[step];
   const last = step === STEPS.length - 1;
 
@@ -137,15 +161,17 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
           <div className="onb-step" data-testid="onb-evidence">
             <div className="onb-k">2 / {STEPS.length} · 근거</div>
             <h2>답변 옆엔 늘 이런 근거가 붙어요</h2>
-            <Preview testid="onb-preview-evidence">
+            <Preview testid="onb-preview-evidence" badge={liveBadge}>
               <p className="onb-fake-answer">
-                삼성전자 1분기 매출은 <span className="num-hl">79.1조</span>
-                <button type="button" className="cite-ref mono">[1]</button>로 전년 대비{" "}
-                <span className="num-hl">12%</span> 늘었어요.
+                {live?.cards?.[0]?.hook
+                  ? <>{live.cards[0].hook} <button type="button" className="cite-ref mono">[1]</button></>
+                  : <>삼성전자 1분기 매출은 <span className="num-hl">79.1조</span>
+                      <button type="button" className="cite-ref mono">[1]</button>로 전년 대비{" "}
+                      <span className="num-hl">12%</span> 늘었어요.</>}
               </p>
-              <TrustStrip s={FIX_TRUST} />
+              <TrustStrip s={(liveTrust ?? FIX_TRUST) as typeof FIX_TRUST} />
               <div className="onb-srcs">
-                {FIX_CITATIONS.map((c, i) => <SourceCard key={i} c={c} />)}
+                {(live?.evidence?.length ? live.evidence : FIX_CITATIONS).map((c, i) => <SourceCard key={i} c={c} />)}
               </div>
             </Preview>
             <p className="onb-caption">노란 숫자에 마우스를 올리면 원자료와 바로 대조돼요. 공시 원문·뉴스·데이터 표까지
@@ -157,13 +183,13 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
           <div className="onb-step" data-testid="onb-cards">
             <div className="onb-k">3 / {STEPS.length} · 리서치 포인트</div>
             <h2>종목을 누르면, 오늘 볼만한 분석거리를 추려드려요</h2>
-            <Preview testid="onb-preview-cards">
+            <Preview testid="onb-preview-cards" badge={liveBadge}>
               <div className="tk-row">
                 <span className="tk-chip on"><span className="tk-name">삼성전자</span><span className="tk-mkt mono">KR</span></span>
               </div>
               <div className="qc-list">
-                {FIX_QCARDS.map((c, i) => (
-                  <QCard key={i} c={c} name="삼성전자" onPick={() => {}} />
+                {(live?.cards?.length ? live.cards.slice(0, 3) : FIX_QCARDS).map((c, i) => (
+                  <QCard key={i} c={c} name={live?.name ?? "삼성전자"} onPick={() => {}} />
                 ))}
               </div>
             </Preview>
@@ -176,11 +202,16 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
           <div className="onb-step" data-testid="onb-chain">
             <div className="onb-k">4 / {STEPS.length} · 꼬리물기</div>
             <h2>답이 끝나면, 다음 질문이 이어져요</h2>
-            <Preview testid="onb-preview-chain">
-              <p className="onb-fake-answer onb-fade">…매출 성장의 대부분은 반도체 부문에서 나왔고, 영업이익률은 두 분기 연속 개선됐어요 <button type="button" className="cite-ref mono">[2]</button></p>
+            <Preview testid="onb-preview-chain" badge={liveBadge}>
+              {live?.question && <p className="onb-user-q">🙋 “{live.question}”</p>}
+              <p className="onb-fake-answer onb-fade">
+                {live?.cards?.[1]?.hook ?? live?.cards?.[0]?.hook
+                  ?? "…매출 성장의 대부분은 반도체 부문에서 나왔고, 영업이익률은 두 분기 연속 개선됐어요"}{" "}
+                <button type="button" className="cite-ref mono">[2]</button>
+              </p>
               <div className="fu-label">이어서 더 파고들기</div>
               <div className="fu-list">
-                {FIX_FOLLOWUPS.map((q, i) => (
+                {(live?.followups?.length ? live.followups : FIX_FOLLOWUPS).map((q, i) => (
                   <button key={i} type="button" className="fu-chip">{q} <span className="fu-arrow">→</span></button>
                 ))}
               </div>
@@ -193,8 +224,11 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
         {key === "watch" && (
           <div className="onb-step" data-testid="onb-watch">
             <div className="onb-k">5 / {STEPS.length} · 관심종목 <b>(필수)</b></div>
-            <h2>지켜볼 종목을 골라주세요</h2>
-            <p className="onb-note">방금 본 리서치 포인트가 이 종목들로 채워져요 — 최소 {MIN_TICKERS}종목이 필요해요.</p>
+            <h2>함께 지켜볼 종목을 골라주세요</h2>
+            <p className="onb-note">여기서 고른 종목이 <b>데스크의 기본 유니버스</b>가 돼요 — 첫 화면의 분석거리,
+              뉴스 훑기, 갱신 알림이 전부 이 종목들 중심으로 돌아가요. 최소 {MIN_TICKERS}종목이 필요해요.</p>
+            <p className="onb-note onb-at-tip">💡 고른 종목은 그룹으로 저장되고, 채팅에서 <b className="mono">@그룹이름</b>으로
+              한 번에 불러요 — 예: <span className="mono">“@반도체 실적 비교해줘”</span></p>
             <div className="onb-row">
               {([["KR", "🇰🇷 한국"], ["US", "🇺🇸 미국"], ["both", "둘 다"]] as const).map(([v, l]) => (
                 <button key={v} className={`onb-pick ${market === v ? "on" : ""}`} onClick={() => setMarket(v)}>{l}</button>

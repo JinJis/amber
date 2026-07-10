@@ -222,3 +222,48 @@ async def get_ticker_feed(market: str, ticker: str, name: str | None = None,
         p = _payload_of(db.get(AskFeedCache, scope))
         return {"cards": (p.get("cards") or [])[:5], "generated_at": p.get("generated_at"),
                 "cached": False}
+
+
+# --- ONB-LIVE: 온보딩 쇼케이스 캐시 (하루 1회 갱신, read-through) ------------------------------
+_ONB_SCOPE = "onboarding_showcase"
+_ONB_TTL = timedelta(hours=24)
+_onb_task: asyncio.Task | None = None
+
+
+async def refresh_onboarding_once() -> dict:
+    """agent-engine의 라이브 쇼케이스를 받아 캐시(스코프 onboarding_showcase)에 저장."""
+    async with httpx.AsyncClient(timeout=120) as client:
+        with SessionLocal() as db:
+            key = _any_api_key(db)
+            if not key:
+                return {"refreshed": False}
+            try:
+                r = await client.post(f"{settings.agent_engine_url}/agent/onboarding-showcase",
+                                      headers={"X-API-KEY": key})
+                out = r.json() if r.status_code == 200 else {}
+            except Exception as exc:  # noqa: BLE001
+                log.warning("onboarding showcase refresh failed: %s", exc)
+                return {"refreshed": False}
+            if not out.get("cards"):
+                return {"refreshed": False}   # 실패/빈 응답 → 이전 캐시 유지(정직)
+            row = db.get(AskFeedCache, _ONB_SCOPE) or AskFeedCache(scope=_ONB_SCOPE)
+            row.payload = json.dumps(out, ensure_ascii=False)
+            row.signature = out.get("signature")
+            row.generated_at = datetime.utcnow()
+            db.merge(row)
+            db.commit()
+            return {"refreshed": True, "cards": len(out.get("cards") or [])}
+
+
+@router.get("/ask-feed/onboarding", summary="ONB-LIVE: 온보딩 라이브 쇼케이스 (캐시, 일 1회)")
+async def get_onboarding_showcase(user: User = Depends(current_user)) -> dict:
+    """캐시만 즉시 반환; 없거나 24h 지났으면 백그라운드로 1회 갱신 킥(응답은 블로킹 없음)."""
+    global _onb_task
+    with SessionLocal() as db:
+        row = db.get(AskFeedCache, _ONB_SCOPE)
+    payload = _payload_of(row)
+    stale = row is None or row.generated_at is None or \
+        (datetime.utcnow() - row.generated_at) > _ONB_TTL
+    if stale and (_onb_task is None or _onb_task.done()):
+        _onb_task = asyncio.create_task(refresh_onboarding_once())
+    return payload or {}

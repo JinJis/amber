@@ -310,3 +310,53 @@ async def build_ask_feed(req: AskFeedRequest, api_key: str | None) -> dict:
 
     return {"cards": [c.model_dump() for c in cards], "signature": sig,
             "unchanged": False, "generated_at": _now_iso()}
+
+
+# --- ONB-LIVE: 온보딩 쇼케이스 — 핫한 KR 종목의 '진짜' 근거·질문거리·후속질문 -------------------
+# 온보딩의 예시가 static 픽스처면 서비스의 힘이 안 보인다. 지금 가장 관심 높은 종목
+# (삼성전자 기본)의 라이브 데이터로 ①근거 카드(재무 표·뉴스 스니펫·공시) ②오늘의 분석거리
+# ③딥한 후속질문을 하루 1회 갱신 캐시로 보여준다. 실패 시 studio가 이전 캐시/픽스처 유지.
+_ONB_TICKER = {"market": "KR", "ticker": "005930", "name": "삼성전자"}
+_ONB_QUESTION = "삼성전자, 최근 실적이랑 수급 흐름 어때?"
+
+
+async def build_onboarding_showcase(api_key: str | None) -> dict:
+    """온보딩 3스텝용 라이브 번들: {question, name, ticker, cards, evidence, followups}."""
+    req = AskFeedRequest(scope="ticker", market=_ONB_TICKER["market"], ticker=_ONB_TICKER["ticker"],
+                         name=_ONB_TICKER["name"], limit=3)
+    feed = await build_ask_feed(req, api_key)
+    cards = feed.get("cards") or []
+    if not cards:
+        return {"cards": [], "generated_at": _now_iso()}
+
+    # ① 근거 샘플: 카드들의 실제 인용에서 모양별 대표 3장(재무 표 · 뉴스 · 공시/기타)
+    seen, table_c, news_c, other_c = set(), None, None, None
+    for c in cards:
+        for cit in c.get("citations") or []:
+            key = (cit.get("source"), cit.get("url"))
+            if key in seen:
+                continue
+            seen.add(key)
+            if cit.get("table") and table_c is None:
+                table_c = cit
+            elif (cit.get("kind") == "news" or cit.get("doc_type") == "news") and news_c is None:
+                news_c = cit
+            elif other_c is None:
+                other_c = cit
+    evidence = [c for c in (table_c, news_c, other_c) if c]
+
+    # ③ 후속질문: 카드 훅(실데이터 문장)을 답변 삼아 실제 팔로업 생성기 사용
+    followups: list[str] = []
+    try:
+        from agentengine.enrichment import suggest_followups
+        answer = "\n".join(str(c.get("hook") or "") for c in cards if c.get("hook"))
+        if answer:
+            followups = (await suggest_followups(_ONB_QUESTION, answer, settings.model, None,
+                                                 context=f"다룬 종목: {_ONB_TICKER['name']}",
+                                                 tickers=[_ONB_TICKER["ticker"]], kinds=["metric", "news"]))[:3]
+    except Exception as exc:  # noqa: BLE001 — 후속질문 실패해도 카드·근거는 내보낸다
+        logger.warning("onboarding showcase followups unavailable: %s", type(exc).__name__)
+
+    return {"question": _ONB_QUESTION, "name": _ONB_TICKER["name"], "ticker": _ONB_TICKER["ticker"],
+            "market": _ONB_TICKER["market"], "cards": cards, "evidence": evidence,
+            "followups": followups, "generated_at": _now_iso(), "signature": feed.get("signature")}

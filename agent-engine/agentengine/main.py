@@ -86,6 +86,13 @@ async def ask_feed(body: AskFeedRequest, x_api_key: Annotated[str | None, Header
     return await build_ask_feed(body, x_api_key)
 
 
+@app.post("/agent/onboarding-showcase", tags=["Agent"], summary="ONB-LIVE: 온보딩 라이브 쇼케이스 (핫 KR 종목)")
+async def onboarding_showcase(x_api_key: Annotated[str | None, Header(alias="X-API-KEY")] = None) -> dict:
+    """온보딩 3스텝(근거·분석거리·후속질문)용 라이브 번들 — studio가 일 1회 캐시."""
+    from agentengine.askfeed import build_onboarding_showcase
+    return await build_onboarding_showcase(x_api_key)
+
+
 @app.post("/agent/compile", tags=["Agent"], summary="Natural-language → reusable AgentSpec")
 async def compile_spec(body: CompileRequest) -> dict:
     # Stub compiler: wrap the description as a system prompt. A Gemini-backed
