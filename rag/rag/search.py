@@ -21,6 +21,42 @@ logger = logging.getLogger(__name__)
 
 _RRF_K = 60  # standard RRF constant — rank 0 scores 1/60, decays gently
 
+# --- RQ-3: multi-query expansion ------------------------------------------------------------
+_MQ_PROMPT = ("검색 쿼리 변형 생성. 원쿼리와 같은 의미의 검색용 변형 2개를 한 줄씩만 출력:\n"
+              "1) 반대 언어 번역(한국어면 영어로, 영어면 한국어로) 2) 핵심 키워드 나열형.\n"
+              "설명·번호 없이 변형 텍스트만 두 줄. 원쿼리: {q}")
+_mq_cache: dict[str, list[str]] = {}
+
+
+async def expand_queries(query: str) -> list[str]:
+    """쿼리 변형 ≤2개 (실패/미설정 시 빈 리스트 — 원쿼리 단독으로 무해 강등). LRU 캐시로
+    반복 쿼리(피드 갱신 등)에 LLM 재호출 없음."""
+    q = (query or "").strip()
+    if not settings.multi_query or len(q) < 8:
+        return []
+    if q in _mq_cache:
+        return _mq_cache[q]
+    try:
+        import asyncio
+
+        from google import genai
+        from google.genai import types
+        client = genai.Client()
+        resp = await asyncio.wait_for(asyncio.to_thread(
+            client.models.generate_content, model=settings.multi_query_model,
+            contents=_MQ_PROMPT.format(q=q[:300]),
+            config=types.GenerateContentConfig(temperature=0, max_output_tokens=120)),
+            timeout=6.0)
+        lines = [ln.strip(" -•1234567890.)") for ln in (getattr(resp, "text", "") or "").splitlines()]
+        out = [ln for ln in lines if 3 <= len(ln) <= 200 and ln.lower() != q.lower()][:2]
+    except Exception as exc:  # noqa: BLE001 — 확장은 보너스, 검색을 절대 막지 않음
+        logger.info("multi-query expansion unavailable [%s]", type(exc).__name__)
+        out = []
+    if len(_mq_cache) > 256:
+        _mq_cache.clear()
+    _mq_cache[q] = out
+    return out
+
 
 def _rrf_fuse(*rankings: list[tuple[Chunk, float]]) -> list[tuple[Chunk, float]]:
     """Reciprocal Rank Fusion: score(chunk) = Σ_legs 1/(K + rank). Rank-based, so the two legs\'
@@ -40,14 +76,19 @@ async def search(query: str, top_k: int | None = None, filters: dict | None = No
     candidate_k = max(settings.candidate_k, top_k)
     store = get_store()
 
-    qvec = await get_embedder().embed_query(query)  # asymmetric query embedding (RETRIEVAL_QUERY)
-    dense = await store.search(qvec, candidate_k, filters or None)
-    try:
-        lex = await store.lexical(query, candidate_k, filters or None)
-    except Exception as exc:  # noqa: BLE001 — the lexical leg is an upgrade, never an outage
-        logger.warning("lexical leg failed [%s], dense-only: %s", type(exc).__name__, exc)
-        lex = []
-    hits = _rrf_fuse(dense, lex) if lex else dense
+    # RQ-3: 원쿼리 + 변형(한↔영·키워드형)마다 dense+렉시컬 레그를 만들어 전부 RRF 융합.
+    queries = [query] + await expand_queries(query)
+    rankings: list[list] = []
+    for q in queries:
+        qvec = await get_embedder().embed_query(q)   # asymmetric query embedding (RETRIEVAL_QUERY)
+        rankings.append(await store.search(qvec, candidate_k, filters or None))
+        try:
+            lex = await store.lexical(q, candidate_k, filters or None)
+            if lex:
+                rankings.append(lex)
+        except Exception as exc:  # noqa: BLE001 — the lexical leg is an upgrade, never an outage
+            logger.warning("lexical leg failed [%s], dense-only: %s", type(exc).__name__, exc)
+    hits = _rrf_fuse(*rankings) if len(rankings) > 1 else (rankings[0] if rankings else [])
     if not hits:
         return []
 

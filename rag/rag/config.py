@@ -44,7 +44,11 @@ class Settings(BaseSettings):
 
     # --- retrieval ---------------------------------------------------------
     top_k: int = 8            # hits returned to the caller
-    candidate_k: int = 40     # RQ-1: wide hybrid candidate pool (dense+lexical) fed to the reranker
+    candidate_k: int = 64     # RQ-1: wide hybrid candidate pool (dense+lexical) fed to the reranker
+    # RQ-3: multi-query expansion — 쿼리를 한↔영·키워드형 변형 2개로 확장해 모든 레그를 RRF 융합
+    # (recall 상승; 변형 생성 실패는 원쿼리 단독으로 무해 강등). RAG_MULTI_QUERY=false로 끔.
+    multi_query: bool = True
+    multi_query_model: str = "gemini-flash-lite-latest"
     rerank_top_n: int = 5     # (legacy — the funnel now reranks candidates down to top_k)
     http_timeout_seconds: float = 60.0
 
