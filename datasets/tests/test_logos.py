@@ -91,3 +91,20 @@ def test_miss_returns_204_and_caches_marker():
     respx.clear()
     r2 = client.get("/logos", params={"market": "US", "ticker": "ZZZZ"})
     assert r2.status_code == 204
+
+
+@respx.mock
+def test_transient_upstream_error_does_not_poison_miss_cache():
+    """FMP throttled/down during a sweep must NOT write a 3-day .miss marker — the next
+    request retries and succeeds (regression: a rate-limited bulk run cached misses for days)."""
+    respx.get("https://financialmodelingprep.com/stable/profile").mock(
+        return_value=httpx.Response(429, json={"error": "rate limit"}))
+    r = client.get("/logos", params={"market": "US", "ticker": "TSLA"})
+    assert r.status_code == 204 and r.headers.get("cache-control") == "no-store"
+    # upstream recovers → the SAME ticker resolves (no miss marker short-circuit)
+    respx.clear()
+    _fmp({"symbol": "TSLA", "image": "https://img.fmp/TSLA.png"})
+    respx.get("https://img.fmp/TSLA.png").mock(
+        return_value=httpx.Response(200, content=_PNG, headers={"content-type": "image/png"}))
+    r2 = client.get("/logos", params={"market": "US", "ticker": "TSLA"})
+    assert r2.status_code == 200 and r2.content == _PNG

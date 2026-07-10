@@ -135,25 +135,36 @@ async def _download_image(url: str, params: dict | None = None) -> tuple[bytes, 
     return data, ct or "image/png"
 
 
-async def _fmp_profile(symbol: str) -> dict | None:
+_ERR = object()   # sentinel: the source ERRORED (≠ "answered with no logo")
+
+
+async def _fmp_profile(symbol: str):
     if not settings.fmp_api_key:
         return None
     try:
         data = await fetch_json("fmp", "https://financialmodelingprep.com/stable/profile",
                                 params={"symbol": symbol, "apikey": settings.fmp_api_key})
-    except Exception:  # noqa: BLE001 — best-effort; any failure just drops to the next source
-        return None
+    except Exception:  # noqa: BLE001 — upstream error → transient, don't cache a miss
+        return _ERR
     if isinstance(data, list) and data and isinstance(data[0], dict):
         return data[0]
     return None
 
 
 async def resolve_logo(market: str, ticker: str) -> tuple[bytes, str, str] | None:
-    """Hybrid resolve → (bytes, content_type, source) or None. Order favors quality then reach."""
+    got, _transient = await resolve_logo_ex(market, ticker)
+    return got
+
+
+async def resolve_logo_ex(market: str, ticker: str) -> tuple[tuple[bytes, str, str] | None, bool]:
+    """Hybrid resolve → ((bytes, content_type, source) | None, transient). ``transient`` is True
+    when a source ERRORED (rate limit / outage) rather than answering "no logo" — callers must NOT
+    cache a miss then, or a throttled bulk sweep poisons the cache for days."""
     market = (market or "US").upper()
     sym = (ticker or "").strip()
     if not sym:
-        return None
+        return None, False
+    transient = False
     code = sym.split(".")[0]
     # infer KR from the symbol shape (6-digit code / .KS/.KQ) even when the caller didn't pass a
     # market — citations/artifacts often carry a ticker but no market.
@@ -166,7 +177,7 @@ async def resolve_logo(market: str, ticker: str) -> tuple[bytes, str, str] | Non
         got = await _download_image(f"https://img.logo.dev/ticker/{sym.upper()}",
                                     {"token": token, "size": "200", "format": "png", "retina": "true"})
         if got:
-            return got[0], got[1], "Logo.dev"
+            return (got[0], got[1], "Logo.dev"), False
 
     # 2) API Ninjas logo by ticker (works for KR codes as 005930.KS/.KQ too)
     if settings.api_ninjas_key:
@@ -177,13 +188,14 @@ async def resolve_logo(market: str, ticker: str) -> tuple[bytes, str, str] | Non
             try:
                 data = await fetch_json("api_ninjas", "https://api.api-ninjas.com/v1/logo",
                                         params={"ticker": s_}, headers={"X-Api-Key": settings.api_ninjas_key})
-            except Exception:  # noqa: BLE001 — best-effort; fall through to the next source
+            except Exception:  # noqa: BLE001 — upstream error (throttle/outage), not "no logo"
+                transient = True
                 break
             img = (data[0].get("image") if isinstance(data, list) and data and isinstance(data[0], dict) else None)
             if img:
                 got = await _download_image(str(img))
                 if got:
-                    return got[0], got[1], "API Ninjas"
+                    return (got[0], got[1], "API Ninjas"), False
 
     # 3) FMP company profile image (+ website for the domain fallback)
     domain: str | None = None
@@ -191,11 +203,14 @@ async def resolve_logo(market: str, ticker: str) -> tuple[bytes, str, str] | Non
         domain = _KR_DOMAINS.get(code)
     if domain is None:
         profile = await _fmp_profile(sym if market == "US" else f"{code}.KS")
+        if profile is _ERR:
+            transient = True
+            profile = None
         if profile:
             if profile.get("image"):
                 got = await _download_image(str(profile["image"]))
                 if got:
-                    return got[0], got[1], "FMP"
+                    return (got[0], got[1], "FMP"), False
             domain = _domain_of(profile.get("website"))
 
     # 4) domain-based (only with a RESOLVED domain — no domain ⇒ monogram, never a globe)
@@ -204,11 +219,11 @@ async def resolve_logo(market: str, ticker: str) -> tuple[bytes, str, str] | Non
             got = await _download_image(f"https://img.logo.dev/{domain}",
                                         {"token": token, "size": "200", "format": "png"})
             if got:
-                return got[0], got[1], f"Logo.dev · {domain}"
+                return (got[0], got[1], f"Logo.dev · {domain}"), False
         got = await _download_image("https://www.google.com/s2/favicons", {"domain": domain, "sz": "128"})
         if got:
-            return got[0], got[1], f"favicon · {domain}"
-    return None
+            return (got[0], got[1], f"favicon · {domain}"), False
+    return None, transient
 
 
 def _serve(data: bytes, ct: str) -> Response:
@@ -231,11 +246,13 @@ async def get_logo(market: str = Query("US"), ticker: str = Query(..., min_lengt
     if miss_p.exists() and (time.time() - miss_p.stat().st_mtime) < _MISS_TTL:
         return Response(status_code=204, headers={"Cache-Control": _MISS_CACHE})
 
-    got = await resolve_logo(market, ticker)
+    got, transient = await resolve_logo_ex(market, ticker)
     if not got:
-        img_p.parent.mkdir(parents=True, exist_ok=True)
-        miss_p.write_text("")   # remember the miss (short TTL — a logo may land later)
-        return Response(status_code=204, headers={"Cache-Control": _MISS_CACHE})
+        if not transient:   # a REAL "no logo" answer — remember it (short TTL)
+            img_p.parent.mkdir(parents=True, exist_ok=True)
+            miss_p.write_text("")
+        # transient upstream trouble → plain 204 with no marker, so the next view retries
+        return Response(status_code=204, headers={"Cache-Control": _MISS_CACHE if not transient else "no-store"})
 
     data, ct, source = got
     img_p.parent.mkdir(parents=True, exist_ok=True)
@@ -299,10 +316,14 @@ async def run_logo_ingest(market: str, tickers: list[str]) -> None:
                 if img_p.exists():
                     got += 1
                 else:
-                    res = await resolve_logo(market, tk)
+                    res, transient = await resolve_logo_ex(market, tk)
                     if res:
                         _store(market, tk, *res)
                         got += 1
+                    elif transient:
+                        miss += 1   # upstream throttle/outage — do NOT poison the cache
+                        await asyncio.to_thread(log_activity, "logo", market,
+                                                f"[{tk}] 업스트림 일시 오류 — 미스 캐시 안 함(다음 실행 재시도)", job, "warn")
                     else:
                         img_p.parent.mkdir(parents=True, exist_ok=True)
                         miss_p.write_text("")
