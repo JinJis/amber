@@ -131,6 +131,7 @@ export default function Chat({ name, email, image, features }: { name: string; e
         citations: m.citations ?? [],
         artifacts: m.artifacts ?? [],   // persisted → inline {{figure:N}} cards survive reload
         audit: m.audit ?? undefined,    // persisted → 판정 + 본문 수치 하이라이트 survive reload
+        hook: (m as { hook?: string | null }).hook ?? undefined,
         used: (m.citations ?? []).map((c) => c.index).filter((n): n is number => n != null),
       })));
       // resume an in-flight answer: if this conversation is still generating, tail its run live
@@ -186,6 +187,11 @@ export default function Chat({ name, email, image, features }: { name: string; e
     loadAgents();
     loadHandles();
     loadHistory();
+    // V-5: 공유 페이지 딥링크(/?q=질문) → 컴포저 프리필 (전환 루프의 착지점)
+    try {
+      const q = new URLSearchParams(window.location.search).get("q");
+      if (q) { setInput(q); window.history.replaceState(null, "", window.location.pathname); }
+    } catch {}
     (async () => {
       try {
         const r = await fetch("/api/me");
@@ -255,6 +261,7 @@ export default function Chat({ name, email, image, features }: { name: string; e
       else if (ev.type === "done") {
         if (ev.refused) a.refused = true;
         if (ev.audit) a.audit = ev.audit;   // QT-2 — gates share-card minting
+        if (ev.hook) a.hook = ev.hook;      // V-7 — 공유 제목(발견 한 줄)
         if (ev.standing_offer) a.standing_offer = ev.standing_offer;   // M-SA
         if (Array.isArray(ev.used)) a.used = ev.used;
         // PH-PROV3d: the done list is authoritative — its citations carry the evidence
@@ -402,7 +409,8 @@ export default function Chat({ name, email, image, features }: { name: string; e
     {shareMsg && (
       <ShareSheet answer={{ title: shareMsg.title, content: shareMsg.msg.content,
         artifacts: shareMsg.msg.artifacts, citations: shareMsg.msg.citations,
-        audit: (shareMsg.msg.audit ?? null) as Record<string, unknown> | null }}
+        audit: (shareMsg.msg.audit ?? null) as Record<string, unknown> | null,
+        suggestions: shareMsg.msg.suggestions }}
         onClose={() => setShareMsg(null)} />
     )}
     <div className={`shell ${view === "explore" && messages.length > 0 ? "with-ctx" : "no-right"}`
@@ -558,7 +566,7 @@ export default function Chat({ name, email, image, features }: { name: string; e
                               <button type="button" className="ans-share" title="이 답변을 공개 링크로 공유해요"
                                 onClick={(e) => { e.stopPropagation();
                                   const q = messages[i - 1]?.role === "user" ? messages[i - 1].content : m.content;
-                                  setShareMsg({ title: (q || "ValueGraph 리서치").slice(0, 80), msg: m }); }}>
+                                  setShareMsg({ title: (m.hook || q || "ValueGraph 리서치").slice(0, 90), msg: m }); }}>
                                 <span aria-hidden>↗</span> 공유
                               </button>
                             )}

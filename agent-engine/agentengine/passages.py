@@ -19,6 +19,11 @@ from agentengine.evidence import rag_evidence_url
 _MD = re.compile(r"[*_`#>|]")
 
 
+def _match(hits, want: str) -> bool:
+    return any(_norm_accn(((h or {}).get("provenance") or {}).get("accession")) == want
+               for h in hits or [])
+
+
 def _norm_accn(v) -> str:
     return re.sub(r"[^0-9A-Za-z]", "", str(v or "")).upper()
 
@@ -51,14 +56,16 @@ def sentence_for(answer: str | None, idx) -> str | None:
     return t[:300] if len(t) >= 12 else None
 
 
-async def enrich_listing_passages(call_tool, rag_tool: dict, targets: list[tuple[dict, str]],
-                                  answer: str | None, timeout: float = 3.0) -> None:
-    """targets = [(citation_dict, market)] — mutates the citation dicts in place (they are the
-    same objects serialized into the `done` event). Each lookup is independent + best-effort."""
+async def enrich_listing_passages(call_tool, rag_tool: dict, targets: list[tuple[dict, str, str | None]],
+                                  answer: str | None, timeout: float = 6.0,
+                                  search_tool: dict | None = None) -> None:
+    """targets = [(citation_dict, market, ticker?)] — mutates the citation dicts in place (they are
+    the same objects serialized into the `done` event). Each lookup is independent + best-effort.
+    V-9: rag가 accession을 모르면 filing_search(온디맨드 인제스트 내장)로 1회 폴백."""
     if not rag_tool or not targets:
         return
 
-    async def one(cit: dict, market: str) -> None:
+    async def one(cit: dict, market: str, ticker: str | None = None) -> None:
         accn = cit.get("page")   # listing citations carry the accession in `page`
         query = sentence_for(answer, cit.get("index")) or " ".join(
             str(x) for x in (cit.get("snippet"), cit.get("doc_type"), cit.get("source")) if x)[:200]
@@ -71,6 +78,16 @@ async def enrich_listing_passages(call_tool, rag_tool: dict, targets: list[tuple
         data = res.get("data") if isinstance(res, dict) else None
         hits = (data or {}).get("hits") if isinstance(data, dict) else None
         want = _norm_accn(accn)
+        if not _match(hits, want) and search_tool and ticker:
+            # V-9: 이 accession이 코퍼스에 없음 → filing_search가 최근 공시를 온디맨드 인제스트
+            # (코퍼스가 비었을 때) 후 재검색 — 그래도 없으면 정직하게 제목 유지.
+            try:
+                res2 = await call_tool(search_tool, {"ticker": ticker, "query": query,
+                                                     "top_k": 8, "market": market})
+                data2 = res2.get("data") if isinstance(res2, dict) else None
+                hits = (data2 or {}).get("hits") if isinstance(data2, dict) else hits
+            except Exception:  # noqa: BLE001
+                pass
         for h in hits or []:
             prov = (h or {}).get("provenance") or {}
             if _norm_accn(prov.get("accession")) != want:
@@ -87,6 +104,6 @@ async def enrich_listing_passages(call_tool, rag_tool: dict, targets: list[tuple
 
     try:
         await asyncio.wait_for(
-            asyncio.gather(*[one(c, m) for c, m in targets], return_exceptions=True), timeout)
+            asyncio.gather(*[one(*t) for t in targets], return_exceptions=True), timeout)
     except (asyncio.TimeoutError, Exception):  # noqa: BLE001 — partial enrichment is fine
         pass

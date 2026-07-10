@@ -182,6 +182,7 @@ export type Msg = {
   clarify?: Clarify;
   subagents?: SubAgent[];
   suggestions?: string[];
+  hook?: string | null;   // V-7: 공유 훅(발견 한 줄) — 공유 제목·OG 제목에 사용
   // M-SA: the turn touched a periodic source → offer "이 질문 계속 지켜보기" (cadence-gated)
   standing_offer?: { cadence: string; ticker?: string | null; market?: string | null;
     probe: { path?: string | null; args?: Record<string, unknown>; source?: string | null } } | null;

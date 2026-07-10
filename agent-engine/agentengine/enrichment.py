@@ -8,6 +8,7 @@ Both are best-effort and never block the answer. Re-exported via ``agentengine.a
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -357,3 +358,50 @@ async def refine_evidence(task: str, citations: list[dict], model: str,
     except Exception as exc:  # noqa: BLE001 — never block the answer on the review pass
         logger.warning("evidence refine failed (%s); skipping", exc)
         return None, {}
+
+
+# --- V-7: 공유 훅 — 답변에서 "발견" 한 줄 뽑기 -------------------------------------------------
+# 바이럴 제목은 질문("삼성전자 어때?")이 아니라 발견("영업이익 컨센서스 +12% 상회")이다.
+# 합성이 끝난 답변에서 경량 모델이 한 줄을 뽑고, 훅의 모든 숫자가 본문에 실재하는지
+# **결정적으로** 검증한다 — 하나라도 본문에 없으면 훅 폐기(제목은 질문 폴백; 날조 0).
+_HOOK_PROMPT = (
+    "아래는 투자 리서치 답변이야. SNS 공유 카드 제목으로 쓸 **한 줄 훅**을 뽑아줘.\n"
+    "규칙: ①답변에 이미 있는 사실·숫자만(새 숫자·추정 금지) ②전망·조언·과장 금지 "
+    "③60자 이내, 마침표 없이 ④가장 의외이거나 구체적인 발견 하나만.\n\n"
+    "질문: {task}\n답변:\n{answer}\n\n훅 한 줄만 출력:"
+)
+
+_NUM_RE = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def hook_numbers_ok(hook: str, answer: str) -> bool:
+    """훅의 모든 수치 토큰이 답변 본문에 문자 그대로 존재해야 한다(콤마 무시). 순수 함수."""
+    body = (answer or "").replace(",", "")
+    for n in _NUM_RE.findall(hook or ""):
+        if n.replace(",", "") not in body:
+            return False
+    return True
+
+
+async def make_hook(task: str, answer: str, backend: str | None = None) -> str | None:
+    """공유용 한 줄 훅 — best-effort(실패/검증 탈락 시 None → 제목은 질문 폴백)."""
+    if (backend or settings.llm_backend) != "gemini" or not answer or len(answer) < 120:
+        return None
+    try:
+        from google.genai import types
+
+        from agentengine.gemini_io import genai_client
+        client = genai_client()
+        resp = await asyncio.wait_for(asyncio.to_thread(
+            client.models.generate_content, model=settings.budget_model,
+            contents=_HOOK_PROMPT.format(task=(task or "")[:300], answer=answer[:6000]),
+            config=types.GenerateContentConfig(temperature=0.4, max_output_tokens=80,
+                                               thinking_config=types.ThinkingConfig(thinking_budget=0))),
+            timeout=8.0)
+        report_usage("hook", settings.budget_model, resp)
+        hook = (getattr(resp, "text", "") or "").strip().strip('"“”').splitlines()[0].strip()
+        if not (8 <= len(hook) <= 80):
+            return None
+        return hook if hook_numbers_ok(hook, answer) else None
+    except Exception:  # noqa: BLE001 — 훅은 보너스, 턴을 절대 방해하지 않음
+        return None

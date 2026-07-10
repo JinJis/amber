@@ -136,7 +136,7 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
     from agentengine.planner import resolve_ticker
     history: list = []
     citations: list[dict] = []
-    cite_ctx: list[tuple[dict, dict, object]] = []  # (citation, tool, data) → re-anchor evidence post-answer
+    cite_ctx: list[tuple[dict, dict, dict, object]] = []  # (citation, tool, args, data) → post-answer 재앵커/패시지
     probes: list[dict] = []   # SA-1: periodic sources this turn → the standing-question offer
     artifacts: list[dict] = []
     art_objs: list = []          # the Artifact objects → enrich with chart markers post-loop
@@ -372,7 +372,7 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                     seen_cites.add(key)
                     cit["index"] = len(citations) + 1  # 1-based [n] anchor
                     citations.append(cit)
-                    cite_ctx.append((cit, tool, result.get("data")))
+                    cite_ctx.append((cit, tool, d.args or {}, result.get("data")))
                     yield {"type": "citation", **cit}
                 for a in _artifacts(tool, result):  # U3: connector-backed figure cards
                     if a.title in seen_artifacts:
@@ -415,7 +415,7 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
 
     # PH-PROV3d: re-anchor each filing citation's evidence image on the figure the ANSWER
     # actually cites (net income / R&D / assets …), not always the first headline (revenue).
-    for cit, tool, data in cite_ctx:
+    for cit, tool, _args, data in cite_ctx:
         if not isinstance(data, dict):
             continue
         market = _market_hint(tool, data)
@@ -443,11 +443,14 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
     rag_tool = tools.get("rag__search") if isinstance(tools, dict) else None
     if rag_tool and cite_ctx and final_text:
         from agentengine.passages import enrich_listing_passages, looks_like_title
-        targets = [(cit, _market_hint(tool, data)) for cit, tool, data in cite_ctx
+        search_tool = tools.get("datasets_store__filing_search") if isinstance(tools, dict) else None
+        targets = [(cit, _market_hint(tool, data), (args or {}).get("ticker"))
+                   for cit, tool, args, data in cite_ctx
                    if cit.get("kind") == "filing" and cit.get("used") and cit.get("page")
                    and looks_like_title(cit.get("snippet"))]
         if targets:
-            await enrich_listing_passages(client.call_tool, rag_tool, targets[:4], final_text)
+            await enrich_listing_passages(client.call_tool, rag_tool, targets[:4], final_text,
+                                          search_tool=search_tool)
 
     # PH-4c: if the prose carries no inline [n] markers, stream a trailing anchor group
     # for the EVIDENCE only (don't claim every consulted source produced the figures).
@@ -473,7 +476,7 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
         from agentengine.audit import audit_ledger
         # LG-1: attribute each pool to its citation's [n] so the ledger can say WHICH source
         # backs each numeral (artifacts ride unindexed — they derive from the same tool data).
-        attributed = [(cit.get("index"), data) for cit, _tool, data in cite_ctx]             + [(None, art) for art in artifacts]
+        attributed = [(cit.get("index"), data) for cit, _tool, _args, data in cite_ctx]             + [(None, art) for art in artifacts]
         audit = audit_ledger(final_text, attributed)
         if audit["checked"]:
             ok = not audit["unsupported"]
@@ -502,5 +505,11 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                           "probe": {"path": best.get("path"), "args": best.get("args"),
                                     "source": best.get("source")}}
 
+    # V-7: 공유 훅 — 발견 한 줄(수치는 본문 실재분만; 검증 탈락 시 None → 질문 제목 폴백)
+    hook = None
+    if final_text and citations:
+        from agentengine.enrichment import make_hook
+        hook = await make_hook(task, final_text, spec.backend if spec else None)
+
     yield {"type": "done", "citations": citations, "artifacts": artifacts, "refused": False,
-           "used": used, "audit": audit, "standing_offer": standing_offer}
+           "used": used, "audit": audit, "standing_offer": standing_offer, "hook": hook}

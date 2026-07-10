@@ -141,6 +141,8 @@ class Message(Base):
     # the QT-2 number audit (JSON {checked, supported, unsupported, ledger}) — so reopened
     # conversations keep the 판정 strip + the in-prose numeral highlights (LG-4).
     audit: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
+    # V-7: 공유 훅(발견 한 줄) — 재열람한 대화에서도 공유 제목으로 쓰인다.
+    hook: Mapped[str | None] = mapped_column(String(160), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

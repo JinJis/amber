@@ -15,7 +15,7 @@ import { SourceCard } from "./SourceCard";
 
 type Share = {
   token: string; kind: string; title: string; payload: Record<string, unknown>;
-  created_at?: string | null;
+  created_at?: string | null; views?: number;
 };
 
 export function ShareView({ status, share }: { status: number; share: Share | null }) {
@@ -35,7 +35,7 @@ export function ShareView({ status, share }: { status: number; share: Share | nu
           <>
             <h1 className="share-title">{share.title}</h1>
             {share.kind === "answer" ? (
-              <AnswerShareView payload={share.payload} />
+              <AnswerShareView payload={share.payload} title={share.title} views={share.views ?? 0} />
             ) : share.kind === "quote" ? (
               <blockquote className="share-quote">
                 <p>“{String((share.payload as { passage?: string }).passage ?? "")}”</p>
@@ -68,11 +68,11 @@ export function ShareView({ status, share }: { status: number; share: Share | nu
 // Provenance and evidence travel WITH the answer; the reader verifies. No user identity is ever
 // present in the payload (it's a pure content snapshot), so nothing about the author can leak.
 type AnswerPayload = {
-  content?: string; artifacts?: Artifact[]; citations?: Citation[];
+  content?: string; artifacts?: Artifact[]; citations?: Citation[]; suggestions?: string[];
   audit?: { checked?: number; supported?: number; unsupported?: string[]; ledger?: LedgerRow[] } | null;
 };
 
-function AnswerShareView({ payload }: { payload: Record<string, unknown> }) {
+function AnswerShareView({ payload, title, views }: { payload: Record<string, unknown>; title?: string; views?: number }) {
   const p = payload as AnswerPayload;
   const content = p.content ?? "";
   const artifacts = p.artifacts ?? [];
@@ -94,6 +94,9 @@ function AnswerShareView({ payload }: { payload: Record<string, unknown> }) {
   const trust = trustSummary({ role: "assistant", content, artifacts, citations,
     audit: p.audit ?? null } as Msg);
 
+  const newestAsOf = citations.map((c) => c.as_of).filter(Boolean).sort().slice(-1)[0];
+  const stale = !!newestAsOf && (Date.now() - new Date(String(newestAsOf)).getTime()) > 7 * 86400e3;
+
   // the cited sources, in [n] order (the ones the answer actually leaned on)
   const cited = citations
     .filter((c) => c.used || c.index != null)
@@ -111,6 +114,23 @@ function AnswerShareView({ payload }: { payload: Record<string, unknown> }) {
               { rows: ledger, citations, onEvidence: openSource })}
             onEvidence={openSource} />
         </div></div>
+      {/* V-5 전환 루프: 이어 묻기 칩(실제 팔로업) + 오래된 스냅샷 갱신 유도 + 실측 소셜 프루프 */}
+      <div className="share-loop">
+        {(views ?? 0) >= 50 && <span className="share-views mono">👀 {views!.toLocaleString()}명이 봤어요</span>}
+        {stale && (
+          <a className="share-cta" href={`/?q=${encodeURIComponent(title ?? "")}`}>
+            지금 데이터로 다시 보기 →
+          </a>
+        )}
+        {(p.suggestions ?? []).length > 0 && (
+          <div className="share-followups">
+            <div className="sf-label mono">이 질문에서 이어가기</div>
+            {(p.suggestions ?? []).slice(0, 3).map((q, i) => (
+              <a key={i} className="fu-chip" href={`/?q=${encodeURIComponent(q)}`}>{q} <span className="fu-arrow">→</span></a>
+            ))}
+          </div>
+        )}
+      </div>
       </div>
       {cited.length > 0 && (
         // 근거 패널: 데스크톱 = 우측 사이드 패널, 모바일 = 본문 아래 — 어느 쪽이든 기본 접힘.

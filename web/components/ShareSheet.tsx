@@ -15,6 +15,7 @@ export type AnswerShare = {
   title: string; content: string;
   artifacts?: Artifact[]; citations?: Citation[];
   audit?: Record<string, unknown> | null;
+  suggestions?: string[];   // V-5: 공개 페이지 '이어 묻기' 칩
 };
 
 function shortLink(page: string): string {
@@ -38,7 +39,8 @@ export function ShareSheet({ a, answer, audit, onClose }: {
           // identity is ever included (no email / conversation id) — the payload is pure research.
           ? { kind: "answer", title: answer.title || "ValueGraph 리서치",
               payload: { content: answer.content, artifacts: answer.artifacts ?? [],
-                         citations: answer.citations ?? [], audit: answer.audit ?? null },
+                         citations: answer.citations ?? [], audit: answer.audit ?? null,
+                         suggestions: (answer.suggestions ?? []).slice(0, 3) },
               audit: answer.audit ?? null }
           : a!.kind === "quote"
               ? { kind: "quote", title: a!.title || "원문 인용",

@@ -43,7 +43,7 @@ async def test_listing_citation_gains_real_passage_and_highlight():
             {"text": PASSAGE_KR, "provenance": {"accession": "2026-0708-000123"}},  # dash variants match
         ]}}
 
-    await enrich_listing_passages(call_tool, _rag_tool(), [(cit, "KR")], ANSWER)
+    await enrich_listing_passages(call_tool, _rag_tool(), [(cit, "KR", None)], ANSWER)
     assert "자기주식 3조원" in cit["snippet"] and "주요사항보고서(" not in cit["snippet"]
     assert cit["evidence_image_url"].startswith("/evidence?")
     assert "20260708000123" in cit["evidence_image_url"].replace("-", "")
@@ -58,7 +58,7 @@ async def test_no_accession_match_keeps_title_shape():
         return {"status": 200, "data": {"hits": [
             {"text": "some other filing body " * 5, "provenance": {"accession": "not-it"}}]}}
 
-    await enrich_listing_passages(call_tool, _rag_tool(), [(cit, "US")], ANSWER)
+    await enrich_listing_passages(call_tool, _rag_tool(), [(cit, "US", None)], ANSWER)
     assert cit["snippet"] == "8-K"          # unchanged — never fabricate a passage
     assert "evidence_image_url" not in cit
 
@@ -70,5 +70,29 @@ async def test_rag_failure_is_swallowed():
     async def call_tool(tool, args):
         raise RuntimeError("rag down")
 
-    await enrich_listing_passages(call_tool, _rag_tool(), [(cit, "KR")], ANSWER)
+    await enrich_listing_passages(call_tool, _rag_tool(), [(cit, "KR", None)], ANSWER)
     assert cit["snippet"] == "분기보고서"    # best-effort: turn never fails
+
+
+@pytest.mark.asyncio
+async def test_v9_on_demand_ingest_fallback_via_filing_search():
+    """V-9: rag 미스 → filing_search(온디맨드 인제스트 내장) 폴백에서 accession 매칭."""
+    cit = {"index": 3, "kind": "filing", "used": True, "page": "0000320193-26-000001",
+           "snippet": "8-K", "doc_type": "8-K", "source": "SEC EDGAR"}
+    ft = {"name": "datasets_store__filing_search", "path": "/filings/search", "method": "GET", "params": []}
+    calls = []
+
+    async def call_tool(tool, args):
+        calls.append(tool["name"])
+        if tool["name"] == "rag__search":
+            return {"status": 200, "data": {"hits": []}}   # 코퍼스에 없음
+        assert args["ticker"] == "AAPL" and args["market"] == "US"
+        return {"status": 200, "data": {"hits": [
+            {"text": "Apple disclosed new supply-chain risks in this report. " * 3,
+             "provenance": {"accession": "0000320193-26-000001"}}]}}
+
+    await enrich_listing_passages(call_tool, _rag_tool(), [(cit, "US", "AAPL")], ANSWER,
+                                  search_tool=ft)
+    assert calls == ["rag__search", "datasets_store__filing_search"]
+    assert "supply-chain risks" in cit["snippet"]
+    assert cit["evidence_image_url"].startswith("/evidence?")
