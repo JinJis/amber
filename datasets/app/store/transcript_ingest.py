@@ -88,7 +88,6 @@ async def ingest_transcript_for_ticker(market: str, ticker: str, limit: int | No
             return 0   # nothing new — the caller logs the skip
     rag = rag_url or settings.rag_url
     total_docs, chunks = 0, 0
-    ingested: set[str] = set()
     for t in transcripts:
         await store_transcript_html(t)   # render + cache so the in-app preview is ready
         docs = _transcript_to_docs(t)
@@ -97,9 +96,8 @@ async def ingest_transcript_for_ticker(market: str, ticker: str, limit: int | No
         total_docs += len(docs)
         # replace by TR:{ticker}:{quarter} so a re-chunk (turn-preserving) swaps sections cleanly (RQ-2)
         chunks += await _ingest_to_rag(rag, docs, replace={"accession": docs[0]["accession"]})
-        ingested.add(str(t.get("quarter")))
-    if ingested:
-        await asyncio.to_thread(mark_items, "transcript", market, ticker, ingested)
+        # ING-1: mark per-quarter right after success (partial failure re-does only the rest)
+        await asyncio.to_thread(mark_items, "transcript", market, ticker, {str(t.get("quarter"))})
     if not total_docs:
         return 0
     log.info("transcript: %s → %d quarters, %d chunks indexed", ticker.upper(), len(transcripts), chunks)

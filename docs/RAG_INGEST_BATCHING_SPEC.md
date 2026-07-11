@@ -1,6 +1,18 @@
 # RAG_INGEST_BATCHING_SPEC — 인제스트 청크 배치 분할 · 원자성 개편 (ING-1)
 
-> **Status**: ⬜ planned (2026-07-12 작성 · ROADMAP **ING-1**) · 의존: OPS-2 (델타 인제스트/커서)
+> **Status**: ✅ 구현·라이브 검증 완료 (2026-07-12 · ROADMAP **ING-1**) · 의존: OPS-2 (델타 인제스트/커서)
+>
+> **라이브 검증에서 드러난 2가지 정련** (설계 대비 변경):
+> 1. **ReadTimeout은 재시도하지 않는다** (§1-D 수정). 재시도 대상은 연결 실패(ConnectError/
+>    ConnectTimeout/PoolTimeout/RemoteProtocolError)+5xx 뿐. ReadTimeout은 "서버가 아직 임베딩/
+>    삽입 중"이라는 뜻이라, 재시도하면 두 번째 인제스트가 rag advisory lock 뒤에 쌓여(pile-up)
+>    삽입을 두 번 한다. 원자적 스왑이라 안전하지만 낭비 — 실제로 떨어진 인제스트는 다음 델타
+>    스윕이 치유한다.
+> 2. **진짜 남은 병목은 임베딩이 아니라 pgvector HNSW 삽입** (§0 #6 추가). 임베딩은 동시성으로
+>    109s → ~2s로 해결됐지만, HNSW 인덱스(6.5GB, ~870k행)가 Postgres `shared_buffers`(기본
+>    128MB)에 안 들어가 삽입마다 콜드캐시 디스크 읽기(~1-4s/행)가 발생. 완화: compose postgres에
+>    `shared_buffers=2GB / effective_cache_size=8GB / maintenance_work_mem=512MB`(→ 0.15-1.5s/행).
+>    **프로덕션 권장은 AlloyDB+pgvector**(`alloydb_scann` 인덱스가 HNSW 삽입 병목을 관리형으로 제거).
 > **Scope**: `rag/`(스토어·인제스트·임베딩) + `datasets/`(인제스트 클라이언트·커서·로그). 검색 경로·청킹 알고리즘·API 외형은 바꾸지 않는다.
 > **One-liner**: 대형 공시 인제스트를 "빠르고(동시 임베딩), 절대 깨지지 않게(원자적 prune-swap), 끊겨도 무비용 재시도(멱등)"로 만든다.
 
@@ -18,6 +30,7 @@
 | 3 | **임베딩 wall-time** — 40-doc 배치 1개가 436초 (실측, rag 로그 `POST /rag/ingest 200 436504.8ms`) | 64텍스트 Gemini `embed_content` 호출이 **순차** 실행 (`rag/rag/embeddings.py:84-102`), 부하 시 호출당 ~109초 |
 | 4 | **고아 작업 / 이중 지출** — 클라이언트는 300초에 포기(`ReadTimeout`), 서버는 계속 일해서 200 반환 | datasets 클라이언트 timeout 300s (`news_ingest.py:52`) < 서버 작업 시간; rag 핸들러엔 자체 예산 없음 |
 | 5 | **커서 조립도(coarseness)** — 접수번호 1개 실패가 티커 전체 재작업으로 확대 | `mark_items`가 티커 루프 **종료 후** 일괄 실행 (`datasets/app/store/filing_ingest.py:169-172`; kr_earnings/transcript/deck 동일 패턴) |
+| 6 | **(라이브 발견) pgvector HNSW 삽입이 새 wall-time** — 임베딩 해결 후 드러난 진짜 병목 | HNSW 인덱스 6.5GB > `shared_buffers` 128MB → 삽입마다 콜드캐시 DataFileRead ~1-4s/행; 대형 공시 ~150행 = ~5분. 인프라 튜닝(§1-D 하단) |
 
 **라이브 증거** (2026-07-11):
 - rag 로그: `← POST /rag/ingest 200 436504.8ms` — datasets는 300초에 ReadTimeout, rag는 7분 뒤 완주(고아 커밋).
@@ -91,7 +104,15 @@ async def replace_scope(self, filters: dict, keep_ids: list[str],
   - datasets 신규 설정: `rag_ingest_timeout_base_seconds=120` · `rag_ingest_timeout_per_doc_seconds=6.0` · `rag_ingest_timeout_max_seconds=1200`.
   - 캘리브레이션: 실측 병리 ~11s/doc(순차) ÷ 4(동시성) ≈ 2.75s/doc → 6s/doc은 2배 마진.
   - 스칼라 하나가 아니라 `httpx.Timeout(connect=10, read=X, write=60, pool=10)`로.
-- **1회 재시도** in `_ingest_to_rag`: `httpx.TransportError`(ConnectError/ReadTimeout/RemoteProtocolError 포괄) 및 5xx 응답에 한해 ~15초 후 1회. **4xx는 즉시 실패**(재시도 금지). B 이후 안전: 최악이 스코프 1개분 임베딩 중복 지출이고, advisory lock이 스왑을 직렬화하며, 두 시도 모두 동일 내용을 커밋한다.
+- **1회 재시도** in `_ingest_to_rag` — **연결 실패(ConnectError/ConnectTimeout/PoolTimeout/
+  RemoteProtocolError) + 5xx**에 한해 ~15초 후 1회. **ReadTimeout·4xx는 즉시 실패**(재시도 금지).
+  ⚠️ 라이브 정정: 설계 초안은 ReadTimeout도 재시도였으나, 검증에서 "서버가 아직 삽입 중일 때
+  재시도가 두 번째 인제스트를 advisory lock 뒤에 쌓아 삽입을 이중 실행"하는 낭비가 확인됐다.
+  ReadTimeout은 서버가 완주(원자 커밋)하도록 두고, 정말 떨어진 인제스트는 다음 델타가 치유.
+- **인프라 (라이브 필수)**: HNSW 삽입이 임베딩 해결 후의 실질 wall-time이므로 Postgres 메모리를
+  인덱스 캐시 가능하게 키운다 — compose postgres에 `shared_buffers=2GB / effective_cache_size=8GB
+  / maintenance_work_mem=512MB` + `shm_size: 2gb`. 프로덕션은 **AlloyDB+pgvector**(`alloydb_scann`)로
+  이 병목을 관리형 제거하는 것을 권장.
 - procrastinate 잡 레벨 `RetryStrategy(max_attempts=3)`(`queue.py:49-53`)은 무변경 — 티커별 catch 구조상 잡 재시도는 대참사에서만 발동하고, E+멱등 인제스트로 재실행이 저렴하다.
 
 ### E. 커서 세분화 — **아이템 성공 직후 마킹**
@@ -185,7 +206,18 @@ async def replace_scope(self, filters: dict, keep_ids: list[str],
 
 ---
 
-## §4. 검증 프로토콜 (Phase 7)
+## §4. 검증 프로토콜 (Phase 7) — 실측 결과 (2026-07-12)
+
+**유닛**: rag `37 passed, 1 skipped` · datasets `340 passed`. **라이브(AAPL filing_text)**:
+- 임베딩: 순차 109s/콜 → **동시 ~2s** (146청크 3배치 병렬). 로그 `embed batch 1/3 … 3/3` 중첩.
+- 원자 스왑: 접수번호별 커밋 확인 — activity에 `[AAPL] {accn} → N sections, M chunks, Ts` 라인.
+- 무결성 쿼리(§ 아래): 재검증한 4개 접수번호 전부 `sections == max_section`(연속, 갭 없음) —
+  잘림 없음. 24-000123: 324청크/68섹션, 25-000079: 327/69 (신구조 완전 재청킹), 26-000006·
+  26-000013: 각각 완전한 작은 공시(23·27섹션)로 확인.
+- existing_texts 스킵: 이미 색인된 접수번호 재인제스트 시 `0 chunks, 0s`(임베딩 0회) — 리오더 증명.
+- HNSW 삽입: `shared_buffers` 128MB → 2GB 상향으로 ~2-4s/행 → 0.15-1.5s/행. ReadTimeout 없이 완주.
+
+### (원래 프로토콜)
 
 1. **유닛**: rag 스위트(`rag/tests/` — MemoryStore 패리티가 핵심) + datasets 스위트(`test_delta_ingest.py`·`test_datasets.py`·`test_transcripts.py`·`test_decks.py`) — 전부 일회성 컨테이너로(라이브 스택 불가침).
 2. **AAPL 치유(full)**: 어드민 Pipelines → `filing_text` US AAPL full 실행. 접수번호별 activity 라인 확인; 잡 노트 `1/1 tickers indexed`, `FAILED` 없음.

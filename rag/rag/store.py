@@ -57,6 +57,14 @@ class VectorStore(Protocol):
         including None → unscoped). Used by ingest's replace-by-accession so a re-chunked
         filing never piles up stale duplicates."""
         ...
+    async def replace_scope(self, filters: dict, keep_ids: list[str],
+                            chunks: list[Chunk], vectors: list[list[float]]) -> int:
+        """ONE atomic operation: delete rows matching `filters` whose id is NOT in `keep_ids`,
+        then upsert `chunks`+`vectors` — the prune-stale swap. Same exact filter semantics as
+        `delete_where` (`meta->>k = v`, None → unscoped). Returns the pruned row count. Lets a
+        re-chunked filing replace its old sections atomically: retrieval only ever sees the
+        complete old set or the complete new set, never a half-swapped (truncated) filing."""
+        ...
 
 
 class MemoryStore:
@@ -117,19 +125,42 @@ class MemoryStore:
         scored.sort(key=lambda x: -x[1])
         return scored[:top_k]
 
-    async def delete_where(self, filters):
-        def _keep(c: Chunk) -> bool:
-            for k, v in filters.items():
-                if getattr(c, k, None) != v:
-                    return True
-            return False
+    @staticmethod
+    def _matches(c: Chunk, filters: dict) -> bool:
+        """True iff the chunk matches EVERY exact filter (None → the field must be None)."""
+        return all(getattr(c, k, None) == v for k, v in filters.items())
 
-        kept = [(c, v) for c, v in zip(self._chunks, self._matrix) if _keep(c)]
+    def _upsert_one(self, c: Chunk, v: list[float]) -> None:
+        idx = self._pos.get(c.id)
+        if idx is None:
+            self._pos[c.id] = len(self._chunks)
+            self._chunks.append(c)
+            self._matrix.append(v)
+        else:
+            self._chunks[idx] = c
+            self._matrix[idx] = v
+
+    async def delete_where(self, filters):
+        kept = [(c, v) for c, v in zip(self._chunks, self._matrix) if not self._matches(c, filters)]
         removed = len(self._chunks) - len(kept)
         self._chunks = [c for c, _ in kept]
         self._matrix = [v for _, v in kept]
         self._pos = {c.id: i for i, c in enumerate(self._chunks)}
         return removed
+
+    async def replace_scope(self, filters, keep_ids, chunks, vectors):
+        # Synchronous body → atomic under asyncio (no await between mutations), the MemoryStore
+        # analogue of the PgVectorStore single-transaction swap.
+        keep = set(keep_ids)
+        kept = [(c, v) for c, v in zip(self._chunks, self._matrix)
+                if not (self._matches(c, filters) and c.id not in keep)]
+        pruned = len(self._chunks) - len(kept)
+        self._chunks = [c for c, _ in kept]
+        self._matrix = [v for _, v in kept]
+        self._pos = {c.id: i for i, c in enumerate(self._chunks)}
+        for c, v in zip(chunks, vectors):
+            self._upsert_one(c, v)
+        return pruned
 
 
 class PgVectorStore:
@@ -185,6 +216,17 @@ class PgVectorStore:
             except Exception as exc:  # noqa: BLE001 — 미지원/권한 부족 → FTS 단독으로 동작
                 import logging
                 logging.getLogger(__name__).warning("rag_chunks_trgm index deferred: %s", exc)
+            # ING-1: an expression index on meta->>'accession' so replace-by-accession
+            # (delete_where / replace_scope) is an index scan, not a full-corpus seq scan —
+            # per-accession prunes on an 800k+-row corpus are otherwise O(table) each.
+            try:
+                conn.execute(
+                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS rag_chunks_accession ON rag_chunks "
+                    "((meta->>'accession'))"
+                )
+            except Exception as exc:  # noqa: BLE001 — a deferred/again build never blocks boot
+                import logging
+                logging.getLogger(__name__).warning("rag_chunks_accession index deferred: %s", exc)
             finally:
                 conn.autocommit = False
 
@@ -195,14 +237,8 @@ class PgVectorStore:
 
     async def upsert(self, chunks, vectors):
         # tenant lives in meta (reserved key) for filtering, but is excluded from
-        # provenance() so it never surfaces in user-facing hits.
-        def _meta(c):
-            m = c.provenance()
-            if c.tenant:
-                m["tenant"] = c.tenant
-            return json.dumps(m)
-
-        rows = [(c.id, c.text, _meta(c), np.asarray(v, dtype=np.float32)) for c, v in zip(chunks, vectors)]
+        # provenance() so it never surfaces in user-facing hits (_rows_for handles it).
+        rows = self._rows_for(chunks, vectors)
 
         def _run() -> None:
             with self._connect() as conn:
@@ -309,7 +345,10 @@ class PgVectorStore:
                 pass
         return hits[:top_k * 2]
 
-    async def delete_where(self, filters):
+    @staticmethod
+    def _exact_conds(filters: dict) -> tuple[list[str], list]:
+        """Exact-match SQL conditions for `delete_where`/`replace_scope` (NOT the search
+        tenant-OR-NULL semantics): `meta->>k = v`, with None → `meta->>k IS NULL`."""
         conds, params = [], []
         for k, v in filters.items():
             if v is None:
@@ -318,6 +357,10 @@ class PgVectorStore:
             else:
                 conds.append("meta->>%s = %s")
                 params.extend([k, str(v)])
+        return conds, params
+
+    async def delete_where(self, filters):
+        conds, params = self._exact_conds(filters)
         if not conds:
             return 0
         sql = "DELETE FROM rag_chunks WHERE " + " AND ".join(conds)
@@ -327,6 +370,51 @@ class PgVectorStore:
                 cur = conn.execute(sql, params)
                 conn.commit()
                 return cur.rowcount or 0
+
+        return await asyncio.to_thread(_run)
+
+    def _rows_for(self, chunks, vectors):
+        """(id, text, meta_json, vector) tuples for an executemany upsert — shared by
+        `upsert` and `replace_scope`."""
+        def _meta(c):
+            m = c.provenance()
+            if c.tenant:
+                m["tenant"] = c.tenant
+            return json.dumps(m)
+        return [(c.id, c.text, _meta(c), np.asarray(v, dtype=np.float32))
+                for c, v in zip(chunks, vectors)]
+
+    async def replace_scope(self, filters, keep_ids, chunks, vectors):
+        conds, params = self._exact_conds(filters)
+        if not conds:
+            # no scope to prune → never delete the whole table; just upsert the new chunks
+            if chunks:
+                await self.upsert(chunks, vectors)
+            return 0
+        # a stable per-scope advisory lock (signed 64-bit) serializes concurrent swaps of the
+        # SAME scope (weekly sweep vs. on-demand ingest) so they can't interleave delete+insert.
+        import hashlib
+        scope_key = "&".join(f"{k}={filters[k]}" for k in sorted(filters))
+        lock_id = int.from_bytes(hashlib.blake2b(scope_key.encode(), digest_size=8).digest(),
+                                 "big", signed=True)
+        del_sql = ("DELETE FROM rag_chunks WHERE " + " AND ".join(conds)
+                   + " AND NOT (id = ANY(%s))")
+        rows = self._rows_for(chunks, vectors)
+
+        def _run():
+            with self._connect() as conn:
+                # all in ONE transaction (lock → prune stale → upsert new → commit)
+                conn.execute("SELECT pg_advisory_xact_lock(%s)", (lock_id,))
+                pruned = conn.execute(del_sql, [*params, list(keep_ids)]).rowcount or 0
+                if rows:
+                    conn.cursor().executemany(
+                        "INSERT INTO rag_chunks (id, text, meta, embedding) VALUES (%s,%s,%s,%s) "
+                        "ON CONFLICT (id) DO UPDATE SET text=EXCLUDED.text, meta=EXCLUDED.meta, "
+                        "embedding=EXCLUDED.embedding",
+                        rows,
+                    )
+                conn.commit()
+                return pruned
 
         return await asyncio.to_thread(_run)
 

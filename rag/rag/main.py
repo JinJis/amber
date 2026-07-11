@@ -70,16 +70,26 @@ async def info() -> dict:
 
 @app.post("/rag/ingest", tags=["RAG"], summary="Ingest documents (chunk + embed + store)")
 async def ingest(body: IngestRequest, request: Request) -> dict:
+    import logging
+    import time
+
     # The gateway stamps the tenant from the caller's key; it's authoritative and
     # overrides anything a client put in the body (clients can't ingest for others).
     tenant = request.headers.get(_TENANT_HEADER)
     if tenant:
         for doc in body.documents:
             doc.tenant = tenant
-    # scope the replace to the tenant so one tenant's re-ingest can't delete another's chunks.
-    replace = {**body.replace, "tenant": tenant} if body.replace and tenant else body.replace
-    n = await ingest_docs(body.documents, replace=replace)
-    return {"chunks": n}
+    # ING-1: ALWAYS pin the tenant into the replace scope (including None → unscoped/global), so
+    # a global re-ingest can never prune a tenant's same-accession rows and vice versa. The
+    # prune keep-set is tenant-namespaced ids, so an unpinned scope would delete across tenants.
+    replace = {**body.replace, "tenant": tenant} if body.replace else None
+    t0 = time.perf_counter()
+    res = await ingest_docs(body.documents, replace=replace)
+    logging.getLogger(__name__).info(
+        "ingest docs=%d embedded=%d skipped=%d pruned=%d replace=%s %.0fms",
+        len(body.documents), res["chunks"], res["skipped"], res["pruned"],
+        (replace or {}).get("accession") or bool(replace), (time.perf_counter() - t0) * 1000)
+    return {"chunks": res["chunks"], "pruned": res["pruned"], "skipped": res["skipped"]}
 
 
 @app.post("/rag/search", tags=["RAG"], summary="Retrieve passages with provenance")

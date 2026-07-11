@@ -45,33 +45,64 @@ def _news_to_doc(market: str, article: News) -> dict | None:
     }
 
 
-# RAG /rag/ingest embeds every doc synchronously, so a big POST (a filing yields HUNDREDS of
-# section docs) blows past the default 30s client timeout → ReadTimeout → 0 chunks ingested. Send
-# the docs in bounded batches under a generous per-batch timeout so each call stays well-sized.
+# Non-replace feeds (news, era_news) have no scope to swap atomically, so they still go in
+# bounded batches so one huge run never sits in a single request.
 _RAG_INGEST_BATCH = 40
-_RAG_INGEST_TIMEOUT = 300.0
+
+
+def _ingest_timeout(docs: int) -> "httpx.Timeout":
+    """Read budget scales with doc count — the client's best proxy for the server's embed work.
+    Connect/write/pool stay small; only the read (embedding wall-time) grows (ING-1)."""
+    read = min(settings.rag_ingest_timeout_base_seconds + settings.rag_ingest_timeout_per_doc_seconds * docs,
+               settings.rag_ingest_timeout_max_seconds)
+    return httpx.Timeout(connect=10.0, read=read, write=60.0, pool=10.0)
+
+
+# Retry only CONNECTION-level failures (the request never reached a working server) + 5xx.
+# NOT ReadTimeout: a read timeout means the server DID receive the request and is still embedding/
+# inserting — retrying then just piles a second ingest behind the first (it blocks on the rag
+# advisory lock, then re-does the insert). The atomic swap makes that safe but wasteful; the next
+# delta run heals a genuinely-dropped ingest instead (live finding, ING-1 Phase 7).
+_RETRY_TRANSPORT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.RemoteProtocolError)
+
+
+async def _post_ingest(client: "httpx.AsyncClient", url: str, body: dict) -> int:
+    """POST one /rag/ingest request with ONE retry on a connection-level failure or 5xx. Safe:
+    the server-side swap is atomic + idempotent (a retry re-embeds nothing, re-confirms content).
+    A ReadTimeout (server busy) or 4xx (client error) fails immediately — no retry."""
+    for attempt in range(2):
+        try:
+            resp = await client.post(url, json=body)
+        except _RETRY_TRANSPORT:
+            if attempt == 1:
+                raise
+            await asyncio.sleep(15.0)
+            continue
+        if resp.status_code >= 500 and attempt == 0:
+            await asyncio.sleep(15.0)
+            continue
+        resp.raise_for_status()
+        return int((resp.json() or {}).get("chunks", 0))
+    return 0  # unreachable — loop always returns or raises
 
 
 async def _ingest_to_rag(rag_url: str, docs: list[dict], replace: dict | None = None) -> int:
-    """POST the docs to the RAG service (global corpus) and return the chunk count. Batched so a
-    large filing (many section docs) never exceeds the client timeout in one shot.
+    """POST the docs to the RAG service (global corpus) and return the chunk count.
 
-    ``replace`` (e.g. {"accession": "..."}) is sent on the FIRST batch only, so re-chunking a
-    filing deletes its old chunks once, then inserts the fresh set (RQ-2 — section boundaries
-    move when structure-aware chunking changes, so a plain UPSERT would orphan stale sections)."""
+    ING-1: a ``replace``-scoped ingest (a filing / transcript / deck — one accession's docs)
+    goes in ONE request so the server can compute the full new chunk-id set and do the atomic
+    prune-swap; the client budget scales with doc count and one transient retry is safe. Feeds
+    without a scope (news / era_news) still batch, since there's nothing to swap atomically."""
     if not docs:
         return 0
     url = f"{rag_url.rstrip('/')}/rag/ingest"
+    if replace:
+        async with httpx.AsyncClient(timeout=_ingest_timeout(len(docs))) as client:
+            return await _post_ingest(client, url, {"documents": docs, "replace": replace})
     total = 0
-    async with httpx.AsyncClient(timeout=_RAG_INGEST_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=_ingest_timeout(_RAG_INGEST_BATCH)) as client:
         for i in range(0, len(docs), _RAG_INGEST_BATCH):
-            batch = docs[i:i + _RAG_INGEST_BATCH]
-            body: dict = {"documents": batch}
-            if replace and i == 0:
-                body["replace"] = replace
-            resp = await client.post(url, json=body)
-            resp.raise_for_status()
-            total += int((resp.json() or {}).get("chunks", 0))
+            total += await _post_ingest(client, url, {"documents": docs[i:i + _RAG_INGEST_BATCH]})
     return total
 
 

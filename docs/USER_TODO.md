@@ -66,6 +66,15 @@
   GCP 프로젝트/SA env가 memory의 구성(chungjin-456905, value-graph@ SA)과 다른 것 — `.env`의
   RAG_GCP_* 값을 확인하세요 (검색은 fail-safe로 동작하지만 리랭킹 품질이 빠져요)
 
+## 1-10. RAG 인제스트 성능 (2026-07-12 ING-1)
+- [ ] **재빌드 + 재기동 필요**: `docker-compose.yml`이 바뀌었어요 — postgres에 메모리 튜닝
+  (`shared_buffers=2GB` 등) 추가. `docker compose up -d --build` 후 postgres가 recreate돼야
+  대형 공시 인제스트의 HNSW 삽입 병목이 풀려요 (호스트 RAM 16GB+ 기준; 더 작으면 값 하향)
+- [ ] **(프로덕션 권장) 벡터 저장소 = AlloyDB + pgvector**: 코드 변경 0(`RAG_DATABASE_URL`만
+  교체), `alloydb_scann` 인덱스가 self-host HNSW 삽입 병목을 관리형으로 제거해요. Cloud SQL+
+  pgvector도 가능하지만 인덱스가 동일(HNSW)이라 삽입 속도 이득은 적어요. Vertex AI Vector
+  Search는 수백만 벡터·엄격 지연 SLA일 때만 (신규 백엔드 구현 필요)
+
 ## 2. 바이럴·품질 (선택이지만 효과 큼)
 - [ ] **Kakao JS 키** (V-6 카톡 리치 공유): developers.kakao.com 같은 앱 → JavaScript 키 + Web 플랫폼 도메인 등록 → `NEXT_PUBLIC_KAKAO_JS_KEY` (키가 오면 V-6 구현 착수 가능)
 - [ ] **RAG 코퍼스 재인제스트** (RQ-9 — 검색 품질 최대 지렛대): 유니버스 재인제스트 + transcript US/KR + era news

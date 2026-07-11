@@ -21,8 +21,6 @@ from typing import Protocol
 
 from rag.config import settings
 
-_BATCH = 64  # texts per embed_content request
-
 # Transient Gemini API failures self-heal instead of failing the whole ingest request —
 # a single 503 UNAVAILABLE was surfacing as a 500 to callers (filing_text pipeline dropped
 # a ticker over it in the 2026-07 full-pipeline audit). Retry 429 + 5xx with backoff.
@@ -78,28 +76,46 @@ class GeminiEmbedder:
         self._prompt_task = self.model.startswith("gemini-embedding-2")
 
     async def _embed(self, texts: list[str], *, query: bool) -> list[list[float]]:
+        import logging
+        import time
+
         from google.genai import types
 
+        if not texts:
+            return []
+        batch_size = max(1, settings.embed_batch)
+        batches = [texts[i:i + batch_size] for i in range(0, len(texts), batch_size)]
+        # ING-1: embed sub-batches CONCURRENTLY (bounded) instead of sequentially — one large
+        # filing's ~N 64-text calls used to run back-to-back (measured ~109s/call under load →
+        # a single ingest exceeding any sane client budget). `=1` restores the sequential path.
+        sem = asyncio.Semaphore(max(1, settings.embed_concurrency))
+
+        def _run(b: list[str], idx: int) -> list[list[float]]:
+            if self._prompt_task:
+                # task in the prompt; wrap each text so they embed SEPARATELY (not aggregated)
+                instr = "task: search result | query: " if query else "task: search result | document: "
+                contents = [types.Content(parts=[types.Part(text=instr + t)]) for t in b]
+                cfg = types.EmbedContentConfig(output_dimensionality=self.dim or None)
+            else:
+                contents = b
+                cfg = types.EmbedContentConfig(
+                    task_type="RETRIEVAL_QUERY" if query else "RETRIEVAL_DOCUMENT",
+                    output_dimensionality=self.dim or None)
+            t0 = time.perf_counter()
+            resp = _with_retry(lambda: self._client.models.embed_content(
+                model=self.model, contents=contents, config=cfg))
+            logging.getLogger(__name__).info(
+                "embed batch %d/%d size=%d %.0fms", idx + 1, len(batches), len(b),
+                (time.perf_counter() - t0) * 1000)
+            return [list(e.values) for e in resp.embeddings]
+
+        async def _one(idx: int, b: list[str]) -> tuple[int, list[list[float]]]:
+            async with sem:
+                return idx, await asyncio.to_thread(_run, b, idx)
+
+        results = await asyncio.gather(*(_one(i, b) for i, b in enumerate(batches)))
         out: list[list[float]] = []
-        for i in range(0, len(texts), _BATCH):
-            batch = texts[i : i + _BATCH]
-
-            def _run(b: list[str] = batch) -> list[list[float]]:
-                if self._prompt_task:
-                    # task in the prompt; wrap each text so they embed SEPARATELY (not aggregated)
-                    instr = "task: search result | query: " if query else "task: search result | document: "
-                    contents = [types.Content(parts=[types.Part(text=instr + t)]) for t in b]
-                    cfg = types.EmbedContentConfig(output_dimensionality=self.dim or None)
-                else:
-                    contents = b
-                    cfg = types.EmbedContentConfig(
-                        task_type="RETRIEVAL_QUERY" if query else "RETRIEVAL_DOCUMENT",
-                        output_dimensionality=self.dim or None)
-                resp = _with_retry(lambda: self._client.models.embed_content(
-                    model=self.model, contents=contents, config=cfg))
-                return [list(e.values) for e in resp.embeddings]
-
-            vecs = await asyncio.to_thread(_run)
+        for _, vecs in sorted(results, key=lambda r: r[0]):  # positional order preserved
             out.extend(_normalize(v) for v in vecs)
         if out:
             self.dim = len(out[0])

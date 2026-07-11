@@ -87,6 +87,12 @@ class Settings(BaseSettings):
     redis_url: str = ""
     cache_ttl_seconds: int = 900
     http_timeout_seconds: float = 30.0
+    # ING-1: the RAG-ingest client budget scales with doc count (a large filing embeds hundreds
+    # of chunks). read = min(base + per_doc × docs, max). With the swap atomic, an over-budget
+    # request is only wasted spend (never corruption), and the one retry re-confirms for ~free.
+    rag_ingest_timeout_base_seconds: float = 120.0
+    rag_ingest_timeout_per_doc_seconds: float = 6.0
+    rag_ingest_timeout_max_seconds: float = 1200.0
     log_level: str = "INFO"  # app log verbosity (DEBUG|INFO|WARNING|…) → docker logs
 
     # --- periodic ingestion: the Procrastinate queue (app/queue.py) -------

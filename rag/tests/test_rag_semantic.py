@@ -48,7 +48,7 @@ async def test_semantic_retrieval_beats_lexical(fresh):
         IngestDoc(text="Quarterly profit climbed as demand for cloud data-center services accelerated.",
                   source="SEC EDGAR", doc_type="10-Q", ticker="Y", market="US", url="https://example/earnings"),
     ]
-    n = await ingest_docs(docs)
+    n = (await ingest_docs(docs))["chunks"]
     assert n == 3
 
     query = "Federal Reserve interest rate hike"

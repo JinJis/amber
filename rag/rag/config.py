@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     # Budget on the query-embedding call (an external model API). Past it the dense leg is
     # skipped and the LEXICAL leg still answers — search never blows the gateway timeout.
     embed_query_timeout_seconds: float = 10.0
+    # ING-1: embed sub-batches concurrently (bounded) so a large filing's many 64-text calls
+    # don't run back-to-back. `embed_concurrency=1` restores the sequential path (rollback knob).
+    embed_concurrency: int = 4
+    embed_batch: int = 64        # texts per embed_content request
     # RQ-10: cap on rows the lexical OR-pass ranks (ts_rank re-parses each row's text; an OR of
     # common tokens can match ~10% of the corpus → seconds/leg). AND-pass runs first unbounded.
     lexical_candidate_limit: int = 4000

@@ -134,14 +134,19 @@ def _html_to_docs(html: str, market: str, ticker: str, accession: str, source: s
 
 
 async def ingest_filing_text_for_ticker(market: str, ticker: str, limit: int = 4,
-                                        rag_url: str | None = None, mode: str = "full") -> int:
+                                        rag_url: str | None = None, mode: str = "full",
+                                        job_id: int | None = None) -> int:
     """Fetch one ticker's recent filings as HTML (shared with the viewer, cached) and index their
     text into RAG; return the chunk count. The unit of both the batch pipeline AND on-demand
     ingest, so a ticker the corpus has never seen becomes searchable live. Best-effort (0 on fail).
 
     ``mode="delta"`` skips accessions this pipeline already ingested (the IngestState cursor) —
     a universe re-run then only downloads + embeds NEW filings instead of re-spending the
-    OpenDART quota and embedding cost on unchanged ones. Both modes record the cursor."""
+    OpenDART quota and embedding cost on unchanged ones. ``job_id`` (batch runs) → a per-accession
+    activity line so the admin run-detail shows WHICH filing stalled. The cursor is marked
+    per-accession right after success (ING-1) so a mid-list failure re-does only the rest."""
+    import time
+
     from app.store.ingest_state import done_items, mark_items
 
     market = (market or "").upper()
@@ -155,7 +160,6 @@ async def ingest_filing_text_for_ticker(market: str, ticker: str, limit: int = 4
     # Ingest per accession with replace-by-accession, so re-chunking a filing swaps its old
     # sections for the fresh structure-aware set instead of leaving orphaned stale chunks (RQ-2).
     total_sections, chunks = 0, 0
-    ingested: set[str] = set()
     rag = rag_url or settings.rag_url
     for accn, info in refs.items():
         html = await get_filing_html(market, accn, info.get("cik"), info.get("fetch_url"))
@@ -166,10 +170,17 @@ async def ingest_filing_text_for_ticker(market: str, ticker: str, limit: int = 4
         if not docs:
             continue
         total_sections += len(docs)
-        chunks += await _ingest_to_rag(rag, docs, replace={"accession": accn})
-        ingested.add(accn)
-    if ingested:
-        await asyncio.to_thread(mark_items, "filing_text", market, ticker, ingested)
+        t0 = time.perf_counter()
+        got = await _ingest_to_rag(rag, docs, replace={"accession": accn})
+        chunks += got
+        # ING-1: mark THIS accession done immediately — a later accession's failure then re-does
+        # only the rest on the next delta run, not the whole ticker.
+        await asyncio.to_thread(mark_items, "filing_text", market, ticker, {accn})
+        if job_id is not None:
+            await asyncio.to_thread(
+                log_activity, "filing_text", market,
+                f"[{ticker}] {accn} → {len(docs)} sections, {got} chunks, {time.perf_counter() - t0:.0f}s",
+                job_id)
     if not total_sections:
         return 0
     log.info("filing-text: %s %s → %d sections, %d chunks indexed", market, ticker.upper(), total_sections, chunks)
@@ -204,7 +215,7 @@ async def run_filing_text_ingest(market: str, tickers: list[str], mode: str = "f
                 log_activity, "filing_text", market,
                 f"[{tk}] {src} 공시 본문 수집·인덱싱 중… ({i}/{len(tickers)})", job)
             try:
-                got = await ingest_filing_text_for_ticker(market, tk, mode=mode)
+                got = await ingest_filing_text_for_ticker(market, tk, mode=mode, job_id=job)
                 total += got
                 if got == 0:
                     empty.append(tk)

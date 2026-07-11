@@ -98,6 +98,19 @@ services:
       POSTGRES_USER: rag
       POSTGRES_PASSWORD: rag
       POSTGRES_DB: rag
+    # ING-1: the pgvector default shared_buffers (128MB) can't cache the HNSW index (6.5GB on the
+    # ~870k-row corpus), so every vector insert reads graph pages from disk (~2s/row cold) — the
+    # real bottleneck behind the large-filing ingest stall. Give Postgres enough cache to hold the
+    # hot index. Sized for a ~16GB+ host; drop these if running on a smaller box.
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=2GB"
+      - "-c"
+      - "effective_cache_size=8GB"
+      - "-c"
+      - "maintenance_work_mem=512MB"
+    shm_size: "2gb"
     volumes:
       - pg_data:/var/lib/postgresql/data
     restart: unless-stopped

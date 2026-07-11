@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -65,6 +66,38 @@ async def test_filing_ingest_delta_skips_done_accessions(monkeypatch):
     fetched.clear(), ingested.clear()
     assert await FI.ingest_filing_text_for_ticker("US", t, mode="delta", rag_url="http://rag.test") == 0
     assert fetched == [] and ingested == []
+
+
+async def test_filing_ingest_marks_cursor_per_accession_before_a_later_failure(monkeypatch):
+    # ING-1: the cursor is marked PER-accession right after each successful RAG ingest — so when a
+    # LATER accession's ingest blows up, the earlier ones stay behind the cursor and a delta re-run
+    # redoes only the failed tail. (The OLD behavior marked the whole ticker once at loop end, so a
+    # mid-list failure marked NEITHER and the next run re-spent the quota on the already-done ones.)
+    from app.store import filing_ingest as FI
+
+    init_db()
+    fetched: list[str] = []
+    _patch_filing_upstreams(monkeypatch, fetched, ingested=[])
+
+    async def rag_ok_a1_then_fail_a2(rag_url, docs, **kwargs):
+        if docs[0]["accession"] == "A2":
+            raise RuntimeError("RAG ingest timeout")   # A1 embeds fine; A2's embed POST blows up
+        return len(docs)
+
+    monkeypatch.setattr(FI, "_ingest_to_rag", rag_ok_a1_then_fail_a2)
+
+    t = "DLTPART"
+    with pytest.raises(RuntimeError, match="RAG ingest timeout"):   # the failure propagates out…
+        await FI.ingest_filing_text_for_ticker("US", t, mode="delta", rag_url="http://rag.test")
+    assert fetched == ["A1", "A2"]                              # both fetched before A2's ingest failed
+    assert IS.done_items("filing_text", "US", t) == {"A1"}     # …but A1's cursor was already marked
+
+    # a delta re-run now touches ONLY the still-unfinished A2 (A1 is behind the cursor)
+    fetched.clear()
+    _patch_filing_upstreams(monkeypatch, fetched, ingested=[])  # A2 succeeds this time
+    n = await FI.ingest_filing_text_for_ticker("US", t, mode="delta", rag_url="http://rag.test")
+    assert n == 1 and fetched == ["A2"]
+    assert IS.done_items("filing_text", "US", t) == {"A1", "A2"}
 
 
 async def test_filing_ingest_full_mode_reingests_everything(monkeypatch):

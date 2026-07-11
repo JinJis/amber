@@ -31,9 +31,14 @@ _TOK = re.compile(r"[A-Za-z0-9]+|[가-힣]+")
 
 class _FakeEmbedder:
     """Deterministic lexical embedder for key-free unit tests (stands in for the production Gemini
-    embedder). Bag-of-hashed-tokens, L2-normalized — stable vector space to test the pipeline."""
+    embedder). Bag-of-hashed-tokens, L2-normalized — stable vector space to test the pipeline.
+    Records each ``embed`` call's texts in ``embed_calls`` so tests can prove an unchanged re-ingest
+    embeds ZERO chunks (ING-1 incremental-skip)."""
 
     dim = 64
+
+    def __init__(self) -> None:
+        self.embed_calls: list[list[str]] = []
 
     def _vec(self, text: str) -> list[float]:
         v = [0.0] * self.dim
@@ -43,6 +48,7 @@ class _FakeEmbedder:
         return [x / n for x in v] if n else v
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
+        self.embed_calls.append(list(texts))
         return [self._vec(t) for t in texts]
 
     async def embed_query(self, text: str) -> list[float]:
@@ -77,7 +83,7 @@ async def test_ingest_search_with_provenance():
         IngestDoc(text="The Bank of Korea raised its base interest rate to 3.5 percent.", source="ECOS", market="KR"),
         IngestDoc(text="Tesla expanded electric vehicle battery production at its gigafactory.", source="SEC EDGAR", ticker="TSLA", market="US"),
     ]
-    n = await ingest_docs(docs)
+    n = (await ingest_docs(docs))["chunks"]
     assert n >= 3
     hits = await search("Apple chip suppliers TSMC", top_k=3)
     assert hits and "TSMC" in hits[0].text
@@ -108,11 +114,11 @@ async def test_reingest_unchanged_skips_embedding():
     _reset()
     doc = IngestDoc(text="Apple relies on TSMC to fabricate its custom silicon chips.",
                     doc_id="aapl:s.1", source="SEC EDGAR", doc_type="filing", ticker="AAPL")
-    assert await ingest_docs([doc]) >= 1          # first pass embeds
-    assert await ingest_docs([doc]) == 0          # identical → nothing re-embedded
+    assert (await ingest_docs([doc]))["chunks"] >= 1          # first pass embeds
+    assert (await ingest_docs([doc]))["chunks"] == 0          # identical → nothing re-embedded
     changed = IngestDoc(text="Apple now sources chips from multiple foundries.",
                         doc_id="aapl:s.1", source="SEC EDGAR", doc_type="filing", ticker="AAPL")
-    assert await ingest_docs([changed]) >= 1      # changed text → re-embedded
+    assert (await ingest_docs([changed]))["chunks"] >= 1      # changed text → re-embedded
 
 
 async def test_search_filter_by_market():
@@ -380,3 +386,235 @@ async def test_recall_at_k_hybrid_over_mixed_queries():
             hit_at_3 += 1
     # hybrid (dense+lexical) over this tiny lexical-embedder set should nail ≥3/4
     assert hit_at_3 >= 3, f"recall@3 too low: {hit_at_3}/4"
+
+
+# ── ING-1: atomic prune-swap (replace_scope) + incremental skip under replace ──
+# The swap is chunk → existing_texts (before any delete) → embed only new/changed →
+# ONE store op (prune stale ids for the scope + upsert). These prove: stale-id pruning,
+# atomicity on embed failure (the delete never precedes the embed), the incremental skip
+# still fires under `replace`, keep-set = ALL new ids, and the empty-extraction guard.
+
+
+def _acc_ids(accession: str, tenant: object = "__any__") -> set[str]:
+    """Ids of stored chunks for an accession (optionally pinned to a tenant), read straight
+    off the MemoryStore — a direct assertion on what the atomic swap left behind."""
+    st = store.get_store()
+    return {c.id for c in st._chunks
+            if c.accession == accession and (tenant == "__any__" or c.tenant == tenant)}
+
+
+async def test_replace_prunes_stale_ids_and_spares_other_accessions():
+    # re-chunk shrink: an accession that had 3 sections is re-ingested as 1 → the 2 stale ids are
+    # pruned, the surviving id is intact, and a DIFFERENT accession is never touched.
+    _reset()
+    await ingest_docs([IngestDoc(text=f"AC section {i} discusses supply chain risk.",
+                                 doc_id=f"AC:s.{i}", accession="AC") for i in range(1, 4)])
+    await ingest_docs([IngestDoc(text="Unrelated filing about a share buyback.",
+                                 doc_id="OT:s.1", accession="OT")])
+    assert _acc_ids("AC") == {"AC:s.1::0", "AC:s.2::0", "AC:s.3::0"}
+    res = await ingest_docs([IngestDoc(text="AC now a single fresh section about risk.",
+                                       doc_id="AC:s.1", accession="AC")],
+                            replace={"accession": "AC"})
+    assert res["chunks"] == 1 and res["pruned"] == 2      # s.2 + s.3 dropped in the swap
+    assert _acc_ids("AC") == {"AC:s.1::0"}                # surviving id intact, stale ids gone
+    assert _acc_ids("OT") == {"OT:s.1::0"}                # the other accession untouched
+    hits = await search("supply chain risk", top_k=10, filters={"accession": "AC"})
+    assert hits and not any("section 2" in h.text.lower() for h in hits)
+
+
+async def test_ingest_atomic_on_embed_failure_leaves_store_unchanged(monkeypatch):
+    # THE key ING-1 regression: if embedding fails, the prune-swap must NOT have run — the delete
+    # is ordered AFTER the embed, so a mid-ingest embed outage leaves the corpus byte-identical.
+    _reset()
+    await ingest_docs([IngestDoc(text=f"Section {i} discusses supply chain risk factors.",
+                                 doc_id=f"AC:s.{i}", accession="AC") for i in range(1, 4)])
+    st = store.get_store()
+    before_ids = {c.id for c in st._chunks}
+    before_texts = {c.id: c.text for c in st._chunks}
+
+    class _RaisingEmbedder:
+        dim = 64
+
+        async def embed(self, texts):
+            raise RuntimeError("gemini embed 503 mid-ingest (simulated)")
+
+        async def embed_query(self, text):
+            return [0.0] * self.dim
+
+    monkeypatch.setattr(rag.ingest, "get_embedder", lambda: _RaisingEmbedder())
+    # a re-ingest with CHANGED text → non-empty `todo` → the embed call fires → raises
+    with pytest.raises(RuntimeError):
+        await ingest_docs([IngestDoc(text=f"CHANGED section {i} text.",
+                                     doc_id=f"AC:s.{i}", accession="AC") for i in range(1, 4)],
+                          replace={"accession": "AC"})
+    # store UNCHANGED — no delete happened before the failed embed
+    assert {c.id for c in st._chunks} == before_ids
+    assert {c.id: c.text for c in st._chunks} == before_texts   # old text still present (not swapped)
+    # search still uses the fake query embedder (only rag.ingest was repatched) → old content stands
+    hits = await search("supply chain risk", top_k=10, filters={"accession": "AC"})
+    assert hits and all("CHANGED" not in h.text for h in hits)
+
+
+async def test_replace_unchanged_reingest_embeds_zero_and_keeps_corpus_identical():
+    # incremental skip fires EVEN UNDER `replace`: existing_texts is read BEFORE any delete, so a
+    # re-ingest of identical docs re-embeds nothing (0 embed calls) and the corpus is byte-identical.
+    _reset()
+    docs = [IngestDoc(text=f"Section {i} discusses supply chain and risk factors.",
+                      doc_id=f"AC:s.{i}", accession="AC") for i in range(1, 4)]
+    await ingest_docs(docs)
+    st = store.get_store()
+    before = {c.id: c.text for c in st._chunks}
+    fake = rag.ingest.get_embedder()
+    calls_before = len(fake.embed_calls)
+    res = await ingest_docs(docs, replace={"accession": "AC"})
+    assert res == {"chunks": 0, "pruned": 0, "skipped": 3}
+    assert len(fake.embed_calls) == calls_before          # NO re-embed on the second pass
+    assert {c.id: c.text for c in st._chunks} == before    # corpus byte-identical (ids + texts)
+
+
+async def test_replace_changed_text_reembeds_same_id_and_survives_prune():
+    # a single chunk's text changes → it is re-embedded (chunks>=1) and, sharing its id, survives
+    # the prune (same id → in keep-set) rather than being dropped.
+    _reset()
+    await ingest_docs([IngestDoc(text="Apple relies on TSMC to fabricate its chips.",
+                                 doc_id="AC:s.1", accession="AC")])
+    res = await ingest_docs([IngestDoc(text="Apple now sources chips from several foundries.",
+                                       doc_id="AC:s.1", accession="AC")],
+                            replace={"accession": "AC"})
+    assert res["chunks"] >= 1 and res["pruned"] == 0
+    assert _acc_ids("AC") == {"AC:s.1::0"}                 # same id, still present
+    hits = await search("Apple chips foundries", top_k=5, filters={"accession": "AC"})
+    assert hits and any("foundries" in h.text for h in hits)
+
+
+async def test_replace_keep_set_is_all_new_ids_not_just_todo():
+    # 3 sections, only 1 changes → the 2 UNCHANGED sections survive the prune because keep_ids =
+    # ALL new ids (not just `todo`); only the changed section is re-embedded.
+    _reset()
+    await ingest_docs([IngestDoc(text=f"Section {i} states fact number {i} plainly.",
+                                 doc_id=f"AC:s.{i}", accession="AC") for i in range(1, 4)])
+    fake = rag.ingest.get_embedder()
+    calls_before = len(fake.embed_calls)
+    res = await ingest_docs([
+        IngestDoc(text="Section 1 states fact number 1 plainly.", doc_id="AC:s.1", accession="AC"),
+        IngestDoc(text="Section 2 now states a brand new fact.", doc_id="AC:s.2", accession="AC"),
+        IngestDoc(text="Section 3 states fact number 3 plainly.", doc_id="AC:s.3", accession="AC"),
+    ], replace={"accession": "AC"})
+    assert res["chunks"] == 1 and res["skipped"] == 2 and res["pruned"] == 0
+    assert _acc_ids("AC") == {"AC:s.1::0", "AC:s.2::0", "AC:s.3::0"}   # unchanged sections survived
+    assert len(fake.embed_calls) == calls_before + 1                  # one re-embed pass...
+    assert fake.embed_calls[-1] == ["Section 2 now states a brand new fact."]  # ...of just the change
+
+
+async def test_empty_extraction_never_prunes_a_good_prior_ingest():
+    # honesty over blowing away good data: an empty doc list (or docs that chunk to nothing) under a
+    # `replace` scope must NOT delete the prior good ingest — and returns chunks 0.
+    _reset()
+    await ingest_docs([IngestDoc(text="A good prior filing about supply chain risk.",
+                                 doc_id="AC:s.1", accession="AC")])
+    before = _acc_ids("AC")
+    assert await ingest_docs([], replace={"accession": "AC"}) == {"chunks": 0, "pruned": 0, "skipped": 0}
+    res = await ingest_docs([IngestDoc(text="   ", doc_id="AC:s.1", accession="AC")],
+                            replace={"accession": "AC"})
+    assert res["chunks"] == 0 and res["pruned"] == 0
+    assert _acc_ids("AC") == before                        # prior good ingest survives
+    assert await search("supply chain risk", top_k=5, filters={"accession": "AC"})
+
+
+# ── ING-1 Phase 3: the replace scope is ALWAYS tenant-pinned (incl. None → global) ──
+# main.py stamps the tenant from x-tenant-id into the replace scope, so a global re-ingest can
+# never prune a tenant's same-accession rows, and vice versa.
+
+def test_global_replace_prunes_only_global_rows_sparing_tenant_rows():
+    _reset()
+    # a tenant's private copy of accession AC
+    assert client.post("/rag/ingest", json={"documents": [
+        {"text": "Tenant p1 private note about accession AC risk.", "source": "SEC EDGAR",
+         "accession": "AC", "doc_id": "AC:s.1"}]}, headers={"X-Tenant-Id": "p1"}).status_code == 200
+    # global (no header) accession AC with TWO sections
+    client.post("/rag/ingest", json={"documents": [
+        {"text": "Global section 1 about accession AC.", "source": "SEC EDGAR", "accession": "AC", "doc_id": "AC:s.1"},
+        {"text": "Global section 2 about accession AC.", "source": "SEC EDGAR", "accession": "AC", "doc_id": "AC:s.2"}]})
+    assert _acc_ids("AC", tenant=None) == {"AC:s.1::0", "AC:s.2::0"}
+    assert _acc_ids("AC", tenant="p1") == {"p1::AC:s.1::0"}
+    # re-ingest GLOBAL AC shorter (1 section) with replace → prunes only tenant=None rows
+    res = client.post("/rag/ingest", json={"documents": [
+        {"text": "Global fresh single section about accession AC.", "source": "SEC EDGAR",
+         "accession": "AC", "doc_id": "AC:s.1"}], "replace": {"accession": "AC"}}).json()
+    assert {"chunks", "pruned", "skipped"} <= set(res)
+    assert res["pruned"] == 1                              # only global s.2 dropped
+    assert _acc_ids("AC", tenant=None) == {"AC:s.1::0"}    # global pruned to the fresh set
+    assert _acc_ids("AC", tenant="p1") == {"p1::AC:s.1::0"}  # the tenant's row is UNTOUCHED
+
+
+def test_tenant_replace_does_not_touch_global_rows():
+    _reset()
+    # a global copy of accession BB
+    client.post("/rag/ingest", json={"documents": [
+        {"text": "Global note about accession BB.", "source": "SEC EDGAR", "accession": "BB", "doc_id": "BB:s.1"}]})
+    # tenant p1 accession BB with TWO sections
+    client.post("/rag/ingest", json={"documents": [
+        {"text": "Tenant p1 section 1 about BB.", "source": "SEC EDGAR", "accession": "BB", "doc_id": "BB:s.1"},
+        {"text": "Tenant p1 section 2 about BB.", "source": "SEC EDGAR", "accession": "BB", "doc_id": "BB:s.2"}]},
+        headers={"X-Tenant-Id": "p1"})
+    assert _acc_ids("BB", tenant="p1") == {"p1::BB:s.1::0", "p1::BB:s.2::0"}
+    # p1 re-ingests BB shorter with replace → prunes only p1's rows
+    res = client.post("/rag/ingest", json={"documents": [
+        {"text": "Tenant p1 fresh single section about BB.", "source": "SEC EDGAR",
+         "accession": "BB", "doc_id": "BB:s.1"}], "replace": {"accession": "BB"}},
+        headers={"X-Tenant-Id": "p1"}).json()
+    assert {"chunks", "pruned", "skipped"} <= set(res)
+    assert res["pruned"] == 1                              # only p1's s.2 dropped
+    assert _acc_ids("BB", tenant="p1") == {"p1::BB:s.1::0"}
+    assert _acc_ids("BB", tenant=None) == {"BB:s.1::0"}   # the global row is UNTOUCHED
+
+
+# ── ING-1 Phase 4: concurrent sub-batch embedding preserves positional order ──
+
+async def test_concurrent_embedding_preserves_positional_order(monkeypatch):
+    # GeminiEmbedder._embed fans sub-batches out via asyncio.gather; results are re-sorted by batch
+    # index so the returned vectors keep the SAME positional order as the input texts — regardless
+    # of concurrency, and even when later batches complete first. No real Gemini API is hit.
+    from rag import embeddings as E
+
+    monkeypatch.setattr(E, "_report_usage", lambda *a, **k: None)  # no telemetry task/network
+
+    def _fake_vec(text: str) -> list[float]:
+        n = int(text.rsplit("-", 1)[1])           # encode the text's identity positionally
+        v = [0.0] * 8
+        v[n % 8] = float(n + 1)
+        return v
+
+    class _Emb:
+        def __init__(self, values): self.values = values
+
+    class _Resp:
+        def __init__(self, embs): self.embeddings = embs
+
+    class _Models:
+        def embed_content(self, *, model, contents, config):
+            import time
+            texts = [c if isinstance(c, str) else c.parts[0].text for c in contents]
+            # scramble completion order: earlier batches (lower index) sleep LONGER, so under
+            # concurrency they finish LAST — exercising the positional re-sort.
+            time.sleep(0.01 * (10 - int(texts[0].rsplit("-", 1)[1])))
+            return _Resp([_Emb(_fake_vec(t)) for t in texts])
+
+    class _Client:
+        models = _Models()
+
+    def _make():
+        emb = E.GeminiEmbedder.__new__(E.GeminiEmbedder)  # bypass __init__ (no genai.Client / key)
+        emb.model = "gemini-embedding-001"  # task_type path → contents stay plain strings
+        emb.dim = 8
+        emb._prompt_task = False
+        emb._client = _Client()
+        return emb
+
+    texts = [f"text-{i}" for i in range(5)]
+    monkeypatch.setattr(E.settings, "embed_batch", 2)     # 5 texts → 3 sub-batches
+    expected = [E._normalize(_fake_vec(t)) for t in texts]
+    for conc in (4, 1):                                    # concurrent AND the =1 rollback path
+        monkeypatch.setattr(E.settings, "embed_concurrency", conc)
+        out = await _make().embed(texts)
+        assert out == expected, f"positional order broke at concurrency={conc}"

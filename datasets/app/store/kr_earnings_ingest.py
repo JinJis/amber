@@ -53,7 +53,6 @@ async def ingest_kr_earnings_for_ticker(market: str, ticker: str, limit: int | N
             return 0   # nothing new — the caller logs the skip
     rag = rag_url or settings.rag_url
     total_docs, chunks = 0, 0
-    ingested: set[str] = set()
     for d in discs:
         rcp = d.get("rcept_no")
         if not rcp:
@@ -68,9 +67,8 @@ async def ingest_kr_earnings_for_ticker(market: str, ticker: str, limit: int | N
             continue
         total_docs += len(docs)
         chunks += await _ingest_to_rag(rag, docs, replace={"accession": rcp})  # RQ-2 re-chunk swap
-        ingested.add(rcp)
-    if ingested:
-        await asyncio.to_thread(mark_items, "kr_earnings", "KR", ticker, ingested)
+        # ING-1: mark per-disclosure right after success (partial failure re-does only the rest)
+        await asyncio.to_thread(mark_items, "kr_earnings", "KR", ticker, {rcp})
     if not total_docs:
         return 0
     log.info("kr-earnings: %s → %d disclosures, %d chunks indexed", ticker.upper(), len(discs), chunks)
