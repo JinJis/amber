@@ -5,6 +5,8 @@ import { CadenceTag, FreshnessDot } from "./ui";
 import { TradeChart } from "./TradeChart";
 import { ComputationPanel } from "./ComputationPanel";
 import { demoWidget } from "./DemoWidgets";
+import { AnalogueArtifact, BaseRatesArtifact } from "./HistoryArtifacts";
+import { TickerLogo } from "./TickerLogo";
 import type { Citation } from "./SourceCard";
 import type { Artifact, ArtifactCandle, ArtifactSeries, ChartAnnotations } from "../lib/types";
 import { currencyOf, fmt, fmtBig, fmtPrice, fmtVol } from "../lib/format";
@@ -73,7 +75,7 @@ function TableArtifact(
         <span className="grow" />
         {onPin && (
           <button type="button" className="artifact-toggle" disabled={pinned}
-            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 대시보드" : "＋ 대시보드"}</button>
+            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 담김" : "＋ 담기"}</button>
         )}
         {onRemove && (
           <button type="button" className="artifact-toggle" onClick={onRemove} title="보드에서 제거">✕</button>
@@ -91,7 +93,7 @@ function TableArtifact(
       <div className="artifact-foot">
         <span className="artifact-src">
           {a.source || "출처"}{a.as_of ? <span className="mono"> · as of {a.as_of}</span> : null}
-          <span className="kpi-evlabel"> · 각 수치는 공시 원문에 인용</span>
+          <span className="kpi-evlabel"> · 수치는 모두 공시 원문에서 가져왔어요</span>
         </span>
       </div>
     </div>
@@ -119,7 +121,7 @@ function NarrativeArtifact(
         <span className="grow" />
         {onPin && (
           <button type="button" className="artifact-toggle" disabled={pinned}
-            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 대시보드" : "＋ 대시보드"}</button>
+            onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 담김" : "＋ 담기"}</button>
         )}
         {onRemove && (
           <button type="button" className="artifact-toggle" onClick={onRemove} title="보드에서 제거">✕</button>
@@ -134,7 +136,7 @@ function NarrativeArtifact(
         ))}
       </div>
       <div className="artifact-foot">
-        <span className="artifact-src">출처는 답변의 [n] 인용을 따릅니다 · 전망·매수의견 없음</span>
+        <span className="artifact-src">출처는 답변의 [n] 인용과 같아요 · 전망·매수 의견 없음</span>
       </div>
     </div>
   );
@@ -142,8 +144,8 @@ function NarrativeArtifact(
 
 // currency for a ticker — KR 6-digit codes are KRW, else USD.
 export function ArtifactCard(
-  { a, onPin, onRemove, onRefresh, onEvidence, onAnnotate, hideTitle, bare }:
-  { a: Artifact; onPin?: (spec: Artifact) => void; onRemove?: () => void; onRefresh?: () => Promise<void> | void;
+  { a, onPin, onShare, onRemove, onRefresh, onEvidence, onAnnotate, hideTitle, bare }:
+  { a: Artifact; onPin?: (spec: Artifact) => void; onShare?: (spec: Artifact) => void; onRemove?: () => void; onRefresh?: () => Promise<void> | void;
     onEvidence?: (c: Citation) => void;
     // PH-VIZ-5: persist the user's drawings (provided for already-pinned Board cards).
     onAnnotate?: (ann: ChartAnnotations | null) => void;
@@ -236,13 +238,14 @@ export function ArtifactCard(
     return (
       <div className="artifact">
         <div className="artifact-head">
+          {!hideTitle && ticker && <TickerLogo market={(a.args?.market as string) || undefined} ticker={ticker} size={20} />}
           {!hideTitle && <span className="artifact-title">{a.title}</span>}
           <FreshnessDot f={a.freshness ?? undefined} />
           {a.live && <span className="dw-livechip"><i />LIVE</span>}
           <span className="grow" />
           {onPin && (
             <button type="button" className="artifact-toggle" disabled={pinned}
-              onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 대시보드" : "＋ 대시보드"}</button>
+              onClick={() => { onPin(a); setPinned(true); }}>{pinned ? "✓ 담김" : "＋ 담기"}</button>
           )}
           {onRemove && <button type="button" className="artifact-toggle" onClick={onRemove} title="보드에서 제거">✕</button>}
         </div>
@@ -257,6 +260,14 @@ export function ArtifactCard(
   if (a.kind === "narrative" && (a.sections?.length ?? 0) > 0) {
     return <NarrativeArtifact a={a} onPin={onPin} onRemove={onRemove} hideTitle={hideTitle} bare={bare} />;
   }
+  // M-FACT (FC-2): the fact-check verdict card — cited findings for/against; the receipt.
+  // M1 / HL-7: History Lab artifacts — descriptive statistics of the record, labeled, never a forecast.
+  if (a.kind === "base_rates" && a.base_rates) {
+    return <BaseRatesArtifact a={a} onPin={onPin} onShare={onShare} onRemove={onRemove} hideTitle={hideTitle} bare={bare} />;
+  }
+  if (a.kind === "analogue" && a.analogue) {
+    return <AnalogueArtifact a={a} onPin={onPin} onShare={onShare} onRemove={onRemove} hideTitle={hideTitle} bare={bare} />;
+  }
   // a KPI / table artifact carries a matrix instead of time series — render that shape.
   if ((a.kind === "kpi" || a.kind === "table" || (a.series?.length ?? 0) === 0) && a.table?.length) {
     return <TableArtifact a={a} onPin={onPin} onRemove={onRemove} hideTitle={hideTitle} bare={bare} />;
@@ -268,7 +279,7 @@ export function ArtifactCard(
   // No data yet (a freshly added / templated widget before refresh, or feed/calendar): draw an
   // honest gap with the trust line — never crash, never fabricate. The board card header owns ↻.
   if (xs.length === 0 && !hasCandles && !hasOverlays) {
-    if (bare) return <div className="artifact-empty">아직 데이터를 불러오지 않았어요{a.tool ? " — ↻ 로 가져옵니다." : "."}</div>;
+    if (bare) return <div className="artifact-empty">아직 데이터를 불러오지 않았어요{a.tool ? " — ↻ 를 누르면 가져와요." : "."}</div>;
     return (
       <div className="artifact">
         <div className="artifact-head">
@@ -281,7 +292,7 @@ export function ArtifactCard(
             </button>
           )}
         </div>
-        <div className="artifact-empty">아직 데이터를 불러오지 않았어요{a.tool ? " — ↻ 새로고침으로 출처에서 가져옵니다." : "."}</div>
+        <div className="artifact-empty">아직 데이터를 불러오지 않았어요{a.tool ? " — ↻ 새로고침을 누르면 출처에서 가져와요." : "."}</div>
         <div className="artifact-foot">
           <span className="artifact-src">{a.source || "출처"}{a.as_of ? <span className="mono"> · as of {a.as_of}</span> : null}</span>
           <FreshnessDot f={a.freshness ?? "gap"} />
@@ -316,10 +327,13 @@ export function ArtifactCard(
             {busy ? "…" : "↻ 새로고침"}
           </button>
         )}
+        {onShare && (
+          <button type="button" className="artifact-toggle" onClick={() => onShare(a)}>↗ 공유</button>
+        )}
         {onPin && (
           <button type="button" className="artifact-toggle" disabled={pinned}
             onClick={() => { onPin({ ...a, user_annotations: userAnn ?? undefined }); setPinned(true); }}>
-            {pinned ? "✓ 대시보드" : "＋ 대시보드"}
+            {pinned ? "✓ 담김" : "＋ 담기"}
           </button>
         )}
         {onRemove && (
@@ -396,7 +410,7 @@ export function ArtifactCard(
         )}
         <span className="artifact-src">
           {a.source || "출처"}{a.as_of ? <span className="mono"> · as of {a.as_of}</span> : null}
-          {a.has_gap ? <span className="artifact-gap"> · 일부 구간 공백</span> : null}
+          {a.has_gap ? <span className="artifact-gap"> · 일부 구간 자료 없음</span> : null}
         </span>
       </div>
     </div>

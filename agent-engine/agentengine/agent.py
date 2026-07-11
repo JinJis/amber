@@ -90,6 +90,8 @@ from agentengine.enrichment import (  # noqa: E402,F401
     _followups_one,
     _loads_followups,
     _merge_followups,
+    _pulse_plan,
+    live_pulse,
     refine_evidence,
     suggest_followups,
 )

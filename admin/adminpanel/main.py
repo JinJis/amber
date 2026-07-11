@@ -16,7 +16,8 @@ One session login gates everything (a guard middleware).
 from __future__ import annotations
 
 import httpx
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, File, Form, Request, UploadFile
+from sqlalchemy import text as sa_text
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -352,6 +353,58 @@ async def pipelines(request: Request, msg: str = ""):
         "</div></div>"
     )
 
+    # --- Macro Trends (ask-feed) 카드: studio DB의 news_feed 캐시 상태 + 수동 갱신 ---
+    mt_status, mt_meta = "아직 생성 전", ""
+    try:
+        eng = ENGINES.get("studio")
+        if eng is not None:
+            with eng.connect() as conn:
+                row = conn.execute(sa_text(
+                    "SELECT generated_at, payload FROM ask_feed_cache WHERE scope='news_feed'"
+                )).first()
+            if row:
+                import json as _json
+                n_cards = len((_json.loads(row[1]) or {}).get("cards") or [])
+                mt_status = f"카드 <b>{n_cards}</b>개"
+                mt_meta = f"<span class=pill>generated_at <b>{_esc(str(row[0])[:19])}</b></span>"
+    except Exception:  # noqa: BLE001 — 첫 부팅엔 테이블이 없을 수 있음
+        pass
+    macro_card = (
+        "<div class=card><h3>🌍 Macro Trends (ask-feed)</h3>"
+        f"<div class=flow><span class=pill>{mt_status}</span>{mt_meta}"
+        "<span class=pill>5분마다 자동 갱신</span></div>"
+        "<div class=sub>미국·한국 실시간 뉴스 + 거시지표(금리·물가·고용)에서 물어보기 첫 화면의 질문 카드를 "
+        "만들어요. 전 유저 공통 1행 캐시(studio <code>ask_feed_cache</code>, scope=news_feed) — 접속 시 "
+        "오래됐으면 자동으로 1회 갱신(read-through)되고, 여기서 즉시 돌릴 수도 있어요. 데이터가 그대로면 "
+        "(서명 동일) LLM 호출 없이 끝나요.</div>"
+        "<div class=opsrow><form class=ops method=post action=/ops/askfeed/refresh>"
+        "<button class=p>지금 갱신 ▶</button></form></div></div>"
+    )
+
+    # --- 회사 로고: 유니버스 자동 채우기(하이브리드 해석기) + 놓친 종목 수동 업로드 ---
+    logo_card = (
+        "<div class=card><h3>🖼️ 회사 로고</h3>"
+        "<div class=sub>종목 로고를 하이브리드 해석기(Logo.dev→FMP→파비콘)로 유니버스 전체에 미리 채워요. "
+        "못 받은 종목은 아래에서 직접 올리면 그 종목의 모든 화면에 바로 적용돼요(무 날조 — 없으면 모노그램).</div>"
+        # 자동 채우기: 기존 /ops/pipelines/run 재사용 (pipelines=logos)
+        "<div class=opsrow><form class=ops method=post action=/ops/pipelines/run>"
+        "<input type=hidden name=pipelines value=logos>"
+        "<select name=preset>"
+        "<option value='us_sp500,kr_kospi200,kr_kosdaq150'>US·KR 주요 (S&P500+코스피200+코스닥150)</option>"
+        "<option value='us_sp500'>US · S&amp;P 500</option>"
+        "<option value='kr_kospi200,kr_kosdaq150'>KR · 코스피200+코스닥150</option>"
+        "<option value='kr_listed'>KR · 상장 전체 (OpenDART)</option>"
+        "</select> <button class=p>로고 채우기 ▶</button></form></div>"
+        # 수동 업로드: 해석기가 놓친 종목(특히 KR)
+        "<div class=muted style='margin-top:8px'>못 받은 종목 직접 업로드 (PNG·JPEG·WEBP·SVG · 정사각 권장):</div>"
+        "<div class=opsrow><form class=ops method=post action=/ops/logos/upload enctype=multipart/form-data>"
+        "<select name=market><option value=US>US</option><option value=KR>KR</option></select> "
+        "<input name=ticker placeholder='티커 (예: 005930.KS)' required> "
+        "<input type=file name=logo accept='image/*' required> "
+        "<button class=p>업로드 ▶</button></form></div></div>"
+    )
+    macro_card = macro_card + logo_card
+
     # --- per-pipeline visualization cards ---
     cards = "".join(_pipeline_card(p, cron_by_pid) for p in registry) or "<div class=empty>파이프라인 레지스트리를 불러오지 못했어요.</div>"
 
@@ -425,12 +478,311 @@ S&amp;P·코스피·코스닥 전체는 직접 입력란에 티커를 붙여넣�
     body = (_flash(msg)
             + "<p class=hint>모든 데이터 파이프라인을 한곳에서 — 무엇을 어떤 경로로 수집해 어디에 쌓는지, "
               "주기·상태·에러를 시각화합니다. 작업이 도는 동안 자동 새로고침됩니다.</p>"
-            + "<h2>큐 스케줄러</h2><div class=grid>" + queue_banner + "</div>"
+            + "<h2>큐 스케줄러</h2><div class=grid>" + queue_banner + macro_card + "</div>"
             + "<h2>파이프라인</h2><div class=grid>" + cards + "</div>"
             + backfill
             + f"<h2>수집 작업 {'· ⟳ live' if running else ''}</h2>" + jobs_html
             + extra)
     return HTMLResponse(page("/pipelines", "Pipelines", body, refresh=running))
+
+
+# --- Shares (V-4) -----------------------------------------------------------
+@app.get("/shares", response_class=HTMLResponse)
+async def shares_view(request: Request):
+    """공유 랭킹 — 뭐가 퍼졌는지(실측 views desc). 그로스의 눈: 다음 짤을 결정하는 데이터."""
+    rows, err = [], ""
+    try:
+        eng = ENGINES.get("studio")
+        if eng is None:
+            raise RuntimeError("studio DB not mounted")
+        with eng.connect() as conn:  # type: ignore[union-attr]
+            rows = conn.execute(sa_text(
+                "SELECT token, title, kind, COALESCE(views,0) v, revoked, created_at "
+                "FROM share_links ORDER BY COALESCE(views,0) DESC, created_at DESC LIMIT 100"
+            )).all()
+    except Exception as exc:  # noqa: BLE001 — 첫 부팅엔 테이블/컬럼이 없을 수 있음
+        err = f"{type(exc).__name__}: {exc}"
+    tr = "".join(
+        f"<tr><td class=mono style='text-align:right'>{int(v):,}</td>"
+        f"<td>{_esc(t or '')[:80]}</td><td class=mono>{_esc(k)}</td>"
+        f"<td class=mono>{'해제됨' if r else '공개'}</td>"
+        f"<td class=mono>{_esc(str(c)[:16])}</td>"
+        f"<td class=mono>/s/{_esc(tok)[:14]}…</td></tr>"
+        for tok, t, k, v, r, c in rows)
+    body = ((f"<div class=flash>{_esc(err)}</div>" if err else "")
+            + "<p class=hint>공유 링크 성과 — 공개 페이지의 실측 뷰(sendBeacon)만 셉니다. "
+              "어떤 훅·콘텐츠가 퍼지는지가 다음 콘텐츠 결정의 근거예요.</p>"
+            + ("<table class=t><tr><th>views</th><th>제목(훅)</th><th>종류</th><th>상태</th>"
+               "<th>생성</th><th>토큰</th></tr>" + tr + "</table>" if tr
+               else "<div class=empty>아직 공유가 없어요.</div>"))
+    return HTMLResponse(page("/shares", "Shares", body, refresh=True))
+
+
+# --- Costs (COST-1) ---------------------------------------------------------
+@app.get("/costs", response_class=HTMLResponse)
+async def costs_view(request: Request):
+    """API 비용 대시보드 — LLM/임베딩 토큰 사용(컨트롤플레인 llm_usage)을 요율표로 달러화하고,
+    게이트웨이 호출량·고정 구독까지 한눈에. 요율은 데이터(.env PRICING_JSON), 코드가 아니다."""
+    from adminpanel.pricing import cost_usd, fixed_costs, registry
+
+    reg = registry()
+    rows: list = []
+    daily: list = []
+    conn_rows: list = []
+    err = ""
+    try:
+        eng = ENGINES.get("controlplane")
+        if eng is None:
+            raise RuntimeError("controlplane DB not mounted")
+        from datetime import datetime as _dt, timedelta as _td
+        d30, d14 = _dt.utcnow() - _td(days=30), _dt.utcnow() - _td(days=14)
+        with eng.connect() as conn:  # type: ignore[union-attr]
+            # dialect-neutral (runtime = Postgres, unit/dev = SQLite): cutoffs as bind params,
+            # MAX(estimated) needs an int cast on Postgres (no MAX(bool)).
+            rows = conn.execute(sa_text(
+                "SELECT service, model, kind, SUM(input_tokens) i, SUM(output_tokens) o, "
+                "SUM(calls) c, MAX(CAST(estimated AS INT)) e FROM llm_usage "
+                "WHERE ts >= :since GROUP BY service, model, kind ORDER BY SUM(input_tokens)+SUM(output_tokens) DESC"
+            ), {"since": d30}).all()
+            daily = conn.execute(sa_text(
+                "SELECT date(ts) d, SUM(input_tokens) i, SUM(output_tokens) o, SUM(calls) c "
+                "FROM llm_usage WHERE ts >= :since GROUP BY date(ts) ORDER BY d DESC"
+            ), {"since": d14}).all()
+            conn_rows = conn.execute(sa_text(
+                "SELECT connector_id, COUNT(*) n, SUM(cost_units) cu FROM usage_events "
+                "WHERE ts >= :since AND connector_id IS NOT NULL "
+                "GROUP BY connector_id ORDER BY COUNT(*) DESC LIMIT 30"
+            ), {"since": d30}).all()
+    except Exception as exc:  # noqa: BLE001 — first boot: table may not exist yet
+        err = f"{type(exc).__name__}: {exc}"
+
+    # --- LLM rows priced by the registry -------------------------------------------------------
+    total_usd, unknown_models = 0.0, set()
+    llm_tr = []
+    for s, m, k, i, o, c, e in rows:
+        usd = cost_usd(m, int(i or 0), int(o or 0))
+        if usd is None:
+            unknown_models.add(m)
+        else:
+            total_usd += usd
+        est = "~" if e else ""
+        llm_tr.append(
+            f"<tr><td class=mono>{_esc(s)}</td><td class=mono>{_esc(m)}</td><td>{_esc(k)}</td>"
+            f"<td class=mono style='text-align:right'>{int(i or 0):,}</td>"
+            f"<td class=mono style='text-align:right'>{int(o or 0):,}</td>"
+            f"<td class=mono style='text-align:right'>{int(c or 0):,}</td>"
+            f"<td class=mono style='text-align:right'>{'요율 미설정' if usd is None else f'{est}${usd:,.4f}'}</td></tr>")
+    llm_table = ("<table class=t><tr><th>서비스</th><th>모델</th><th>용도</th><th>입력 토큰</th>"
+                 "<th>출력 토큰</th><th>호출</th><th>비용(USD)</th></tr>" + "".join(llm_tr) + "</table>"
+                 ) if llm_tr else "<div class=empty>아직 기록이 없어요 — 서비스 재빌드 후 첫 질문/인제스트부터 쌓여요.</div>"
+
+    daily_tr = "".join(
+        f"<tr><td class=mono>{_esc(d)}</td><td class=mono style='text-align:right'>{int(i or 0):,}</td>"
+        f"<td class=mono style='text-align:right'>{int(o or 0):,}</td>"
+        f"<td class=mono style='text-align:right'>{int(c or 0):,}</td></tr>" for d, i, o, c in daily)
+    daily_table = ("<table class=t><tr><th>날짜</th><th>입력</th><th>출력</th><th>호출</th></tr>" + daily_tr + "</table>") if daily_tr else ""
+
+    conn_tr = "".join(
+        f"<tr><td class=mono>{_esc(cid)}</td><td class=mono style='text-align:right'>{int(n):,}</td>"
+        f"<td class=mono style='text-align:right'>{int(cu or 0):,}</td></tr>" for cid, n, cu in conn_rows)
+    conn_table = ("<table class=t><tr><th>커넥터</th><th>호출(30일)</th><th>내부 코스트 유닛</th></tr>" + conn_tr + "</table>"
+                  ) if conn_tr else "<div class=empty>게이트웨이 사용 기록이 없어요.</div>"
+
+    fixed = fixed_costs()
+    fixed_total = sum(f["usd"] for f in fixed)
+    fixed_tr = "".join(
+        f"<tr><td>{_esc(f['name'])}</td><td class=mono style='text-align:right'>${f['usd']:,.2f}/월</td>"
+        f"<td class=sub>{_esc(f['note'])}</td></tr>" for f in fixed)
+    fixed_table = ("<table class=t><tr><th>구독</th><th>월 요금</th><th>메모</th></tr>" + fixed_tr + "</table>"
+                   ) if fixed_tr else "<div class=empty>고정 구독이 등록되지 않았어요 — .env FIXED_COSTS_JSON에 선언하면 여기 합산돼요.</div>"
+
+    rules_tr = "".join(
+        f"<tr><td class=mono>*{_esc(r.get('match'))}*</td>"
+        f"<td class=mono style='text-align:right'>${float(r.get('in', 0)):,.2f}</td>"
+        f"<td class=mono style='text-align:right'>${float(r.get('out', 0)):,.2f}</td></tr>"
+        for r in reg.get("rules", []))
+    unknown_note = (f"<div class=sub>⚠ 요율 미설정 모델: {', '.join(sorted(_esc(u) for u in unknown_models))} — "
+                    "PRICING_JSON에 규칙을 추가하세요 (달러 표시는 절대 지어내지 않아요).</div>") if unknown_models else ""
+
+    body = (
+        (f"<div class=flash>{_esc(err)} — control-plane 재빌드 후 llm_usage 테이블이 생겨요.</div>" if err else "")
+        + "<p class=hint>모든 API 비용을 한곳에서 — LLM·임베딩 토큰은 실측(임베딩은 ~추정), 요율표로 달러화. "
+          "무료 API(Yahoo·SEC·DART·FRED·ECOS…)는 호출량만 집계돼요. 30초마다 자동 새로고침.</p>"
+        + "<h2>합계 (최근 30일)</h2><div class=grid>"
+        + f"<div class=card><h3>LLM+임베딩 비용</h3><div style='font-size:26px' class=mono>${total_usd:,.2f}</div>"
+          f"<div class=sub>요율 기준일: {_esc(reg.get('as_of'))}</div>{unknown_note}</div>"
+        + f"<div class=card><h3>고정 구독</h3><div style='font-size:26px' class=mono>${fixed_total:,.2f}/월</div>"
+          f"<div class=sub>.env FIXED_COSTS_JSON 선언분</div></div>"
+        + f"<div class=card><h3>월 추정 총액</h3><div style='font-size:26px' class=mono>${total_usd + fixed_total:,.2f}</div>"
+          f"<div class=sub>토큰 30일 합산 + 구독 (개략)</div></div>"
+        + "</div>"
+        + "<h2>LLM · 임베딩 사용 (모델 × 용도, 30일)</h2>" + llm_table
+        + ("<h2>일별 토큰 (14일)</h2>" + daily_table if daily_table else "")
+        + "<h2>게이트웨이 데이터 호출 (30일)</h2>"
+          "<div class=sub>커넥터별 호출량 — 상류 데이터 API는 무료 티어라 달러 비용은 0이고, "
+          "코스트 유닛은 내부 상대 가중치예요.</div>" + conn_table
+        + "<h2>고정 구독</h2>" + fixed_table
+        + "<h2>요율표 (per 1M tokens · USD)</h2>"
+          "<table class=t><tr><th>모델 매칭</th><th>입력</th><th>출력</th></tr>" + rules_tr + "</table>"
+        + _per_project_costs_section(cost_usd)
+    )
+    return HTMLResponse(page("/costs", "Costs", body, refresh=True))
+
+
+def _per_project_costs_section(cost_usd) -> str:
+    """METER-2: 유저(프로젝트)별 LLM 원가 롤업 — 플랜 가격·캡을 실측으로 조정하는 근거.
+    project_id NULL(피드·인제스트 등 공용 작업)은 '공용/백그라운드' 한 줄로 접는다."""
+    try:
+        eng = ENGINES.get("controlplane")
+        if eng is None:
+            return ""
+        from datetime import datetime as _dt, timedelta as _td
+        d30 = _dt.utcnow() - _td(days=30)
+        with eng.connect() as conn:  # type: ignore[union-attr]
+            rows = conn.execute(sa_text(
+                "SELECT lu.project_id, t.name tenant, lu.model, "
+                "SUM(lu.input_tokens) i, SUM(lu.output_tokens) o, SUM(lu.calls) c "
+                "FROM llm_usage lu "
+                "LEFT JOIN projects p ON p.id = lu.project_id "
+                "LEFT JOIN tenants t ON t.id = p.tenant_id "
+                "WHERE lu.ts >= :since GROUP BY lu.project_id, t.name, lu.model"
+            ), {"since": d30}).all()
+    except Exception:  # noqa: BLE001 — 컬럼 미생성(구버전 DB) 등: 섹션만 생략
+        return ""
+    per_user: dict[str, dict] = {}
+    for pid, tenant, model, i, o, c in rows:
+        key = tenant or ("공용/백그라운드" if pid is None else pid)
+        agg = per_user.setdefault(key, {"usd": 0.0, "in": 0, "out": 0, "calls": 0, "unknown": False})
+        usd = cost_usd(model, int(i or 0), int(o or 0))
+        if usd is None:
+            agg["unknown"] = True
+        else:
+            agg["usd"] += usd
+        agg["in"] += int(i or 0)
+        agg["out"] += int(o or 0)
+        agg["calls"] += int(c or 0)
+    if not per_user:
+        return ("<h2>유저별 LLM 원가 (30일)</h2><div class=empty>귀속 기록이 아직 없어요 — "
+                "METER-1 배포 후 첫 채팅부터 쌓여요.</div>")
+    tr = "".join(
+        f"<tr><td class=mono>{_esc(k)}</td>"
+        f"<td class=mono style='text-align:right'>{v['in']:,}</td>"
+        f"<td class=mono style='text-align:right'>{v['out']:,}</td>"
+        f"<td class=mono style='text-align:right'>{v['calls']:,}</td>"
+        f"<td class=mono style='text-align:right'>${v['usd']:,.4f}{'+?' if v['unknown'] else ''}</td></tr>"
+        for k, v in sorted(per_user.items(), key=lambda kv: -kv[1]["usd"]))
+    return ("<h2>유저별 LLM 원가 (30일)</h2>"
+            "<div class=sub>METER-1/2 — 플랜 가격·캡 조정의 실측 근거. '+?'=요율 미설정 모델 포함.</div>"
+            "<table class=t><tr><th>유저(테넌트)</th><th>입력 토큰</th><th>출력 토큰</th>"
+            "<th>호출</th><th>비용(USD)</th></tr>" + tr + "</table>")
+
+
+# --- Billing (BILL-5) ------------------------------------------------------
+@app.get("/billing", response_class=HTMLResponse)
+async def billing_view(request: Request, msg: str = ""):
+    """BILL-5: 결제 운영 — 구독·인보이스·크레딧 원장·웹훅을 studio DB에서 읽고, 재시도/환불/
+    플랜 오버라이드는 studio의 admin 엔드포인트(X-Admin-Token)로 실행한다 (apply_plan 단일 경유)."""
+    eng = ENGINES.get("studio")
+    if eng is None:
+        return HTMLResponse(page("/billing", "Billing", "<div class=warn>studio DB not mounted.</div>"))
+
+    subs: list = []
+    invoices: list = []
+    err = ""
+    try:
+        with eng.connect() as conn:  # type: ignore[union-attr]
+            subs = conn.execute(sa_text(
+                "SELECT id, user_email, plan, status, current_period_end, cancel_at_period_end "
+                "FROM subscriptions ORDER BY created_at DESC LIMIT 50")).all()
+            invoices = conn.execute(sa_text(
+                "SELECT id, user_email, total, status, attempts, period_start, paid_at "
+                "FROM invoices ORDER BY created_at DESC LIMIT 50")).all()
+    except Exception as exc:  # noqa: BLE001 — 첫 부팅: 테이블 미생성
+        err = f"{type(exc).__name__}: {exc}"
+
+    sub_tr = "".join(
+        f"<tr><td class=mono>{_esc(sid)}</td><td class=mono>{_esc(em)}</td><td>{_esc(pl)}</td>"
+        f"<td>{_esc(st)}</td><td class=mono>{_esc(str(pe)[:10])}</td>"
+        f"<td>{'예약됨' if cape else '-'}</td></tr>"
+        for sid, em, pl, st, pe, cape in subs)
+    inv_tr = "".join(
+        f"<tr><td class=mono>{_esc(iid)}</td><td class=mono>{_esc(em)}</td>"
+        f"<td class=mono style='text-align:right'>₩{int(tot):,}</td><td>{_esc(st)}</td>"
+        f"<td class=mono>{int(att)}</td><td class=mono>{_esc(str(ps)[:10])}</td>"
+        f"<td>"
+        + (f"<form method=post action=/ops/billing/retry style='display:inline'>"
+           f"<input type=hidden name=invoice_id value='{_esc(iid)}'><button>재시도</button></form> "
+           if st == "failed" else "")
+        + (f"<form method=post action=/ops/billing/refund style='display:inline' "
+           f"onsubmit=\"return confirm('환불할까요? 킥백도 회수돼요.')\">"
+           f"<input type=hidden name=invoice_id value='{_esc(iid)}'><button>환불</button></form>"
+           if st == "paid" else "")
+        + "</td></tr>"
+        for iid, em, tot, st, att, ps, _paid in invoices)
+
+    body = (
+        (f"<div class=flash>{_esc(msg)}</div>" if msg else "")
+        + (f"<div class=warn>{_esc(err)} — studio 재빌드 후 결제 테이블이 생겨요.</div>" if err else "")
+        + "<p class=hint>구독·인보이스·크레딧 — 액션(재시도/환불/플랜)은 studio admin API를 경유해요 "
+          "(플랜 전환은 항상 apply_plan 단일 경로).</p>"
+        + "<h2>플랜 오버라이드</h2>"
+          "<form method=post action=/ops/billing/plan class=row>"
+          "<input name=email placeholder='user@example.com' required> "
+          "<select name=plan><option>free</option><option>pro</option></select> "
+          "<button>적용</button></form>"
+        + "<h2>구독 (최근 50)</h2>"
+          "<table class=t><tr><th>id</th><th>유저</th><th>플랜</th><th>상태</th><th>기간 종료</th><th>해지</th></tr>"
+        + sub_tr + "</table>"
+        + "<h2>인보이스 (최근 50)</h2>"
+          "<table class=t><tr><th>id</th><th>유저</th><th>청구액</th><th>상태</th><th>시도</th><th>기간</th><th>액션</th></tr>"
+        + inv_tr + "</table>"
+        + "<h2>크레딧 원장 (최근 50)</h2>" + _simple_table("studio", "credit_ledger",
+            ["user_email", "amount_krw", "kind", "related_user", "created_at"], limit=50)
+        + "<h2>웹훅 이벤트 (최근 20)</h2>" + _simple_table("studio", "webhook_events",
+            ["event_id", "provider", "processed_at"], limit=20)
+    )
+    return HTMLResponse(page("/billing", "Billing", body))
+
+
+async def _studio_admin_post(path: str) -> tuple[bool, str]:
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.post(f"{settings.studio_url}{path}",
+                             headers={"X-Admin-Token": settings.admin_token}, timeout=30)
+        return r.status_code == 200, ("" if r.status_code == 200 else f"HTTP {r.status_code}")
+    except Exception as exc:  # noqa: BLE001
+        return False, type(exc).__name__
+
+
+@app.post("/ops/billing/retry")
+async def ops_billing_retry(request: Request):
+    form = await request.form()
+    ok, why = await _studio_admin_post(f"/admin/billing/invoices/{form.get('invoice_id')}/retry")
+    msg = "재시도 완료" if ok else f"재시도 실패 ({why})"
+    return RedirectResponse(f"/billing?msg={msg.replace(' ', '+')}", status_code=303)
+
+
+@app.post("/ops/billing/refund")
+async def ops_billing_refund(request: Request):
+    form = await request.form()
+    ok, why = await _studio_admin_post(f"/admin/billing/invoices/{form.get('invoice_id')}/refund")
+    msg = "환불 완료 (킥백 회수 포함)" if ok else f"환불 실패 ({why})"
+    return RedirectResponse(f"/billing?msg={msg.replace(' ', '+')}", status_code=303)
+
+
+@app.post("/ops/billing/plan")
+async def ops_billing_plan(request: Request):
+    form = await request.form()
+    email, plan = str(form.get("email") or ""), str(form.get("plan") or "free")
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.post(f"{settings.studio_url}/admin/users/{email}/plan",
+                             headers={"X-Admin-Token": settings.admin_token},
+                             json={"plan": plan}, timeout=60)
+        msg = f"{email} → {plan} 적용" if r.status_code == 200 else f"플랜 적용 실패 (HTTP {r.status_code})"
+    except Exception as exc:  # noqa: BLE001
+        msg = f"플랜 적용 실패: {type(exc).__name__}"
+    return RedirectResponse(f"/billing?msg={msg.replace(' ', '+')}", status_code=303)
 
 
 # --- Data -----------------------------------------------------------------
@@ -673,6 +1025,7 @@ async def queue_job_detail(request: Request, job_id: int):
     if ing:
         ing_status = ing.get("status")
         err = ing.get("error")
+        details = ing.get("error_details") or []
         ing_html = (
             "<h2>파이프라인 실행 (IngestionJob)</h2>"
             f"<div class=tablewrap><table><tbody>"
@@ -681,8 +1034,7 @@ async def queue_job_detail(request: Request, job_id: int):
             f"<tr><td class=muted>시작</td><td class=muted>{_esc((ing.get('started_at') or '')[:19])} "
             f"→ {_esc((ing.get('ended_at') or '—')[:19])}</td></tr>"
             f"</tbody></table></div>"
-            + (f"<div class='logbox {('err' if ing_status == 'error' else '')}'>{_esc(err)}</div>"
-               if err else "<p class=muted>기록된 오류 메모가 없습니다.</p>"))
+            + _error_detail_html(ing, details, err))
     else:
         ing_html = ("<h2>파이프라인 실행 (IngestionJob)</h2>"
                     "<p class=muted>이 작업과 매칭되는 IngestionJob 기록이 없습니다 "
@@ -696,6 +1048,51 @@ async def queue_job_detail(request: Request, job_id: int):
     body = (f"<p><a href='/queue'>← 큐로</a></p><h1 style='margin:0 0 4px'>작업 #{_esc(job_id)} 로그</h1>"
             + head + act_html + ev_html + ing_html)
     return HTMLResponse(page("/queue", f"Job {job_id}", body, refresh=running))
+
+
+# OPS-1: an IngestionJob's `kind` maps to a runnable pipeline id for the retry-failed action.
+# For 재무 backfill the recorded kind is "backfill" but the pipeline registry id is "financials".
+_RETRY_PIPELINE = {"backfill": "financials"}
+
+
+def _error_detail_html(ing: dict, details: list, err: str | None) -> str:
+    """OPS-1: render grouped per-cause failures (원인 → 건수 → 종목 목록) + a '실패 종목만 재시도'
+    button that re-enqueues just those tickers. Falls back to the legacy single-string logbox for old
+    jobs that predate error_details."""
+    if not details:
+        if err:
+            cls = "err" if ing.get("status") == "error" else ""
+            return f"<div class='logbox {cls}'>{_esc(err)}</div>"
+        return "<p class=muted>기록된 오류 메모가 없습니다.</p>"
+
+    rows = ""
+    all_failed: list[str] = []
+    for g in details:
+        tickers = g.get("tickers") or []
+        all_failed += tickers
+        chips = ", ".join(_esc(t) for t in tickers)
+        rows += (f"<tr><td class=err>{_esc(g.get('error'))}</td>"
+                 f"<td class=mono>{_esc(g.get('count'))}</td>"
+                 f"<td><details><summary class=muted>종목 {_esc(len(tickers))}</summary>"
+                 f"<div class=mono style='white-space:normal'>{chips}</div></details></td></tr>")
+    table = ("<div class=tablewrap><table><thead><tr><th>원인</th><th>건수</th><th>실패 종목</th></tr></thead>"
+             f"<tbody>{rows}</tbody></table></div>")
+
+    retry = ""
+    pid = _RETRY_PIPELINE.get(ing.get("kind"), ing.get("kind"))
+    mkt = ing.get("market") or ""
+    if all_failed and pid and mkt:
+        # de-dup while preserving order, cap so the form/query never blows up
+        seen: dict[str, None] = {}
+        for t in all_failed:
+            seen.setdefault(t, None)
+        tick_val = " ".join(list(seen)[:500])
+        retry = (f"<form class=ops method=post action='/ops/pipelines/run' style='margin-top:10px'>"
+                 f"<input type=hidden name=pipelines value='{_esc(pid)}'>"
+                 f"<input type=hidden name=market value='{_esc(mkt)}'>"
+                 f"<input type=hidden name=tickers value='{_esc(tick_val)}'>"
+                 f"<button class=p>실패 종목만 재시도 ▶ ({len(seen)})</button></form>")
+    return table + retry
 
 
 def _activity_feed(acts: list) -> str:
@@ -778,6 +1175,51 @@ async def ops_news(request: Request, market: str = Form("US"), tickers: str = Fo
         ok = r.status_code == 200
     label = f"{market}+{'+'.join(tick) if tick else 'market'}"
     return RedirectResponse(f"/pipelines?msg=news+ingest+{'started' if ok else 'failed'}+{label}", status_code=303)
+
+
+@app.post("/ops/askfeed/refresh")
+async def ops_askfeed_refresh(request: Request):
+    """Macro Trends 수동 갱신 — studio-api의 refresh_once를 즉시 1회 실행 (서명 동일 시 LLM 스킵)."""
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.post(f"{settings.studio_url}/ask-feed/refresh",
+                             headers={"X-Service-Token": settings.service_token}, timeout=90)
+            j = r.json() if r.status_code == 200 else {}
+        if r.status_code != 200:
+            msg = f"Macro Trends 갱신 실패 (HTTP {r.status_code})"
+        else:
+            msg = (f"Macro Trends {'갱신됨' if j.get('refreshed') else '변화 없음'} · "
+                   f"카드 {j.get('cards', '?')}개")
+    except Exception as exc:  # noqa: BLE001 — studio 미기동 등
+        msg = f"Macro Trends 갱신 실패: {type(exc).__name__}"
+    return RedirectResponse(f"/pipelines?msg={msg.replace(' ', '+')}", status_code=303)
+
+
+@app.post("/ops/logos/upload")
+async def ops_logo_upload(request: Request, market: str = Form("US"),
+                          ticker: str = Form(""), logo: UploadFile = File(...)):
+    """Manual company-logo upload — fills any ticker the hybrid resolver missed (esp. KR). Forwards
+    the image to datasets /logos (base64 JSON) where it's cached and served like an auto-resolved one."""
+    import base64 as _b64
+    ticker = (ticker or "").strip()
+    if not ticker:
+        return RedirectResponse("/pipelines?msg=티커를+입력하세요", status_code=303)
+    try:
+        raw = await logo.read()
+        if not raw:
+            return RedirectResponse("/pipelines?msg=이미지+파일이+비어있어요", status_code=303)
+        data_url = "data:image/png;base64," + _b64.b64encode(raw).decode()
+        async with httpx.AsyncClient() as c:
+            r = await c.post(f"{settings.datasets_url}/logos",
+                             json={"market": market, "ticker": ticker, "data_url": data_url}, timeout=30)
+        if r.status_code == 200:
+            msg = f"로고 업로드 완료 · {market} {ticker} ({r.json().get('bytes', '?')}B)"
+        else:
+            detail = (r.json().get("detail") if r.headers.get("content-type", "").startswith("application/json") else "") or ""
+            msg = f"로고 업로드 실패 (HTTP {r.status_code}) {detail}"
+    except Exception as exc:  # noqa: BLE001
+        msg = f"로고 업로드 실패: {type(exc).__name__}"
+    return RedirectResponse(f"/pipelines?msg={msg.replace(' ', '+')}", status_code=303)
 
 
 @app.post("/ops/selftest")

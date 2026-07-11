@@ -6,13 +6,21 @@ from pydantic import BaseModel
 
 
 class AgentSpec(BaseModel):
-    """Declarative ('SDK') agent definition a tenant can save and reuse."""
+    """Declarative ('SDK') agent definition a tenant can save and reuse.
+
+    PLAN-3: the spec is also the PLAN-TIER carrier — studio-api merges the user's plan
+    (guest/free/pro) into it per turn: synthesis model tier, step budget, sub-agent fan-out,
+    and the connector set. Resource configuration, not reasoning rules (invariant #9)."""
 
     system: str | None = None
     # restrict to a subset of activated tools. Entries may be full tool names
     # (``yahoo__prices``) or connector ids (``yahoo`` → all of its tools).
     allowed_tools: list[str] | None = None
     max_steps: int | None = None
+    # PLAN-3: per-turn synthesis model override (e.g. free tier → flash). None = engine default.
+    synthesis_model: str | None = None
+    # PLAN-3: cap the A2A sub-agent fan-out (0/1 disables decomposition). None = engine default.
+    max_subagents: int | None = None
     backend: str | None = None  # legacy field — ignored; the platform is Gemini-only (invariant #7)
 
 
@@ -41,6 +49,18 @@ class ArtifactRefreshRequest(BaseModel):
     tool: str
     args: dict | None = None
     title: str | None = None  # pick the matching artifact when a tool yields several
+
+
+class CalcRow(BaseModel):
+    """One labelled line in a computation trace — an input, an assumption, or a step result."""
+    label: str
+    value: str
+    source: str | None = None    # where this input came from (e.g. "SEC EDGAR · FY2024")
+    # --- M-DERIV (DRV-2) ------------------------------------------------------
+    symbol: str | None = None    # the variable this row binds in `formula` (e.g. "P", "EPS", "FCF₀")
+    # deep-link into the /evidence cell-highlight viewer for a sourced input —
+    # {market, accession, concept, value(, cik)}. Inputs have a source PAGE; open it.
+    evidence: dict | None = None
 
 
 class Citation(BaseModel):
@@ -79,6 +99,10 @@ class Citation(BaseModel):
     # never a forecast. None when the verify pass didn't run (no key / LLM unavailable).
     confidence: str | None = None
     confidence_why: str | None = None
+    # M-DERIV (DRV-2): a DERIVED figure's trust envelope is its math — formula, sourced
+    # inputs, assumptions, steps. Rides the citation so the 출처 preview (SourceViewer
+    # data shape) can render the Derivation Card, not just a bare snippet.
+    computation: "Computation | None" = None
 
 
 class ArtifactPoint(BaseModel):
@@ -204,13 +228,6 @@ class NarrativeSection(BaseModel):
     body: str
 
 
-class CalcRow(BaseModel):
-    """One labelled line in a computation trace — an input, an assumption, or a step result."""
-    label: str
-    value: str
-    source: str | None = None    # where this input came from (e.g. "SEC EDGAR · FY2024")
-
-
 class Computation(BaseModel):
     """How a self-computed figure was derived. Our figures are either a single sourced datum OR the
     OUTPUT of a formula over sourced inputs; for the latter there is no source *page* to open, so the
@@ -223,6 +240,9 @@ class Computation(BaseModel):
     assumptions: list[CalcRow] = []      # the tunable assumptions (growth, discount rate, …)
     steps: list[CalcRow] = []            # intermediate results leading to the figure
     note: str | None = None              # disclaimer / caveat
+
+
+Citation.model_rebuild()  # resolve the Citation.computation forward ref (DRV-2)
 
 
 class Artifact(BaseModel):
@@ -269,6 +289,21 @@ class Artifact(BaseModel):
     # pin→alert flow: a pinned chart/table can carry a notification bot iff cadence != one_shot.
     cadence: str | None = None   # intraday|daily|event|scheduled|streaming|one_shot
     category: str | None = None  # market|fundamentals|valuation|filings|gurus|macro|news|…
+    # --- History Lab (M1 / HL-7) ------------------------------------------
+    # The descriptive-statistics badge ("과거 기록 · 전망 아님") from the market_history envelope.
+    # MANDATORY on kind in {base_rates, analogue}: the web renderer shows it unconditionally
+    # (ROADMAP §2 invariant — base rates are history, not forecasts).
+    label: str | None = None
+    # kind=base_rates: {event: {text, spec}, n, raw_n, horizons: [{h, n, median, p25, p75, min,
+    # max, pos_share}], event_dates: [iso…], histogram: {h_ref, bins}}.
+    base_rates: dict | None = None
+    # kind=analogue: {window, anchor, current: {label, path}, matches: [{ticker, start_date,
+    # end_date, score, path, aftermath}]} — paths rebased to 100; aftermath drawn as history
+    # (dashed, right of day 0). NEVER an averaged path (that would manufacture a forecast).
+    analogue: dict | None = None
+    # HL-8c: the vol-context ribbon folded onto a price chart — {windows: {w: {realized_vol_pct,
+    # percentile}}, level?: {current, percentile}, source, as_of}. Descriptive; never a signal.
+    vol_context: dict | None = None
 
 
 class Step(BaseModel):

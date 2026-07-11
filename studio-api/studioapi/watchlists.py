@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from studioapi.db import SessionLocal
 from studioapi.deps import current_user, require_service
+from studioapi.deskfeed import invalidate_desk_feed
 from studioapi.models import User, Watchlist, WatchlistItem
 
 router = APIRouter(prefix="/watchlists", tags=["Watchlists"], dependencies=[Depends(require_service)])
@@ -92,6 +93,7 @@ async def create_watchlist(body: WatchlistIn, user: User = Depends(current_user)
         wl = Watchlist(user_email=user.email, name=name)
         db.add(wl)
         db.commit()
+        invalidate_desk_feed(user.email)  # M-DESK: the feed is watchlist-derived
         return _out(wl, [])
 
 
@@ -113,6 +115,7 @@ async def rename_watchlist(watchlist_id: str, body: WatchlistIn, user: User = De
             raise HTTPException(409, f"You already have a group named '{name}'.")
         wl.name = name
         db.commit()
+        invalidate_desk_feed(user.email)
         return _out(wl, _items_of(db, wl.id))
 
 
@@ -124,6 +127,7 @@ async def delete_watchlist(watchlist_id: str, user: User = Depends(current_user)
             db.delete(it)
         db.delete(wl)
         db.commit()
+        invalidate_desk_feed(user.email)
         return {"deleted": watchlist_id}
 
 
@@ -147,6 +151,7 @@ async def add_item(watchlist_id: str, body: ItemIn, user: User = Depends(current
         it = WatchlistItem(watchlist_id=wl.id, market=market, ticker=ticker, name=body.name)
         db.add(it)
         db.commit()
+        invalidate_desk_feed(user.email)
         return _item_out(it)
 
 
@@ -159,4 +164,5 @@ async def remove_item(watchlist_id: str, item_id: str, user: User = Depends(curr
             raise HTTPException(404, "Item not found in this watchlist.")
         db.delete(it)
         db.commit()
+        invalidate_desk_feed(user.email)
         return {"deleted": item_id}

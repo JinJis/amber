@@ -37,7 +37,7 @@ def _fake_planner(tool, args):
 
     class _FP:
         async def plan(self, task, tools, history, system=None, conversation=None,
-                       force_final=False, sources=None):
+                       force_final=False, sources=None, figures=None):
             if history or force_final:
                 return Decision(final="AAPL was 100 [1].")
             return Decision(tool=tool, args=args)
@@ -246,6 +246,52 @@ def test_citations_prices_and_generic_show_real_values():
     data2 = {"trades": [{"insider": "CEO", "shares": 1000, "filing_url": "https://x"}]}
     c2 = A._citations(tool2, {"data": data2})[0]
     assert c2.table is not None and c2.url == "https://x"
+
+
+def test_citations_prefer_response_declared_source_over_catalog_label():
+    # IMP-15: the price chain may fall back (Yahoo → Stooq/KIS). When the response names
+    # the upstream that actually served, the citation uses THAT, not the static label.
+    tool = {"name": "yahoo__prices", "source": "Yahoo Finance (폴백: …)", "connector": "yahoo"}
+    data = {"ticker": "005930", "source": "한국투자증권 (KIS)",
+            "prices": [{"time": "2026-07-01T00:00:00", "close": 74300.0}]}
+    c = A._citations(tool, {"data": data})[0]
+    assert c.source == "한국투자증권 (KIS)"
+    # snapshot shape: the source rides inside `snapshot`
+    tool2 = {"name": "yahoo__price_snapshot", "source": "Yahoo Finance (폴백: …)", "connector": "yahoo"}
+    data2 = {"snapshot": {"ticker": "AAPL", "price": 210.5, "source": "Stooq"}}
+    c2 = A._citations(tool2, {"data": data2})[0]
+    assert c2.source == "Stooq"
+    # no response-declared source → the catalog label still applies
+    data3 = {"ticker": "AAPL", "prices": [{"time": "2026-07-01T00:00:00", "close": 210.5}]}
+    c3 = A._citations(tool, {"data": data3})[0]
+    assert c3.source == "Yahoo Finance (폴백: …)"
+
+
+def test_derived_citation_carries_computation_drv2():
+    # M-DERIV (DRV-2): a valuation citation carries the same derivation the artifact shows —
+    # the 출처 preview can render formula + inputs, not just a snippet.
+    tool = {"name": "datasets__valuation", "source": "재무제표 기반 모델", "connector": "datasets"}
+    data = {"model": "ddm", "ticker": "KO", "value_per_share": 62.1,
+            "inputs": {"dividend_per_share": 1.94}, "assumptions": {"growth_rate": 0.04, "discount_rate": 0.08},
+            "breakdown": {"d1": 2.0176}, "source": "SEC EDGAR", "note": "가정 기반 계산 · 예측·목표가 아님"}
+    c = A._citations(tool, {"data": data})[0]
+    assert c.computation is not None and c.computation.method == "배당할인 (DDM)"
+    assert c.computation.formula and c.computation.assumptions
+    # DRV-1 forward-compat: a data-plane-embedded computation block wins as-is
+    tool2 = {"name": "sec_edgar__metrics_snapshot", "source": "SEC EDGAR", "connector": "sec_edgar"}
+    data2 = {"ticker": "AAPL", "computation": {
+        "method": "PER (직접 계산)", "formula": "PER = P ÷ EPS",
+        "inputs": [{"label": "주가 P", "value": "210.50", "symbol": "P"},
+                   {"label": "EPS", "value": "6.42", "symbol": "EPS",
+                    "evidence": {"market": "US", "accession": "0000320193-24-000123", "concept": "EPS", "value": 6.42}}],
+        "steps": [{"label": "PER", "value": "32.8x"}]}}
+    c2 = A._citations(tool2, {"data": data2})[0]
+    assert c2.computation is not None and c2.computation.formula == "PER = P ÷ EPS"
+    assert c2.computation.inputs[1].symbol == "EPS" and c2.computation.inputs[1].evidence["accession"]
+    # back-compat: a non-derived tool citation carries no computation
+    tool3 = {"name": "yahoo__prices", "source": "Yahoo Finance", "connector": "yahoo"}
+    data3 = {"ticker": "AAPL", "prices": [{"time": "2026-07-01T00:00:00", "close": 210.5}]}
+    assert A._citations(tool3, {"data": data3})[0].computation is None
 
 
 def test_evidence_url_attached_for_us_as_reported_filing():
@@ -464,6 +510,22 @@ async def test_intake_guardrail_judges_intent(monkeypatch):
     mock_resp.text = '{"restricted": true, "category": "forecast", "score": 0.3, "steps": 3}'
     intake = await A.analyze_task("애플 실적 추이 알려줘", "gemini")
     assert intake.restricted is False
+
+
+def test_intake_prompt_allows_attributed_third_party_consensus():
+    """Guardrail fix: reporting a SOURCED third-party analyst consensus estimate (FMP/CE-11) is
+    descriptive data, not our forecast — so the intake prompt must teach that distinction (a
+    request like '애플 컨센서스 매출·EPS 추정치' should NOT be refused as an earnings forecast).
+    Pins the prompt wording so the allowance can't silently regress."""
+    from agentengine.intake import _INTAKE_PROMPT
+
+    p = _INTAKE_PROMPT.lower()
+    assert "consensus estimates" in p and "third-party" in p
+    assert "attributed analyst consensus" in p
+    # price targets / buy-sell ratings must STILL be refused even when third-party
+    assert "price targets" in p and "refused even when third-party" in p
+    # a transparent DCF/DDM/RIM valuation (our own calculator) is explicitly allowed, not a target
+    assert "valuation models are allowed" in p and "dcf/ddm/rim" in p
 
 
 async def test_intake_routes_conceptual_vs_data(monkeypatch):
@@ -872,7 +934,7 @@ async def test_run_agent_anchors_answer_when_model_omits(monkeypatch):
 
     class _NoAnchorPlanner:
         async def plan(self, task, tools, history, system=None, conversation=None,
-                       force_final=False, sources=None):
+                       force_final=False, sources=None, figures=None):
             if history or force_final:
                 return Decision(final="AAPL was 100.")   # NO [n] anchor → the loop must add one
             return Decision(tool="yahoo__prices", args={"ticker": "AAPL", "interval": "day",
@@ -960,7 +1022,7 @@ async def test_run_agent_recovers_from_stuck_planner(monkeypatch):
 
     class StuckPlanner:
         async def plan(self, task, tools, history, system=None, conversation=None,
-                       force_final=False, sources=None):
+                       force_final=False, sources=None, figures=None):
             if force_final:
                 return Decision(final="")  # empty even when forced → exercises the fallback
             return Decision(tool="yahoo__prices", args={"ticker": "AAPL"})
@@ -1024,7 +1086,7 @@ async def test_run_subagent_gathers_evidence(monkeypatch):
             self.n = 0
 
         async def plan_batch(self, task, tools, history, system=None, conversation=None,
-                             force_final=False, sources=None):
+                             force_final=False, sources=None, figures=None):
             if force_final or self.n >= 1:
                 return [Decision(final="공시 리스크 정리")]
             self.n += 1
@@ -1068,7 +1130,7 @@ async def test_chat_stream_a2a_decomposes_and_combines(monkeypatch):
     def _planner_for(tool, arg):
         class P:
             def __init__(self): self.n = 0
-            async def plan_batch(self, task, tools, history, system=None, conversation=None, force_final=False, sources=None):
+            async def plan_batch(self, task, tools, history, system=None, conversation=None, force_final=False, sources=None, figures=None):
                 if force_final or self.n >= 1:
                     return [Decision(final="요약")]
                 self.n += 1
@@ -1081,7 +1143,7 @@ async def test_chat_stream_a2a_decomposes_and_combines(monkeypatch):
     monkeypatch.setattr(O, "get_planner", lambda _b=None: next(seq))
     # the COMBINER planner (used by chat.get_planner) writes the final answer
     class Combiner:
-        async def plan(self, task, tools, history, system=None, conversation=None, force_final=False, sources=None):
+        async def plan(self, task, tools, history, system=None, conversation=None, force_final=False, sources=None, figures=None):
             return Decision(final="엔비디아 종합: 주가와 리스크를 함께 봤어요 [1]")
         async def plan_batch(self, *a, **k): return [await self.plan(*a, **k)]
     monkeypatch.setattr(C, "get_planner", lambda _b=None: Combiner())
@@ -1126,7 +1188,7 @@ async def test_chat_stream_real_token_streaming(monkeypatch):
         def __init__(self):
             self.n = 0
 
-        async def plan_batch(self, task, tools, history, system=None, conversation=None, force_final=False, sources=None):
+        async def plan_batch(self, task, tools, history, system=None, conversation=None, force_final=False, sources=None, figures=None):
             if force_final or self.n >= 1:
                 return [Decision(final="(unused)")]
             self.n += 1
@@ -1135,7 +1197,7 @@ async def test_chat_stream_real_token_streaming(monkeypatch):
         async def plan(self, *a, **k):
             return (await self.plan_batch(*a, **k))[0]
 
-        async def stream_final(self, task, tools, history, system=None, conversation=None, sources=None):
+        async def stream_final(self, task, tools, history, system=None, conversation=None, sources=None, figures=None):
             for piece in ["## 제목\n\n", "첫 문장. ", "둘째 [1]"]:
                 yield piece
 
@@ -1172,7 +1234,7 @@ async def test_chat_stream_runs_batch_in_parallel(monkeypatch):
             self.rounds = 0
 
         async def plan_batch(self, task, tools, history, system=None, conversation=None,
-                             force_final=False, sources=None):
+                             force_final=False, sources=None, figures=None):
             if force_final or self.rounds >= 1:
                 return [Decision(final="주가와 공시를 함께 확인했어요 [1]")]
             self.rounds += 1
@@ -1322,7 +1384,7 @@ async def test_chat_stream_respects_allowed_tools(monkeypatch):
 
     class _AllowedOnly:
         async def plan(self, task, tools, history, system=None, conversation=None,
-                       force_final=False, sources=None):
+                       force_final=False, sources=None, figures=None):
             assert set(tools) == {"sec_edgar__company_facts"}  # price tool never offered
             if history or force_final:
                 return Decision(final="AAPL [1].")
@@ -1879,6 +1941,77 @@ def test_fallback_followups_always_nonempty_and_capability_aware():
     assert 3 <= len(generic) <= 4 and any("출처" in s for s in generic)  # provenance showcase
 
 
+def test_pulse_plan_is_tools_guarded_and_market_aware():
+    # 팔로업 실시간 펄스 계획: US는 SEC 공시+어닝 일정, KR은 DART 공시+KIS 수급; 카탈로그에 없는
+    # 툴은 조용히 스킵; task가 있으면 RAG 원문 프로브 1건. 티커는 최대 2개.
+    from agentengine.agent import _pulse_plan
+    tools = {n: {"name": n} for n in (
+        "yahoo__price_snapshot", "sec_edgar__filings", "opendart__filings", "google_news__news",
+        "fmp__earnings_calendar", "kis__investor_flow", "rag__search")}
+    plan = _pulse_plan(tools, [("AAPL", "US"), ("005930", "KR"), ("MSFT", "US")], "애플 실적")
+    names = [n for n, _a, _w in plan]
+    assert names.count("yahoo__price_snapshot") == 2          # top-2 tickers only (MSFT dropped)
+    assert "sec_edgar__filings" in names and "fmp__earnings_calendar" in names   # US angles
+    assert "opendart__filings" in names and "kis__investor_flow" in names        # KR angles
+    assert names[-1] == "rag__search"                          # 보유 원문 프로브
+    rag_args = next(a for n, a, _w in plan if n == "rag__search")
+    assert rag_args["query"] == "애플 실적"
+    # tools-guarded: an empty catalog (or no targets+no task) → empty plan, never a KeyError
+    assert _pulse_plan({}, [("AAPL", "US")], "q") == []
+    assert _pulse_plan(tools, [], "") == []
+
+
+async def test_live_pulse_formats_lines_and_drops_failures():
+    # 펄스는 best-effort: 200이 아닌/터진 소스는 그 줄만 빠지고, 성공분은 as_of + JSON 헤드로
+    # 한 줄씩 포맷된다. 아무것도 못 모으면 "" (제안은 조용히 기존 문맥만으로 돈다).
+    from agentengine.agent import live_pulse
+    tools = {n: {"name": n} for n in ("yahoo__price_snapshot", "sec_edgar__filings",
+                                      "google_news__news", "fmp__earnings_calendar", "rag__search")}
+
+    async def call_tool(tool, args):
+        n = tool["name"]
+        if n == "yahoo__price_snapshot":
+            return {"status": 200, "data": {"as_of": "2026-07-10", "price": 212.4, "change_pct": -1.2}}
+        if n == "sec_edgar__filings":
+            return {"status": 502, "data": None}          # dead upstream → line dropped
+        if n == "google_news__news":
+            raise RuntimeError("boom")                     # exception → line dropped
+        return {"status": 200, "data": {"next_earnings": "2026-07-31"}}
+
+    out = await live_pulse(call_tool, tools, [("AAPL", "US")], "애플 지금 어때")
+    lines = out.splitlines()
+    assert any("AAPL 오늘 가격" in l and "as_of 2026-07-10" in l and "212.4" in l for l in lines)
+    assert any("2026-07-31" in l for l in lines)           # earnings calendar line survived
+    assert not any("최신 공시" in l or "헤드라인" in l for l in lines)  # failures dropped silently
+
+    async def all_dead(tool, args):
+        raise RuntimeError("down")
+    assert await live_pulse(all_dead, tools, [("AAPL", "US")], "q") == ""
+    assert await live_pulse(call_tool, {}, [("AAPL", "US")], "q") == ""  # no tools → no pulse
+
+
+async def test_suggest_followups_injects_live_pulse_block(monkeypatch):
+    # 실시간 스냅샷이 주어지면 제안 프롬프트에 그 데이터+지침이 실린다(없으면 빈 슬롯).
+    pytest.importorskip("google.genai")
+    from unittest.mock import MagicMock
+    import google.genai
+    from agentengine.agent import suggest_followups
+    mc = MagicMock(); mr = MagicMock()
+    mr.text = '{"followups": ["8일 나온 8-K 내용 보여줘", "오늘 -1.2% 배경 뉴스 정리해줘", "어닝 일정 알려줘"]}'
+    mc.models.generate_content.return_value = mr
+    monkeypatch.setattr(google.genai, "Client", lambda *a, **k: mc)
+    live = "- AAPL 오늘 가격 (as_of 2026-07-10): {\"price\": 212.4}"
+    out = await suggest_followups("애플 어때", "답변 본문…", "gemini-x", "gemini", live=live)
+    assert out and out[0].startswith("8일")
+    sent = mc.models.generate_content.call_args.kwargs["contents"]
+    assert "실시간 스냅샷" in sent and "212.4" in sent      # 펄스 데이터가 프롬프트에 실렸다
+    # without a pulse the block is absent (no stray header confusing the model)
+    mc.models.generate_content.reset_mock()
+    await suggest_followups("애플 어때", "답변 본문…", "gemini-x", "gemini")
+    sent2 = mc.models.generate_content.call_args.kwargs["contents"]
+    assert "실시간 스냅샷" not in sent2
+
+
 def test_merge_followups_interleaves_and_dedups():
     from agentengine.agent import _merge_followups
     a = ["엔비디아 매출 비중은?", "마진 추이는?", "공급 리스크는?"]
@@ -1931,3 +2064,160 @@ def test_citations_and_artifacts_carry_cadence_and_category():
              "cadence": "one_shot", "category": "fundamentals"}
     c2 = A._citations(tool2, {"data": {"ticker": "AAPL", "name": "Apple"}})
     assert c2 and all(x.cadence == "one_shot" for x in c2)
+
+
+def test_8k_filing_listing_gets_evidence_url_and_event_snippet():
+    # 8-K fix: a filing from a LISTING must carry (a) a descriptive snippet (event labels, not the
+    # bare form) and (b) an evidence_image_url so the viewer renders the REAL 8-K HTML in-app with a
+    # highlight target — the previous bug showed only "8-K".
+    tool = {"name": "sec_edgar__filings", "source": "SEC EDGAR", "connector": "sec_edgar"}
+    data = {"filings": [{
+        "accession_number": "0000320193-24-000100", "cik": 320193, "form": "8-K",
+        "filing_type": "8-K", "filed": "2024-05-01", "items": "5.02,9.01",
+        "description": "항목 5.02 임원·이사 변동 · 항목 9.01 재무제표·첨부자료",
+        "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019324000100/aapl-8k.htm"}]}
+    c = A._citations(tool, {"data": data})[0]
+    assert c.snippet and "임원" in c.snippet and c.snippet != "8-K"   # event summary, not the form
+    assert c.doc_type == "8-K"
+    assert c.evidence_image_url and "/evidence?" in c.evidence_image_url
+    assert "accession=0000320193-24-000100" in c.evidence_image_url
+    assert "cik=320193" in c.evidence_image_url             # cik from the row (or the SEC url)
+    assert "Item+5.02" in c.evidence_image_url or "Item%205.02" in c.evidence_image_url  # highlight target
+
+
+def test_8k_filing_listing_derives_cik_from_url_when_absent():
+    tool = {"name": "sec_edgar__filings", "source": "SEC EDGAR", "connector": "sec_edgar"}
+    data = {"filings": [{
+        "accession_number": "0000320193-24-000101", "form": "8-K",
+        "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019324000101/x.htm"}]}
+    c = A._citations(tool, {"data": data})[0]
+    assert c.evidence_image_url and "cik=320193" in c.evidence_image_url  # pulled from the url
+
+
+def test_enrich_vol_ribbon_folds_onto_price_and_stands_alone():
+    # HL-8c: a same-ticker vol-context artifact's ribbon folds onto the price chart;
+    # without a price chart it stays as its own sourced table.
+    from agentengine.artifacts import enrich_vol_ribbon
+    from agentengine.models import Artifact, ArtifactCandle
+    price = Artifact(kind="candlestick", title="^GSPC", ticker="^GSPC",
+                     candles=[ArtifactCandle(time="2024-01-02", open=1, high=2, low=1, close=1.5)])
+    vc = Artifact(kind="table", title="^GSPC 변동성 컨텍스트", ticker="^GSPC", source="derived",
+                  vol_context={"windows": {"20": {"realized_vol_pct": 17.6, "percentile": 74.4}},
+                               "source": "derived", "as_of": "2026-07-02"})
+    arts = [price, vc]
+    enrich_vol_ribbon(arts)
+    assert arts == [price]                                   # vc merged away
+    assert price.vol_context["windows"]["20"]["percentile"] == 74.4
+
+    # no price chart → the vol-context table survives untouched
+    vc2 = Artifact(kind="table", title="MSFT 변동성", ticker="MSFT",
+                   vol_context={"windows": {"20": {"realized_vol_pct": 12.0, "percentile": 40}}})
+    solo = [vc2]
+    enrich_vol_ribbon(solo)
+    assert solo == [vc2] and vc2.vol_context
+
+
+def test_vol_context_artifact_carries_ribbon_field():
+    # the handler emits the structured ribbon alongside the human table (+ VIX level when present)
+    tool = {"name": "market_history__vol_context", "source": "derived: ingested prices",
+            "connector": "market_history"}
+    data = {"label": "과거 기록 · 전망 아님", "source": "derived: ingested prices",
+            "as_of": "2026-07-02", "data": {"params": {"ticker": "^VIX"},
+            "windows": {"20": {"realized_vol_pct": 17.6, "percentile": 74.4},
+                        "60": {"realized_vol_pct": 13.9, "percentile": 56.5}},
+            "level": {"current": 14.2, "percentile": 22.0}}}
+    art = A._artifacts(tool, {"data": data})[0]
+    assert art.vol_context and art.vol_context["windows"]["20"]["percentile"] == 74.4
+    assert art.vol_context["level"]["current"] == 14.2       # VIX level rides too
+
+
+@respx.mock
+async def test_inline_figure_markers_prompt_and_fallback(monkeypatch):
+    # 인라인 그림 계약(아티클 답변): 합성 모델은 이번 턴의 차트·표 목록(Figures 블록)을 받고,
+    # {{figure:N}}을 하나도 배치하지 않으면 글 끝에 마커가 자동으로 이어붙는다 — 그림은
+    # 반드시 본문에 등장한다. 감사(QT-2)는 마커 속 숫자를 수치 주장으로 세지 않는다.
+    import agentengine.chat as C
+    from agentengine.agent import TaskIntake
+    from agentengine.planner import Decision
+    from agentengine.chat import stream_chat
+
+    _gw(monkeypatch)
+    _catalog()
+    respx.route(method="GET", url__regex=r"http://gw\.test/prices").mock(
+        return_value=httpx.Response(200, json={"ticker": "AAPL", "prices": [{"time": "2024-01-02", "close": 185.6}]},
+                                    headers={"x-connector": "yahoo"}))
+
+    seen: dict = {}
+
+    class P:
+        def __init__(self):
+            self.n = 0
+
+        async def plan_batch(self, task, tools, history, system=None, conversation=None,
+                             force_final=False, sources=None, figures=None):
+            if force_final or self.n >= 1:
+                return [Decision(final="(unused)")]
+            self.n += 1
+            return [Decision(tool="yahoo__prices",
+                             args={"ticker": "AAPL", "interval": "day",
+                                   "start_date": "2024-01-02", "end_date": "2024-01-05", "market": "US"})]
+
+        async def plan(self, *a, **k):
+            return (await self.plan_batch(*a, **k))[0]
+
+        async def stream_final(self, task, tools, history, system=None, conversation=None,
+                               sources=None, figures=None):
+            seen["figures"] = figures
+            yield "종가는 185.6달러였다 [1]."   # 마커를 하나도 배치하지 않음 → 폴백 발동
+
+    async def _intake(_t, _b=None, conversation=None):
+        return TaskIntake(steps=2, needs_data=True)
+
+    async def _no_refine(*a, **k):
+        return (None, {})
+
+    monkeypatch.setattr(C, "analyze_task", _intake)
+    monkeypatch.setattr(C, "refine_evidence", _no_refine)
+    monkeypatch.setattr(C, "get_planner", lambda _b=None: P())
+    monkeypatch.setattr(C.settings, "llm_backend", "gemini")
+
+    events = [e async for e in stream_chat([{"role": "user", "content": "AAPL 주가 차트"}], "vgk_x")]
+    # ① 합성 프롬프트에 Figures 블록이 전달됐다 (기존 아티팩트 번호 그대로)
+    assert seen["figures"] and "{{figure:1}}" in seen["figures"] and "timeseries" in seen["figures"]
+    # ② 모델이 마커를 안 넣었으므로 글 끝에 {{figure:1}}이 자동으로 흐른다
+    prose = "".join(e["text"] for e in events if e["type"] == "token")
+    assert prose.rstrip().endswith("{{figure:1}}")
+    done = events[-1]
+    assert done["type"] == "done" and done["artifacts"]
+    # ③ QT-2 감사: 마커 속 '1'은 수치 주장이 아니다 (미확인 0건)
+    assert done["audit"] and done["audit"]["unsupported"] == []
+
+
+async def test_usage_report_attributes_project(monkeypatch):
+    """METER-1: usage.report가 contextvar의 프로젝트 id를 텔레메트리에 싣는다 (없으면 None)."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from agentengine import usage
+    from agentengine.usage_context import current_project, set_project
+
+    sent: list[dict] = []
+
+    async def fake_post(payload):
+        sent.append(payload)
+
+    monkeypatch.setattr(usage, "_post", fake_post)
+    resp = SimpleNamespace(usage_metadata=SimpleNamespace(
+        prompt_token_count=10, candidates_token_count=5, thoughts_token_count=2))
+
+    set_project("prj_123")
+    assert current_project() == "prj_123"
+    usage.report("plan", "gemini-flash-latest", resp)
+    await asyncio.sleep(0.01)   # detached task 실행
+    assert sent and sent[-1]["project_id"] == "prj_123"
+    assert sent[-1]["input_tokens"] == 10 and sent[-1]["output_tokens"] == 7
+
+    set_project(None)           # 백그라운드/공용 작업 → None
+    usage.report("plan", "gemini-flash-latest", resp)
+    await asyncio.sleep(0.01)
+    assert sent[-1]["project_id"] is None

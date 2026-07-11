@@ -249,6 +249,8 @@ class SecEdgarProvider:
         fdates = recent.get("filingDate") or []
         rdates = recent.get("reportDate") or []
         prim = recent.get("primaryDocument") or []
+        items = recent.get("items") or []                     # 8-K item codes, e.g. "5.02,9.01"
+        descs = recent.get("primaryDocDescription") or []
         wanted = {t.upper() for t in filing_types} if filing_types else None
         out: list[Filing] = []
         for i in range(len(forms)):
@@ -258,6 +260,8 @@ class SecEdgarProvider:
             nodash = accn.replace("-", "")
             doc = prim[i] if i < len(prim) and prim[i] else ""
             url = f"https://www.sec.gov/Archives/edgar/data/{int(cik10)}/{nodash}/{doc}"
+            item_codes = items[i] if i < len(items) else ""
+            pdesc = descs[i] if i < len(descs) else ""
             out.append(
                 Filing(
                     cik=int(cik10),
@@ -267,6 +271,8 @@ class SecEdgarProvider:
                     filing_date=fdates[i] if i < len(fdates) else None,
                     ticker=ref.ticker,
                     url=url,
+                    items=item_codes or None,
+                    description=_filing_summary(forms[i], item_codes, pdesc),
                 )
             )
             if len(out) >= limit:
@@ -288,9 +294,9 @@ class SecEdgarMetricsProvider:
         facts = await _company_facts_raw(cik10)
         gaap = facts.get("facts", {}).get("us-gaap", {})
 
-        shares = _latest(gaap, ["CommonStockSharesOutstanding", "WeightedAverageNumberOfDilutedSharesOutstanding"])
-        eps = _latest(gaap, ["EarningsPerShareDiluted", "EarningsPerShareBasic"])
-        equity = _latest(gaap, ["StockholdersEquity"])
+        shares, shares_row = _latest_row(gaap, ["CommonStockSharesOutstanding", "WeightedAverageNumberOfDilutedSharesOutstanding"])
+        eps, eps_row = _latest_row(gaap, ["EarningsPerShareDiluted", "EarningsPerShareBasic"])
+        equity, equity_row = _latest_row(gaap, ["StockholdersEquity"])
 
         snap = FinancialMetricSnapshot(ticker=ref.ticker)
         try:
@@ -304,10 +310,50 @@ class SecEdgarMetricsProvider:
             snap.price_to_earnings_ratio = round(price / eps, 4) if eps else None
         if snap.market_cap and equity:
             snap.price_to_book_ratio = round(snap.market_cap / equity, 4)
+        snap.computation = _snapshot_derivation(
+            price, shares_row, eps_row, equity_row, cik10, snap)
         return snap
 
 
+# 8-K Item codes → short human labels (the events an 8-K reports). Covers the common ones;
+# unknown codes fall back to the bare "Item X.XX" so nothing is dropped.
+_EIGHTK_ITEMS = {
+    "1.01": "중요 계약 체결", "1.02": "중요 계약 종료", "1.03": "파산·법정관리",
+    "2.01": "자산 인수·매각 완료", "2.02": "실적 발표(잠정)", "2.03": "채무·의무 발생",
+    "2.04": "채무 조기상환 사유", "2.05": "구조조정 비용", "2.06": "자산 손상",
+    "3.01": "상장폐지·상장규정 미준수", "3.02": "미등록 지분 매각", "3.03": "주주 권리 변경",
+    "4.01": "회계법인 변경", "4.02": "과거 재무제표 신뢰불가",
+    "5.01": "지배구조 변경", "5.02": "임원·이사 변동", "5.03": "정관 변경",
+    "5.07": "주주총회 표결 결과", "7.01": "Reg FD 공시", "8.01": "기타 중요 사항",
+    "9.01": "재무제표·첨부자료",
+}
+
+
+def _filing_summary(form: str, item_codes: str, primary_desc: str) -> str | None:
+    """A human one-liner for a filing citation — 8-K event labels (so it's not a bare '8-K'),
+    else the SEC primary-document description. None when nothing descriptive exists."""
+    form_u = (form or "").upper()
+    if form_u.startswith("8-K") and item_codes:
+        labels = []
+        for code in [c.strip() for c in item_codes.split(",") if c.strip()]:
+            lbl = _EIGHTK_ITEMS.get(code)
+            labels.append(f"항목 {code} {lbl}" if lbl else f"항목 {code}")
+        if labels:
+            return " · ".join(labels)
+    pd = (primary_desc or "").strip()
+    if pd and pd.upper() not in (form_u, ""):
+        return pd
+    return None
+
+
 def _latest(gaap: dict, concepts: list[str]) -> float | None:
+    return _latest_row(gaap, concepts)[0]
+
+
+def _latest_row(gaap: dict, concepts: list[str]) -> tuple[float | None, dict | None]:
+    """Latest observed value + its full XBRL row (end/accn/form/concept) so a derived
+    metric's inputs can deep-link the exact filing cell they came from (M-DERIV)."""
+    best_row: dict | None = None
     best = None
     best_end = ""
     for concept in concepts:
@@ -315,7 +361,54 @@ def _latest(gaap: dict, concepts: list[str]) -> float | None:
             end = row.get("end", "")
             if end > best_end and row.get("val") is not None:
                 best, best_end = row["val"], end
-    return best
+                best_row = {**row, "concept": concept}
+    return best, best_row
+
+
+_SNAP_INPUT = {  # concept-agnostic labels + formula symbols for the snapshot derivation
+    "shares": ("발행주식수", "S"),
+    "eps": ("EPS (희석)", "EPS"),
+    "equity": ("자본총계", "E"),
+}
+
+
+def _snapshot_derivation(price, shares_row, eps_row, equity_row, cik10: str,
+                         snap: FinancialMetricSnapshot) -> dict | None:
+    """M-DERIV (DRV-1): PER/PBR/시총 are OUR arithmetic over sourced inputs — embed the
+    derivation at the computation site. Each XBRL input carries {accession, concept} so
+    the 출처 preview opens the exact filing cell in the /evidence viewer."""
+    from app.derivation import calc_row, computation, fmt
+
+    def _xbrl_row(key: str, row: dict | None):
+        if not row:
+            return None
+        label, symbol = _SNAP_INPUT[key]
+        form, end = row.get("form"), row.get("end")
+        src = "SEC EDGAR" + (f" · {form} {end}" if form and end else "")
+        ev = None
+        if row.get("accn"):
+            ev = {"market": "US", "accession": row["accn"], "concept": row.get("concept"),
+                  "value": row.get("val"), "cik": cik10}
+        return calc_row(label, fmt(row.get("val")), source=src, symbol=symbol, evidence=ev)
+
+    inputs = [r for r in (
+        calc_row("주가 P", fmt(price), source="가격 체인 (지연 시세)", symbol="P") if price else None,
+        _xbrl_row("shares", shares_row),
+        _xbrl_row("eps", eps_row),
+        _xbrl_row("equity", equity_row),
+    ) if r]
+    steps = [r for r in (
+        calc_row("시가총액", fmt(snap.market_cap)) if snap.market_cap else None,
+        calc_row("PER", f"{snap.price_to_earnings_ratio:,.2f}x") if snap.price_to_earnings_ratio else None,
+        calc_row("PBR", f"{snap.price_to_book_ratio:,.2f}x") if snap.price_to_book_ratio else None,
+    ) if r]
+    if not steps:
+        return None  # nothing was derived — no computation to show
+    return computation(
+        "시장가 × 최신 XBRL 라인아이템 (직접 계산)",
+        "시가총액 = P × S · PER = P ÷ EPS · PBR = 시가총액 ÷ E",
+        inputs=inputs, steps=steps,
+        note="주가는 지연 시세, 재무 입력은 각 최신 보고 기간 — 기간이 서로 다를 수 있음(각 행에 명시)")
 
 
 # --- XML / number helpers (insider + 13F) — `_num` = shared parse_float (RF-02) ----------
@@ -451,6 +544,8 @@ class SecEdgarInsiderProvider:
                 out.append(
                     InsiderTrade(
                         ticker=ref.ticker.upper(),
+                        accession_number=accn,
+                        filing_url=url,   # IMP-12: provenance travels → citation/evidence viewer links the Form 4
                         issuer=issuer,
                         name=owner,
                         title=title,

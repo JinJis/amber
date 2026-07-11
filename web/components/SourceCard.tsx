@@ -11,6 +11,7 @@
 
 import { useState } from "react";
 import { CadenceTag, FreshnessDot, FRESH_LABEL, TrustLegend } from "./ui";
+import { TickerLogo } from "./TickerLogo";
 // Citation lives in lib/types.ts (FE-01); imported for local use + re-exported for back-compat
 // (importers use `import { Citation } from "./SourceCard"`).
 import type { Citation } from "../lib/types";
@@ -28,7 +29,7 @@ export function ConfBadge({ c }: { c: Citation }) {
   const k = (c.confidence || "").toLowerCase();
   const m = CONF[k];
   if (!m) return null;
-  return <span className={`sp-conf ${m.cls}`} title={c.confidence_why || "근거의 질문 적합도"}>{m.label}</span>;
+  return <span className={`sp-conf ${m.cls}`} title={c.confidence_why || "이 근거가 질문에 얼마나 잘 맞는지예요"}>{m.label}</span>;
 }
 
 
@@ -76,9 +77,9 @@ export function SourceCard({ c, onExpand, onPin, hideTitle }: { c: Citation; onE
   const hasFiling = !!c.evidence_image_url && shape !== "web";
   const hasSourcePage = !hasFiling && !!c.url && /^https?:\/\//i.test(c.url);
   const evBadge = hasFiling
-    ? <span className="sp-ev-badge mono" title="클릭하면 원문 전체를 인앱에서 봅니다">📄 원문</span>
+    ? <span className="sp-ev-badge mono" title="누르면 원문 전체를 여기서 바로 볼 수 있어요">📄 원문</span>
     : hasSourcePage
-    ? <span className="sp-ev-badge mono" title="클릭하면 원문 사이트를 인앱에서 봅니다">🌐 원문</span>
+    ? <span className="sp-ev-badge mono" title="누르면 원문 사이트를 여기서 바로 볼 수 있어요">🌐 원문</span>
     : null;
   const open = c.url ? (
     <a className="sp-open" href={c.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
@@ -88,25 +89,25 @@ export function SourceCard({ c, onExpand, onPin, hideTitle }: { c: Citation; onE
   const foot = (
     <div className="sp-foot mono">
       <FreshnessDot f={c.freshness} />
-      <span>{shape === "web" ? "맥락정보" : c.as_of ? `as_of ${c.as_of}` : (fresh ?? "출처")}</span>
+      <span>{shape === "web" ? "맥락 정보" : c.as_of ? `as_of ${c.as_of}` : (fresh ?? "출처")}</span>
       <CadenceTag c={c.cadence} />
       <ConfBadge c={c} />
       {open}
       {onPin && (
-        <button type="button" className="sp-add" disabled={pinned} title="대시보드에 추가"
-          onClick={(e) => { e.stopPropagation(); onPin(c); setPinned(true); }}>{pinned ? "✓ 대시보드" : "＋ 대시보드"}</button>
+        <button type="button" className="sp-add" disabled={pinned} title="담기"
+          onClick={(e) => { e.stopPropagation(); onPin(c); setPinned(true); }}>{pinned ? "✓ 담김" : "＋ 담기"}</button>
       )}
     </div>
   );
 
   return (
     <div className={`srcprev ${shape}`} role={onExpand ? "button" : undefined}
-      onClick={onExpand ? () => onExpand(c) : undefined} title={onExpand ? "클릭하면 원문 전체로 펼쳐집니다" : undefined}>
+      onClick={onExpand ? () => onExpand(c) : undefined} title={onExpand ? "누르면 원문 전체를 볼 수 있어요" : undefined}>
       {shape === "filing" && (
         <>
           <div className="sp-head">
             {c.index ? <span className="sp-n mono">[{c.index}]</span> : null}
-            <span className="sp-ic" aria-hidden>📄</span>
+            {c.ticker ? <TickerLogo ticker={c.ticker} size={18} /> : <span className="sp-ic" aria-hidden>📄</span>}
             {!hideTitle && <span className="sp-title">{c.source || "공시 문서"}</span>}
             {c.page ? <span className="sp-page mono">{c.page}</span> : null}
             {evBadge}
@@ -125,6 +126,7 @@ export function SourceCard({ c, onExpand, onPin, hideTitle }: { c: Citation; onE
       {shape === "web" && (
         <>
           <div className="sp-chrome">
+            {c.index ? <span className="sp-n mono">[{c.index}]</span> : null}
             <span className="sp-dots" aria-hidden><i /><i /><i /></span>
             <span className="sp-url mono">🔒 {hostOf(c.url) || c.source || "web"}…</span>
           </div>
@@ -141,7 +143,7 @@ export function SourceCard({ c, onExpand, onPin, hideTitle }: { c: Citation; onE
         <>
           <div className="sp-head">
             {c.index ? <span className="sp-n mono">[{c.index}]</span> : null}
-            <span className="sp-ic" aria-hidden>▤</span>
+            {c.ticker ? <TickerLogo ticker={c.ticker} size={18} /> : <span className="sp-ic" aria-hidden>▤</span>}
             {!hideTitle && <span className="sp-title">{c.source || "추출 데이터"}</span>}
             {c.ticker ? <span className="sp-page mono">{c.ticker}</span> : null}
             {evBadge}
@@ -153,23 +155,5 @@ export function SourceCard({ c, onExpand, onPin, hideTitle }: { c: Citation; onE
         </>
       )}
     </div>
-  );
-}
-
-// Compact inline chip used under a message ([n] + source + freshness dot).
-const KIND_ICON: Record<string, string> = { filing: "📄", news: "📰", metric: "📊", data: "📎" };
-export function CiteChip({ c }: { c: Citation }) {
-  const icon = (c.kind && KIND_ICON[c.kind]) || "📎";
-  const body = (
-    <>
-      {c.index ? <span className="cnum">[{c.index}]</span> : null}
-      <span aria-hidden>{icon}</span> {c.source || "출처"}
-      <FreshnessDot f={c.freshness} />
-    </>
-  );
-  return c.url ? (
-    <a className="cite-chip" href={c.url} target="_blank" rel="noreferrer" title={c.snippet || c.url}>{body}</a>
-  ) : (
-    <span className="cite-chip" title={c.snippet || ""}>{body}</span>
   );
 }

@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     reasoning_model: str = "gemini-flash-latest"
     # The control-plane gateway the agent's tools are called through.
     gateway_url: str = "http://127.0.0.1:8010"
+    # COST-1: token-usage telemetry rides the control-plane admin API (same app as the gateway).
+    admin_token: str = "dev-admin-token"
     # Per-request timeout (seconds) on EVERY Gemini call. Without it a stalled call hangs the SSE
     # stream forever (no `done` → the UI stays "답변 작성 중" and input stays disabled). With it a
     # stall raises → callers degrade gracefully → the turn always finishes.

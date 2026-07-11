@@ -225,3 +225,74 @@ def test_catalog_index_carries_service():
     assert rag and rag[0]["service"] == "rag"
     yh = catalog_index.candidate_connectors("GET", "/prices", "US")
     assert yh and yh[0]["service"] == "datasets"  # default
+
+
+def test_llm_usage_ingest_and_summary():
+    """COST-1: services report token usage; the summary groups by model×kind for the cost page."""
+    r = client.post("/admin/llm-usage", headers=ADMIN, json={
+        "service": "agent-engine", "kind": "synthesis", "model": "gemini-flash-latest",
+        "input_tokens": 12000, "output_tokens": 900})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    client.post("/admin/llm-usage", headers=ADMIN, json={
+        "service": "rag", "kind": "embed_docs", "model": "gemini-embedding-2",
+        "input_tokens": 5000, "output_tokens": 0, "estimated": True})
+    s = client.get("/admin/llm-usage/summary", headers=ADMIN).json()
+    rows = {(x["model"], x["kind"]): x for x in s["rows"]}
+    syn = rows[("gemini-flash-latest", "synthesis")]
+    assert syn["input_tokens"] >= 12000 and syn["output_tokens"] >= 900 and syn["estimated"] is False
+    emb = rows[("gemini-embedding-2", "embed_docs")]
+    assert emb["estimated"] is True and emb["input_tokens"] >= 5000
+    assert s["daily"], "daily tail present"
+    # no admin token → 401 (telemetry is operator-plane only)
+    assert client.post("/admin/llm-usage", json={"service": "x", "kind": "k", "model": "m"}).status_code == 401
+
+
+def test_production_refuses_dev_admin_token(monkeypatch):
+    """AUTH-1: ENV=production + dev 기본 ADMIN_TOKEN → 기동 거부; dev에선 no-op."""
+    import pytest as _pytest
+
+    from controlplane.config import assert_production_secrets, settings
+
+    monkeypatch.setattr(settings, "env", "dev")
+    assert_production_secrets()  # dev → 통과
+    monkeypatch.setattr(settings, "env", "production")
+    with _pytest.raises(RuntimeError, match="ADMIN_TOKEN"):
+        assert_production_secrets()
+    monkeypatch.setattr(settings, "admin_token", "real-token-xyz")
+    assert_production_secrets()  # 실 토큰 → 통과
+
+
+def test_plan_rate_limit_tiers(monkeypatch):
+    """PLAN-2: 플랜별 게이트웨이 rate 백스톱 — limit 인자가 전역 기본을 오버라이드."""
+    from controlplane.ratelimit import RateLimiter
+
+    rl = RateLimiter(per_minute=100)
+    key = "key_plan_test"
+    assert rl.allow(key, 2) is True
+    assert rl.allow(key, 2) is True
+    assert rl.allow(key, 2) is False        # 플랜 한도 2 → 3번째 거부
+    assert rl.allow("other_key") is True    # limit 미지정 → 전역 기본(100)
+
+
+def test_admin_patch_project_plan():
+    """PLAN-2: PATCH /admin/projects/{id} — 플랜 티어 설정 (apply_plan이 호출)."""
+    t = client.post("/admin/tenants", headers=ADMIN, json={"name": "plan-t"}).json()
+    p = client.post(f"/admin/tenants/{t['id']}/projects", headers=ADMIN, json={"name": "d"}).json()
+    r = client.patch(f"/admin/projects/{p['id']}", headers=ADMIN, json={"plan": "pro"})
+    assert r.status_code == 200 and r.json()["plan"] == "pro"
+    assert client.patch("/admin/projects/prj_nope", headers=ADMIN, json={"plan": "free"}).status_code == 404
+    assert client.patch(f"/admin/projects/{p['id']}", json={"plan": "free"}).status_code == 401  # no admin token
+
+
+def test_llm_usage_project_attribution():
+    """METER-1: llm-usage 행이 project_id를 실어 유저별 원가 롤업이 가능해진다."""
+    r = client.post("/admin/llm-usage", headers=ADMIN, json={
+        "service": "agent-engine", "kind": "synthesis", "model": "gemini-pro-latest",
+        "input_tokens": 100, "output_tokens": 50, "project_id": "prj_meter1"})
+    assert r.status_code == 200
+    from controlplane.db import SessionLocal
+    from controlplane.models import LlmUsage
+    from sqlalchemy import select
+    with SessionLocal() as db:
+        row = db.execute(select(LlmUsage).where(LlmUsage.project_id == "prj_meter1")).scalars().first()
+    assert row is not None and row.input_tokens == 100

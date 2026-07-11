@@ -17,6 +17,7 @@ from app.models.generated import (
     FinancialMetricsHistoryResponse,
     FinancialMetricSnapshotResponse,
 )
+from app.derivation import calc_row, computation
 from app.providers.registry import get_metrics_provider
 from app.routers._common import gather_best_effort
 from app.store.metrics_history import metrics_history_models
@@ -85,4 +86,14 @@ async def get_comparables(
     )
     if not snaps:
         raise not_found("No comparables data for the given tickers.")
-    return {"market": market.value, "tickers": [s.ticker for s in snaps], "comparables": snaps}
+    # M-DERIV (DRV-1): the comparables table is our arithmetic (per-ticker snapshot metrics
+    # laid side by side) — say how, and which peers survived (failures skipped, not faked).
+    deriv = computation(
+        "동종그룹 멀티플 비교 (종목별 스냅샷 파생)",
+        "종목별로 시가총액 = P × S · PER = P ÷ EPS · PBR = 시가총액 ÷ E → 나란히 비교",
+        inputs=[calc_row("종목", ", ".join(s.ticker or "?" for s in snaps), source="요청 피어셋 중 데이터 확보분"),
+                calc_row("재무 라인아이템", "최신 보고값", source="SEC EDGAR" if market is Market.US else "OpenDART/KRX"),
+                calc_row("주가", "지연 시세", source="가격 체인")],
+        note="피어셋은 호출자가 지정 — 실패 종목은 표에서 제외(가짜값 없음)")
+    return {"market": market.value, "tickers": [s.ticker for s in snaps], "comparables": snaps,
+            "computation": deriv}

@@ -90,6 +90,22 @@ def _statement_url(market, data, accn, cik) -> str | None:
     return None
 
 
+def filing_evidence_url(market, accession, cik=None, text: str | None = None) -> str | None:
+    """PH-PROV3f / 8-K fix: `/evidence` for a filing from a LISTING (8-K, etc.) that has no
+    financial concept — the viewer fetches + renders the REAL filing HTML (market/accession/cik
+    are enough; text is optional and, when present, scrolls to that span, e.g. an 'Item 5.02'
+    header). Without this a listing citation shows only the form label ('8-K')."""
+    m = (market or "").upper()
+    if m not in ("US", "KR") or not accession:
+        return None
+    params = {"market": m, "accession": accession}
+    if cik:
+        params["cik"] = str(cik)
+    if text:
+        params["text"] = str(text)[:120]
+    return "/evidence?" + urlencode(params)
+
+
 def rag_evidence_url(market, accession, text: str | None) -> str | None:
     """PH-PROV3e: `/evidence` for a cited filing PASSAGE — highlight the text span in the
     cached PDF (text mode). Only filing hits carry an accession; news/web hits don't."""

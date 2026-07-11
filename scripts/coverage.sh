@@ -14,7 +14,10 @@ FAILS=0; WARNS=0; PASS=0; TOTAL=0
 jget() { python3 -c "import json,sys;print(json.load(sys.stdin)$1)" 2>/dev/null || true; }
 
 section "Bring up data plane + gateway"
-docker compose down -v >/dev/null 2>&1 || true
+# NEVER `down -v` here: this tears down the USER'S LIVE STACK — `-v` would destroy
+# the Postgres volume (price backfills, RAG index, conversations, tenants). Data must
+# survive a harness run; the stack is recreated below with volumes intact.
+docker compose down >/dev/null 2>&1 || true
 docker compose up --build -d datasets rag control-plane >/dev/null 2>&1 || { echo "compose up failed"; exit 1; }
 for _ in $(seq 1 40); do
   st=$(docker inspect --format '{{.State.Health.Status}}' valuegraph-platform-control-plane-1 2>/dev/null || echo none)
@@ -116,6 +119,6 @@ tool "search"  POST "/rag/search"  '{"query":"Apple TSMC supplier chips","top_k"
 
 section "Coverage summary"
 echo "    $(green "✓ real data: $PASS")   $(yellow "⚠ env-gated: $WARNS")   $(red "✗ failed: $FAILS")   $(dim "/ $TOTAL tools")"
-docker compose down -v >/dev/null 2>&1
+docker compose down >/dev/null 2>&1
 result "TOOL COVERAGE"
 exit "$FAILS"

@@ -16,7 +16,6 @@ from studioapi.config import settings
 from studioapi.db import init_db
 from studioapi.main import app
 from studioapi.models import Agent, User
-from studioapi.prompts import seed_community_prompts
 
 client = TestClient(app)
 SVC = "dev-service-token"
@@ -25,7 +24,6 @@ SVC = "dev-service-token"
 def setup_module(_module):
     init_db()
     seed_templates()
-    seed_community_prompts()
 
 
 def _cfg(monkeypatch):
@@ -75,9 +73,12 @@ def test_chat_stream_proxies_and_persists(monkeypatch):
     _mock_control_plane()
     sse = (
         'data: {"type":"tool","name":"yahoo__prices","args":{}}\n\n'
-        'data: {"type":"token","text":"AAPL closed at 185."}\n\n'
+        'data: {"type":"token","text":"AAPL closed at 185. {{figure:1}}"}\n\n'
         'data: {"type":"citation","tool":"yahoo__prices","source":"Yahoo Finance"}\n\n'
-        'data: {"type":"done","citations":[{"tool":"yahoo__prices","source":"Yahoo Finance"}],"refused":false}\n\n'
+        'data: {"type":"suggestions","items":["185달러의 배경 뉴스 정리해줘","최근 공시 핵심 보여줘"]}\n\n'
+        'data: {"type":"done","citations":[{"tool":"yahoo__prices","source":"Yahoo Finance"}],'
+        '"artifacts":[{"kind":"timeseries","title":"AAPL 종가"}],'
+        '"audit":{"checked":1,"supported":1,"unsupported":[],"ledger":[{"raw":"185","value":185.0,"span":[15,18],"citation_idx":1,"supported":true}]},"refused":false}\n\n'
     ).encode()
     respx.post("http://ae.test/agent/chat").mock(return_value=httpx.Response(200, content=sse, headers={"content-type": "text/event-stream"}))
 
@@ -94,6 +95,12 @@ def test_chat_stream_proxies_and_persists(monkeypatch):
     assert "user" in roles and "assistant" in roles
     asst = next(m for m in msgs if m["role"] == "assistant")
     assert "AAPL" in asst["content"] and asst["citations"]
+    # 인라인 그림 계약: 아티팩트가 메시지에 보존된다 → 다시 열어도 {{figure:N}} 자리가 살아있다
+    assert asst["artifacts"] and asst["artifacts"][0]["title"] == "AAPL 종가"
+    # LG-4: 감사(원장)도 보존 → 다시 열어도 판정 스트립 + 본문 수치 하이라이트가 살아있다
+    assert asst["audit"]["checked"] == 1 and asst["audit"]["ledger"][0]["raw"] == "185"
+    # 더 파고들기 chips도 보존 → 대화를 나갔다 다시 들어와도 팔로업 행이 살아있다
+    assert asst["suggestions"] == ["185달러의 배경 뉴스 정리해줘", "최근 공시 핵심 보여줘"]
 
 
 # --- title derivation -----------------------------------------------------
@@ -479,80 +486,17 @@ def test_chat_with_agent_sends_spec_and_records_agent(monkeypatch):
                     json={"messages": [{"role": "user", "content": "AAPL filings?"}], "agent_id": "tpl_desk"})
     assert r.status_code == 200
     spec = captured["body"]["spec"]
-    # default desk = Gemini + unrestricted tools (data_sources [] → allowed_tools None = every tool)
-    assert spec["backend"] == "gemini" and spec["allowed_tools"] is None
+    # default desk = Gemini; PLAN-3: free 플랜이 스펙에 병합된다 — 무제한이던 allowed_tools가
+    # 무료 커넥터 셋으로, 합성 모델은 flash 티어로 좁혀진다 (pro면 그대로 None/무제한).
+    from studioapi import plans as _plans
+    assert spec["backend"] == "gemini"
+    assert spec["allowed_tools"] == _plans.limits("free")["connectors"]
+    assert spec["synthesis_model"].startswith("gemini-flash")
+    assert spec["max_steps"] == _plans.limits("free")["max_steps"]
     # the conversation remembers which agent drove it
     conv = client.get("/conversations", headers=_hdr(email)).json()["conversations"][0]
     assert conv["agent_id"] == "tpl_desk"
 
-
-# --- F2: prompt library ---------------------------------------------------
-@respx.mock
-def test_community_prompts_seeded(monkeypatch):
-    _cfg(monkeypatch)
-    _mock_control_plane()
-    cat = client.get("/prompts/community", headers=_hdr("p1@u.com")).json()["prompts"]
-    ids = {p["id"] for p in cat}
-    assert {"cpr_earnings", "cpr_macro_rates"} <= ids
-    one = next(p for p in cat if p["id"] == "cpr_earnings")
-    assert one["community"] and one["editable"] is False and one["body"]
-
-
-@respx.mock
-def test_prompt_create_list_update_delete(monkeypatch):
-    _cfg(monkeypatch)
-    _mock_control_plane()
-    email = "p2@u.com"
-    created = client.post("/prompts", headers=_hdr(email), json={
-        "title": "내 요약 프롬프트", "body": "{TICKER} 실적 요약해줘", "category": "리서치",
-    }).json()
-    pid = created["id"]
-    assert created["editable"] and created["community"] is False
-    # personal library lists it; community catalog does not
-    assert pid in {p["id"] for p in client.get("/prompts", headers=_hdr(email)).json()["prompts"]}
-    assert pid not in {p["id"] for p in client.get("/prompts/community", headers=_hdr(email)).json()["prompts"]}
-    # update + delete
-    upd = client.patch(f"/prompts/{pid}", headers=_hdr(email), json={"title": "수정됨"})
-    assert upd.json()["title"] == "수정됨"
-    assert client.delete(f"/prompts/{pid}", headers=_hdr(email)).status_code == 200
-    assert client.get(f"/prompts/{pid}", headers=_hdr(email)).status_code == 404
-
-
-@respx.mock
-def test_import_community_prompt_is_editable_copy_and_idempotent(monkeypatch):
-    _cfg(monkeypatch)
-    _mock_control_plane()
-    email = "p3@u.com"
-    imp = client.post("/prompts/cpr_earnings/import", headers=_hdr(email)).json()
-    assert imp["editable"] and imp["source_id"] == "cpr_earnings" and imp["id"] != "cpr_earnings"
-    assert imp["body"]  # copied content
-    # it now lives in the personal library
-    mine = {p["id"] for p in client.get("/prompts", headers=_hdr(email)).json()["prompts"]}
-    assert imp["id"] in mine
-    # importing again returns the same copy (no duplicates)
-    again = client.post("/prompts/cpr_earnings/import", headers=_hdr(email)).json()
-    assert again["id"] == imp["id"]
-
-
-@respx.mock
-def test_community_prompt_not_editable(monkeypatch):
-    _cfg(monkeypatch)
-    _mock_control_plane()
-    h = _hdr("p4@u.com")
-    assert client.patch("/prompts/cpr_earnings", headers=h, json={"title": "x"}).status_code == 404
-    assert client.delete("/prompts/cpr_earnings", headers=h).status_code == 404
-    # importing a non-community (or unknown) id 404s
-    assert client.post("/prompts/prm_nope/import", headers=h).status_code == 404
-
-
-@respx.mock
-def test_prompts_are_user_scoped(monkeypatch):
-    _cfg(monkeypatch)
-    _mock_control_plane()
-    p = client.post("/prompts", headers=_hdr("ann@u.com"), json={"title": "Ann", "body": "x"}).json()
-    bob_ids = {x["id"] for x in client.get("/prompts", headers=_hdr("bob2@u.com")).json()["prompts"]}
-    assert p["id"] not in bob_ids
-    assert client.get(f"/prompts/{p['id']}", headers=_hdr("bob2@u.com")).status_code == 404
 
 
 # --- U1: watchlists / @groups ---------------------------------------------
@@ -662,6 +606,30 @@ def test_chat_expands_at_handle_to_tickers(monkeypatch):
 
 
 @respx.mock
+def test_chat_expands_dotted_group_name(monkeypatch):
+    """Regression: a group whose name contains '·' (e.g. the default 'AI·빅테크') must expand — the
+    old character-class regex truncated at '·' and reported '알 수 없는 관심 그룹'."""
+    _cfg(monkeypatch)
+    _mock_control_plane()
+    email = "dot@u.com"
+    wid = client.post("/watchlists", headers=_hdr(email), json={"name": "AI·빅테크"}).json()["id"]
+    client.post(f"/watchlists/{wid}/items", headers=_hdr(email),
+                json={"market": "US", "ticker": "NVDA", "name": "NVIDIA"})
+    captured = {}
+
+    def _capture(request):
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, content=b'data: {"type":"token","text":"ok"}\n\ndata: {"type":"done","citations":[],"refused":false}\n\n')
+
+    respx.post("http://ae.test/agent/chat").mock(side_effect=_capture)
+    r = client.post("/chat/stream", headers=_hdr(email),
+                    json={"messages": [{"role": "user", "content": "@AI·빅테크 실적 비교"}]})
+    assert r.status_code == 200
+    sent = captured["body"]["messages"][-1]["content"]
+    assert "NVDA" in sent and "AI·빅테크 =" in sent and "알 수 없는" not in sent
+
+
+@respx.mock
 def test_chat_unknown_handle_is_graceful(monkeypatch):
     _cfg(monkeypatch)
     _mock_control_plane()
@@ -715,3 +683,88 @@ def test_evidence_html_proxy_streams_html_or_204(monkeypatch):
     assert client.get(f"/evidence/html?{q}", headers=_hdr("e@u.com")).status_code == 204
 
 
+
+
+@respx.mock
+def test_rc1_tap_recorded_and_feed_reranked_by_taste(monkeypatch):
+    """RC-1: 탭 기록 → 유저별 kind 분포 → 공유 캐시 풀을 취향순으로 재정렬(콘텐츠 불변)."""
+    _cfg(monkeypatch)
+    _mock_control_plane()
+    email = "taste@u.com"
+    for _ in range(3):
+        assert client.post("/ask-feed/tap", headers=_hdr(email),
+                           json={"kind": "valuation", "ticker": "005930"}).json()["ok"]
+    from studioapi.askfeed import rerank_by_taste, recent_tap_kinds
+    from studioapi.db import SessionLocal
+    with SessionLocal() as db:
+        kinds = recent_tap_kinds(db, email)
+    assert kinds.get("valuation") == 3
+    cards = [{"kind": "news_probe", "question": "a"}, {"kind": "valuation", "question": "b"},
+             {"kind": "earnings", "question": "c"}]
+    out = rerank_by_taste(cards, kinds)
+    assert out[0]["kind"] == "valuation"            # 취향 1순위로
+    assert [c["kind"] for c in rerank_by_taste(cards, {})] == [c["kind"] for c in cards]  # 무신호=원순서
+
+
+async def test_uxq2_stop_cancels_active_run_and_persists_partial():
+    """UXQ-2: 중지 → 런 취소, 부분 답변은 정상 영속 경로로 보존(유실 없음)."""
+    from studioapi.runs import RunManager
+
+    mgr = RunManager()
+    gate = asyncio.Event()
+    done = asyncio.Event()
+
+    async def driver(run):
+        try:
+            await mgr.append(run, {"type": "token", "text": "부분 답변"})
+            await gate.wait()          # 여기서 취소됨
+        except asyncio.CancelledError:
+            await mgr.append(run, {"type": "done", "stopped": True})  # 취소-세이프 경로
+            done.set()
+
+    run = mgr.start("convS", driver)
+    await asyncio.sleep(0.02)
+    assert mgr.active_run_id("convS") == run.id
+    assert mgr.cancel("convS") is True          # 진행 중 → 취소 성공
+    await asyncio.wait_for(done.wait(), 2)      # 드라이버가 취소를 흡수하고 마무리
+    assert mgr.cancel("convS") is False         # 이미 끝난 런 → False
+
+
+@respx.mock
+def test_uxq4_rename_and_delete_conversation(monkeypatch):
+    """UXQ-4: 대화 rename/삭제 — 소유자만, 삭제는 메시지까지."""
+    _cfg(monkeypatch)
+    _mock_control_plane()
+    sse = b'data: {"type":"token","text":"ok"}\n\ndata: {"type":"done","citations":[],"refused":false}\n\n'
+    respx.post("http://ae.test/agent/chat").mock(return_value=httpx.Response(200, content=sse))
+    email = "convmgr@u.com"
+    client.post("/chat/stream", headers=_hdr(email),
+                json={"messages": [{"role": "user", "content": "테스트 대화"}]})
+    cid = client.get("/conversations", headers=_hdr(email)).json()["conversations"][0]["id"]
+    # rename (소유자) / 타 유저 404
+    assert client.patch(f"/conversations/{cid}", headers=_hdr(email),
+                        json={"title": "새 제목"}).json()["title"] == "새 제목"
+    assert client.patch(f"/conversations/{cid}", headers=_hdr("other@u.com"),
+                        json={"title": "x"}).status_code == 404
+    # delete → 목록에서 사라지고 메시지도 빈다
+    assert client.delete(f"/conversations/{cid}", headers=_hdr(email)).json()["deleted"] == cid
+    assert all(c["id"] != cid for c in client.get("/conversations", headers=_hdr(email)).json()["conversations"])
+    assert client.get(f"/conversations/{cid}/messages", headers=_hdr(email)).json()["messages"] == []
+
+
+def test_production_refuses_dev_default_tokens(monkeypatch):
+    """AUTH-1: ENV=production에서 dev 기본 SERVICE_TOKEN/ADMIN_TOKEN이면 기동 거부."""
+    import pytest
+
+    from studioapi.config import assert_production_secrets, settings as cfg
+
+    monkeypatch.setattr(cfg, "env", "dev")
+    assert_production_secrets()  # dev → no-op
+    monkeypatch.setattr(cfg, "env", "production")
+    with pytest.raises(RuntimeError, match="SERVICE_TOKEN"):
+        assert_production_secrets()
+    monkeypatch.setattr(cfg, "service_token", "real-svc")
+    with pytest.raises(RuntimeError, match="ADMIN_TOKEN"):
+        assert_production_secrets()
+    monkeypatch.setattr(cfg, "admin_token", "real-admin")
+    assert_production_secrets()  # 둘 다 실 토큰 → 통과

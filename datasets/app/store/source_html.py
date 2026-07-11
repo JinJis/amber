@@ -99,7 +99,9 @@ async def _fetch(url: str) -> str | None:
 
 
 def _cache_path(url: str) -> pathlib.Path:
-    key = hashlib.sha256(url.encode("utf-8")).hexdigest()[:32]
+    # "v2:" — the sanitize policy changed (passive CSP + <base>); old cached copies carried the
+    # strict filing CSP and rendered external pages as gray, unstyled shells. New key → regenerate.
+    key = hashlib.sha256(("v2:" + url).encode("utf-8")).hexdigest()[:32]
     return pathlib.Path(settings.evidence_docs_dir) / "source" / f"{key}.html"
 
 
@@ -114,7 +116,14 @@ async def get_source_html(url: str) -> str | None:
     raw = await _fetch(url)
     if not raw or not raw.strip():
         return None
-    clean = sanitize(_META_POLICY_RE.sub("", raw))   # drop the source's CSP/X-Frame meta, then sanitize
+    from urllib.parse import urlsplit
+
+    from app.store.filing_html import CSP_PASSIVE
+    parts = urlsplit(url)
+    page_base = f"{parts.scheme}://{parts.netloc}{parts.path.rsplit('/', 1)[0]}/"
+    # external pages: PASSIVE CSP (styles/images/fonts over https render; scripts/XHR still dead)
+    # + <base> so the page's relative asset URLs resolve inside srcdoc — fixes the gray shell.
+    clean = sanitize(_META_POLICY_RE.sub("", raw), csp=CSP_PASSIVE, base=page_base)
     path.parent.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(path.write_text, clean, encoding="utf-8")
     log.info("source html stored (%d KB) %s → %s", len(clean) // 1024, url[:80], path)

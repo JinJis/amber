@@ -30,9 +30,18 @@ class Settings(BaseSettings):
     polygon_api_key: str = ""
     tiingo_api_key: str = ""
     fmp_api_key: str = ""
-    # Alpha Vantage — earnings-call transcripts (free key works; rate-limited). US coverage.
+    # Logo.dev — optional publishable token for high-quality company logos by ticker/domain.
+    # Unset → logos fall back to FMP profile images + domain favicons (hybrid resolver, /logos).
+    logodev_token: str = ""
+    # NYT Archive — era news headlines/abstracts by month back to 1851 (HL-5). Free key; the
+    # provider self-limits to ~5 req/min (their guidance). Unset → the pre-2017 era-news path is dark.
+    nyt_api_key: str = ""
+    # API Ninjas (premium) — earnings-call transcripts (US + KR, ~5y depth) + company logos.
+    # Primary transcript source; Alpha Vantage below is the free fallback.
+    api_ninjas_key: str = ""
+    # Alpha Vantage — earnings-call transcripts fallback (free key works; rate-limited). US only.
     alphavantage_api_key: str = ""
-    transcript_ingest_limit: int = 4   # recent quarters of transcripts to index per ticker
+    transcript_ingest_limit: int = 8   # recent quarters of transcripts to index per ticker
 
     # Phase 2: 8-K EX-99 earnings/investor presentation decks (PDF) → GCP Document AI Layout Parser
     # → RAG (faithful, layout-aware chunks WITH page+bbox for precise in-app PDF highlight). Auth via
@@ -54,8 +63,11 @@ class Settings(BaseSettings):
     krx_api_key: str = ""
 
     # --- per-domain provider selection (override the free defaults) --------
-    prices_provider_us: str = "yahoo"  # yahoo | stooq | polygon | tiingo | fmp
-    prices_provider_kr: str = "yahoo"  # yahoo | pykrx | krx | kis
+    # IMP-15: "auto" = fallback chain with honest source labels — Yahoo primary,
+    # then Stooq (US, keyless) / KIS (KR, only when the broker keys are set). A
+    # transient Yahoo 503 no longer takes prices down.
+    prices_provider_us: str = "auto"  # auto | yahoo | stooq
+    prices_provider_kr: str = "auto"  # auto | yahoo | pykrx | kis
     # macro: FRED's api.stlouisfred.org serves a JS bot-wall to datacenter IPs, so
     # US macro breaks in the cloud. "auto" tries FRED when FRED_API_KEY is set and
     # falls back to keyless, cloud-safe DBnomics (BIS policy rates); "dbnomics"
@@ -79,7 +91,15 @@ class Settings(BaseSettings):
     scheduler_universe: str = "us_sp500,kr_kospi200,kr_kosdaq150"
     # CE-0: how many years of daily OHLCV the prices pipeline stores. Deep enough for the
     # store-backed screener / quant / backtest (the chart fetches its own history live).
-    prices_backfill_years: int = 5
+    # Raised 5→10 for History Lab context on ordinary watchlist tickers (HL-1).
+    prices_backfill_years: int = 10
+    # HL-1: the History Lab anchor universe — Yahoo GLOBAL symbols whose FIRST ingest backfills
+    # max available history (S&P daily since 1927, VIX since 1990, KOSPI ~1997 …). All stored
+    # under the US namespace (Yahoo-global symbols; KR's 6-digit normalization would mangle
+    # ^KS11). Depth = whatever the upstream returns; earlier is a DRAWN GAP, never fabricated.
+    history_universe: str = "^GSPC,^IXIC,^DJI,^VIX,^KS11,^KQ11,^TNX,^N225,^HSI,GC=F,CL=F,KRW=X"
+    # first-ingest start for universe symbols ("max" in practice; Yahoo clips to its first bar)
+    history_backfill_start: str = "1920-01-01"
     # how many recent filings filing_search fetches+indexes when a never-seen ticker is queried
     # on-demand (bounded so the first call stays responsive).
     filing_search_ingest_limit: int = 2

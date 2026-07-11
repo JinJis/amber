@@ -32,6 +32,9 @@ class Project(Base):
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: _uid("prj"))
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
     name: Mapped[str] = mapped_column(String(128))
+    # PLAN-2: the product plan tier (guest|free|pro), set by studio's apply_plan. Drives the
+    # per-key gateway rate limit (abuse backstop). NULL = legacy/ops project → global default.
+    plan: Mapped[str | None] = mapped_column(String(24), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -70,6 +73,27 @@ class UsageEvent(Base):
     cost_units: Mapped[int] = mapped_column(Integer, default=0)
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     ts: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class LlmUsage(Base):
+    """COST-1: every Gemini call (chat plan/synthesis, feeds, enrichment, RAG embeddings) reports
+    its token usage here — the admin cost dashboard prices these rows with the pricing registry.
+    `estimated` marks rows whose tokens were approximated (e.g. embeddings — the API returns no
+    usage metadata), so the dashboard can label them honestly."""
+
+    __tablename__ = "llm_usage"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    service: Mapped[str] = mapped_column(String(24), index=True)   # agent-engine | rag | studio-api
+    kind: Mapped[str] = mapped_column(String(32), index=True)      # plan|synthesis|intake|askfeed|…|embed
+    model: Mapped[str] = mapped_column(String(64), index=True)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    calls: Mapped[int] = mapped_column(Integer, default=1)
+    estimated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # METER-1: which tenant project this call served — per-user cost attribution (unit economics).
+    # NULL = shared/background work (feeds, ops) or a pre-attribution row.
+    project_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 
 class AuditLog(Base):

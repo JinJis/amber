@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 
+from agentengine.usage import report as report_usage
 from agentengine.models import (
     Artifact,
     ChartAnnotations,
@@ -92,6 +93,7 @@ async def _gemini_annotate(model: str, question: str, digest: str, ticker: str) 
         resp = await asyncio.to_thread(
             client.models.generate_content, model=model,
             contents=[types.Content(role="user", parts=[types.Part.from_text(text=user)])], config=cfg)
+        report_usage("annotations", model, resp)
         return json.loads(resp.text or "{}")
     except Exception as exc:  # noqa: BLE001 — degrade to no annotations, never crash the turn
         log.warning("annotate: gemini failed for %s: %s", ticker, exc)
@@ -116,7 +118,7 @@ def _validate(raw: dict, lo_t: str, hi_t: str, lo_p: float, hi_p: float) -> Char
               for h in (raw.get("hlines") or []) if in_p(h.get("price"))]
     vlines = [ChartVLine(time=v["time"], label=v.get("label"), color="#D9A300")
               for v in (raw.get("vlines") or []) if in_t(v.get("time"))]
-    zones = [ChartZone(t0=z["t0"], t1=z["t1"], label=z.get("label"), color="rgba(79,140,255,0.10)")
+    zones = [ChartZone(t0=z["t0"], t1=z["t1"], label=z.get("label"), color="rgba(26,27,30,0.055)")  # HL-8: ink shade, brand grayscale
              for z in (raw.get("zones") or []) if in_t(z.get("t0")) and in_t(z.get("t1"))]
     if not (lines or hlines or vlines or zones or raw.get("rebase")):
         return None

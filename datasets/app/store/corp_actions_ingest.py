@@ -29,7 +29,13 @@ def _last_event_date(market: str, ticker: str) -> date | None:
 
 async def ingest_corp_actions_ticker(market: Market, ticker: str, start: date, end: date, retries: int = 1) -> int:
     ref = build_ref(market, ticker)
+    # Corporate actions (dividends/splits) come from Yahoo's events feed for BOTH markets — the
+    # configured prices provider (kis/stooq/pykrx) may not expose them, so resolve one that does:
+    # the chain delegates to Yahoo; a provider without the method falls back to Yahoo directly.
     provider = get_prices_provider(market)
+    if not hasattr(provider, "corporate_actions"):
+        from app.providers.us.yahoo import YahooProvider
+        provider = YahooProvider()
     data = await _retry(lambda: provider.corporate_actions(ref, start, end), retries)
     rows = []
     for d in (data.get("dividends") or []):

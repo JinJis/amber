@@ -53,7 +53,33 @@ engine = _make_engine()
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
 
+def _add_missing_columns() -> None:
+    """Lightweight forward migration (ported from studio-api): ADD COLUMN for fields added to a
+    model AFTER its table was first created — ``create_all`` never alters existing tables.
+    Idempotent; runs for both SQLite (unit tests) and long-lived Postgres (compose)."""
+    dialect = engine.dialect.name
+    if dialect not in ("sqlite", "postgresql"):
+        return
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    names = set(inspector.get_table_names())
+
+    def add_cols(table: str, cols: dict[str, str]) -> None:
+        if table not in names:
+            return
+        have = {c["name"] for c in inspector.get_columns(table)}
+        with engine.begin() as conn:
+            for col, decl in cols.items():
+                if col not in have:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {decl}"))
+
+    add_cols("projects", {"plan": "VARCHAR(24)"})            # PLAN-2: per-plan gateway rate tier
+    add_cols("llm_usage", {"project_id": "VARCHAR(40)"})     # METER-1: per-user cost attribution
+
+
 def init_db() -> None:
     from controlplane import models  # noqa: F401
 
     Base.metadata.create_all(engine)
+    _add_missing_columns()

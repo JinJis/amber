@@ -4,213 +4,58 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 
 import AgentBuilder, { Agent, Category } from "./AgentBuilder";
 import BoardCanvas from "./BoardCanvas";
 import BotHome from "./BotHome";
+import { ShareSheet } from "./ShareSheet";
 import Onboarding from "./Onboarding";
-import PinPicker from "./PinPicker";
-import PromptLibrary from "./PromptLibrary";
-import PromptWaterfall, { WaterfallPrompt } from "./PromptWaterfall";
+import GuestWall from "./GuestWall";
+import CockpitEntry from "./CockpitEntry";
 import Watchlists, { Watchlist } from "./Watchlists";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { remarkCjkEmphasis } from "../lib/markdown";
-import { SourceCard } from "./SourceCard";
+import { MentionChip } from "./MentionChip";
+import { TickerLogo } from "./TickerLogo";
+import { Settings } from "./Settings";
+import { CommandPalette } from "./CommandPalette";
+import { ContextPanel, evidenceOf, uniqueTools } from "./EvidencePanel";
+import { type LedgerRow } from "../lib/evidence";
+import { useIsMobile } from "../lib/useIsMobile";
 import { SourceViewer } from "./SourceViewer";
-import { ArtifactCard } from "./ArtifactCard";
 import { Button, Chip, GuardrailLabel, Mascot, FreshnessDot } from "./ui";
 import type { Features } from "../lib/features";
 import { FeaturesProvider } from "../lib/features-context";
+// 답변 본문 렌더링 클러스터 + 스트림 파트는 chat/ 하위로 분리(FE-2). 테스트가
+// `../components/Chat`에서 임포트하므로 아래 심볼들은 그대로 재익스포트한다.
+import { AnswerArticle, linkifyCitations, makeMdComponents, splitFigures, type NumCtx } from "./chat/answer";
+import { ClarifyChips, SubAgentCards, ThinkingLive } from "./chat/parts";
+export { AnswerArticle, linkifyCitations, makeMdComponents, splitFigures };
+export type { NumCtx };
 // Chat / SSE-event + Artifact/Citation shapes now live in lib/types.ts (FE-01).
 import type {
-  Artifact, Citation, Clarify, ClarifyOption, Msg, SubAgent, Think, ToolUse,
+  Artifact, Citation, ClarifyOption, Msg, SubAgent, ToolUse,
 } from "../lib/types";
 
-// Render the assistant's markdown (bold/bullets/tables/links). Links open out-of-tab.
-const mdComponents = {
-  a: (props: any) => <a {...props} target="_blank" rel="noreferrer" />,
-};
-
-// Collapse repeated tool calls to distinct labels (one answer can hit the same
-// connector many times — show each source once, not eight identical rows).
-function uniqueTools(tools?: ToolUse[]): ToolUse[] {
-  const seen = new Map<string, ToolUse>();
-  for (const t of tools || []) seen.set(t.label || t.name, t);
-  return [...seen.values()];
+// Map a citation-carrying SSE event (streamed `citation` or the `done` list) to a Citation.
+// cadence/category ride along so a pinned widget knows if it can carry an alert; table +
+// evidence_image_url let the source card reach the original filing/page.
+function toCitation(ev: any): Citation {
+  return {
+    tool: ev.tool, source: ev.source, url: ev.url, index: ev.index, kind: ev.kind,
+    doc_type: ev.doc_type, as_of: ev.as_of, freshness: ev.freshness,
+    cadence: ev.cadence, category: ev.category,
+    snippet: ev.snippet, ticker: ev.ticker, page: ev.page,
+    table: ev.table, evidence_image_url: ev.evidence_image_url, used: ev.used,
+  };
 }
 
-// PH-THINK: the live reasoning stream — foldable so it doesn't stack up. COLLAPSED (default)
-// shows only the latest step (spinning); click to EXPAND the full analyze→fetch→found→synthesize
-// trace. The latest one spins, earlier ones are checked.
-function ThinkingLive({ steps }: { steps: Think[] }) {
-  const [open, setOpen] = useState(false);
-  if (!steps.length) return null;
-  const latest = steps[steps.length - 1];
-  return (
-    <div className={`thinking-live ${open ? "open" : ""}`} aria-live="polite">
-      <button type="button" className="tl-bar" onClick={() => setOpen((o) => !o)}
-        aria-expanded={open} title={open ? "접기" : "분석 과정 전체 보기"}>
-        <span className="tl-chev">{open ? "▾" : "▸"}</span>
-        <span className="tl-bar-lbl">분석 과정 · {steps.length}단계</span>
-      </button>
-      {open
-        ? steps.map((s, j) => {
-            const last = j === steps.length - 1;
-            return (
-              <div key={j} className={`tl-step ${last ? "active" : "done"}`}>
-                <span className="tl-ic">{last ? <span className="tl-spin" /> : "✓"}</span>{s.text}
-              </div>
-            );
-          })
-        : (
-          <div className="tl-step active">
-            <span className="tl-ic"><span className="tl-spin" /></span>{latest.text}
-          </div>
-        )}
-    </div>
-  );
-}
 
-// CLARIFY-WITH-OPTIONS: render the agent's choices as chips. Single-pick → click runs it;
-// multi-pick → toggle several then confirm. Picks compose a refined follow-up question.
-function ClarifyChips(
-  { clarify, disabled, onSubmit }:
-  { clarify: Clarify; disabled?: boolean; onSubmit: (labels: string[]) => void },
-) {
-  const [sel, setSel] = useState<Set<number>>(new Set());
-  const toggle = (i: number) =>
-    setSel((prev) => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
-  return (
-    <div className="clarify">
-      <div className="clarify-opts">
-        {clarify.options.map((o, i) => (
-          <button key={i} type="button" disabled={disabled}
-            className={`clarify-chip ${clarify.multi && sel.has(i) ? "on" : ""}`}
-            title={o.description || undefined}
-            onClick={() => (clarify.multi ? toggle(i) : onSubmit([o.label]))}>
-            <span className="clarify-label">{o.label}</span>
-            {o.description ? <span className="clarify-desc">{o.description}</span> : null}
-          </button>
-        ))}
-      </div>
-      {clarify.multi && (
-        <Button size="sm" disabled={disabled || sel.size === 0}
-          onClick={() => onSubmit([...sel].sort((a, b) => a - b).map((i) => clarify.options[i].label))}>
-          선택한 내용으로 진행 →
-        </Button>
-      )}
-    </div>
-  );
-}
-
-// A2A: live cards for the sub-agents researching each facet of a complex request in parallel.
-function SubAgentCards({ subs }: { subs: SubAgent[] }) {
-  if (!subs.length) return null;
-  return (
-    <div className="subagents">
-      {subs.map((s) => (
-        <div key={s.id} className={`subagent ${s.status}`}>
-          <span className="sa-ic">{s.status === "done" ? "✓" : <span className="tl-spin" />}</span>
-          <span className="sa-title">{s.title}</span>
-          {s.status === "done" && <span className="sa-meta">{s.sources ?? 0} 근거</span>}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// Evidence for one message = the sources its answer actually used (else all consulted).
-function evidenceOf(m: Msg): Citation[] {
-  const cites = m.citations ?? [];
-  if (m.used && m.used.length) return cites.filter((c) => c.index != null && m.used!.includes(c.index));
-  return cites;
-}
-
-// RIGHT CONTEXT PANEL: the live "근거 패널" — as an answer streams, its charts/tables and
-// sourced evidence land here in real time (not stacked below the prose). Clicking any past
-// answer re-focuses the panel on that turn's context (`msg` = the focused message).
-function ContextPanel(
-  { msg, streaming, onEvidence, onPinArtifact, onPinCitation, onResizeStart }:
-  {
-    msg: Msg | null; streaming: boolean;
-    onEvidence: (c: Citation) => void;
-    // undefined when the 대시보드 feature is off → the cards hide the ＋대시보드 pin button.
-    onPinArtifact?: (a: Artifact) => void;
-    onPinCitation?: (c: Citation) => void;
-    onResizeStart: (e: ReactMouseEvent) => void;
-  },
-) {
-  const arts = msg?.artifacts ?? [];
-  const cites = msg?.citations ?? [];
-  const used = msg ? evidenceOf(msg) : [];
-  const usedKeys = new Set(used.map((c) => `${c.source}|${c.url}`));
-  // every consulted source the answer DIDN'T directly cite — kept in its own fold so nothing
-  // "disappears" once the answer settles.
-  const others = cites.filter((c) => !usedKeys.has(`${c.source}|${c.url}`));
-  const tools = uniqueTools(msg?.tools);
-  const hasAny = arts.length || cites.length || tools.length;
-  return (
-    <aside className="ctxpane">
-      {/* drag the left edge to resize the panel */}
-      <div className="ctx-resize" onMouseDown={onResizeStart} title="드래그해서 패널 너비 조절" aria-hidden />
-      <div className="ctxpane-head">
-        <span className="ctx-title">근거 패널</span>
-        {streaming && <span className="ctx-live"><span className="tl-spin" />수집 중</span>}
-      </div>
-      {/* trust brand, always pinned: raw data + sources only, never predictions/advice */}
-      <span className="live-label">원자료와 출처만 보여줘요 — 예측·매매 의견은 제공하지 않습니다.</span>
-      {!hasAny ? (
-        <div className="ctx-empty">
-          {streaming
-            ? "답변을 작성하며 차트·표·출처를 모으고 있어요…"
-            : "답변을 누르면 그 답에 쓰인 차트·표·출처가 여기에 모여요."}
-        </div>
-      ) : (
-        <>
-          {arts.length > 0 && (
-            <div className="ctx-section">
-              <div className="ctx-label">차트·표 {arts.length}</div>
-              <div className="artifacts">
-                {arts.map((a, j) => <ArtifactCard key={`a${j}`} a={a} onPin={onPinArtifact} onEvidence={onEvidence} />)}
-              </div>
-            </div>
-          )}
-          {used.length > 0 && (
-            <div className="ctx-section">
-              <div className="ctx-label">답변에 사용된 출처 {used.length}</div>
-              <div className="ctx-cards">
-                {used.map((c, j) => <SourceCard key={`u${j}`} c={c} onExpand={onEvidence} onPin={onPinCitation} />)}
-              </div>
-            </div>
-          )}
-          {others.length > 0 && (
-            <details className="ctx-section ctx-more">
-              <summary className="ctx-label">참고한 모든 출처 {cites.length} · 답변 외 {others.length}</summary>
-              <div className="ctx-cards">
-                {others.map((c, j) => <SourceCard key={`o${j}`} c={c} onExpand={onEvidence} onPin={onPinCitation} />)}
-              </div>
-            </details>
-          )}
-          {tools.length > 0 && (
-            <details className="ctx-section ctx-more">
-              <summary className="ctx-label">훑어본 도구 {tools.length}개</summary>
-              {tools.map((t, j) => <div key={`t${j}`} className="tool">🔧 {t.label || t.name}</div>)}
-            </details>
-          )}
-        </>
-      )}
-    </aside>
-  );
-}
-
-const EXAMPLES = [
-  "삼성전자 최근 실적 알려줘",
-  "AAPL 최근 주가 흐름",
-  "Fed 기준금리 추이",
-  "엔비디아 공급망·리스크 공시 요약",
-];
-
-export default function Chat({ name, features }: { name: string; features: Features }) {
+export default function Chat({ name, email, image, features, guest = false, providers }: {
+  name: string; email?: string; image?: string | null; features: Features;
+  // GUEST-2: 익명 체험 모드 — 온보딩 스킵, 게스트 필 표시, 한도 도달 시 가입 월(GuestWall)
+  guest?: boolean; providers?: { google: boolean; kakao: boolean; dev?: boolean };
+}) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // GUEST-2: 남은 체험 턴(/api/me의 guest 블록) + 가입 월 상태
+  const [guestInfo, setGuestInfo] = useState<{ used: number; limit: number | null } | null>(null);
+  const [guestWall, setGuestWall] = useState<string | null>(null);  // 월에 띄울 안내 문구
   // background-run tracking: which conversation is currently DISPLAYED, and which one is
   // actively being streamed into the UI. Generation lives server-side, so leaving a chat
   // just stops rendering here (the server keeps going); re-entering resumes via its run.
@@ -221,21 +66,30 @@ export default function Chat({ name, features }: { name: string; features: Featu
   // agents
   const [agents, setAgents] = useState<Agent[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [libPrompts, setLibPrompts] = useState<WaterfallPrompt[]>([]);
   const [agentId, setAgentId] = useState<string>(""); // "" = default agent
   const [builder, setBuilder] = useState<{ open: boolean; base: Agent | null }>({ open: false, base: null });
-  const [library, setLibrary] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // shell view + watchlists / @groups. Dashboard is home (when enabled); 탐색(explore) is the chat
   // surface and the fallback when a feature-flagged surface is off.
-  const [view, setView] = useState<"dashboard" | "explore" | "watch" | "bot">(
+  const [view, setView] = useState<"dashboard" | "explore" | "watch" | "bot" | "settings">(
     features.dashboard ? "dashboard" : "explore");
-  const [handles, setHandles] = useState<string[]>([]);
-  const [mention, setMention] = useState<string[]>([]); // open @-autocomplete suggestions
-  const [pinTarget, setPinTarget] = useState<any | null>(null);  // asset awaiting a board-picker pin
+  const [standingDone, setStandingDone] = useState<Set<number>>(new Set());  // SA-1: subscribed turns
+  const [groups, setGroups] = useState<Watchlist[]>([]);   // @관심종목 groups (name + member items)
+  const [mention, setMention] = useState<Watchlist[]>([]); // open @-autocomplete suggestions
   const [onboarded, setOnboarded] = useState<boolean | null>(null);  // null = checking; false = show onboarding
   const [viewer, setViewer] = useState<Citation | null>(null);  // expanded source viewer
+  // LG-3: [n] ↔ 근거 패널 two-way link. hover mirrors; click scrolls+flashes the card.
+  const [hoverCite, setHoverCite] = useState<number | null>(null);
+  const [flashCite, setFlashCite] = useState<{ n: number; ts: number } | null>(null);
+  // ENT-1: the empty-state composer placeholder rotates today's REAL questions (from the desk feed).
+  const [todayQs, setTodayQs] = useState<string[]>([]);
+  const [phIdx, setPhIdx] = useState(0);
+  useEffect(() => {
+    if (todayQs.length < 2) return;
+    const t = setInterval(() => setPhIdx((i) => (i + 1) % todayQs.length), 4000);
+    return () => clearInterval(t);
+  }, [todayQs]);
   // RIGHT CONTEXT PANEL: which assistant turn's context is pinned in the panel. null = follow
   // the latest answer live (so a streaming turn's assets fill the panel as they arrive).
   const [focusIdx, setFocusIdx] = useState<number | null>(null);
@@ -261,6 +115,18 @@ export default function Chat({ name, features }: { name: string; features: Featu
   // chat session/history — persisted in studio-api; resume a past conversation.
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [convs, setConvs] = useState<{ id: string; title: string }[]>([]);
+  const [convQuery, setConvQuery] = useState("");   // UXQ-4: 레일 대화 검색
+  // UXQ-3: ⌘K 커맨드 팔레트
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault(); setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   async function loadHistory() {
     try {
@@ -274,21 +140,29 @@ export default function Chat({ name, features }: { name: string; features: Featu
     setFocusIdx(null);          // panel follows the latest answer of the opened conversation
     setView("explore");
     setBusy(false);
+    setLoadError(null);
     try {
       const r = await fetch(`/api/conversations/${id}/messages`);
-      if (!r.ok) return;
-      const msgs = ((await r.json()).messages ?? []) as { role: string; content: string; citations?: Citation[] }[];
+      if (!r.ok) { setLoadError(id); return; }  // IMP-5: silent blank thread → visible banner
+      const msgs = ((await r.json()).messages ?? []) as
+        { role: string; content: string; citations?: Citation[]; artifacts?: Artifact[]; audit?: Msg["audit"];
+          suggestions?: string[] }[];
       setMessages(msgs.map((m) => ({
         role: m.role === "assistant" ? "assistant" : "user",
         content: m.content,
         citations: m.citations ?? [],
+        artifacts: m.artifacts ?? [],   // persisted → inline {{figure:N}} cards survive reload
+        audit: m.audit ?? undefined,    // persisted → 판정 + 본문 수치 하이라이트 survive reload
+        hook: (m as { hook?: string | null }).hook ?? undefined,
+        suggestions: m.suggestions ?? [],  // persisted → 더 파고들기 chips survive reload
         used: (m.citations ?? []).map((c) => c.index).filter((n): n is number => n != null),
       })));
       // resume an in-flight answer: if this conversation is still generating, tail its run live
       const ar = await fetch(`/api/conversations/${id}/active-run`);
       const runId = ar.ok ? (await ar.json()).run_id : null;
       if (runId && viewConvRef.current === id) await tailRun(id, runId);
-    } catch {}
+    } catch {
+      setLoadError(id);}
   }
   function newChat() {
     viewConvRef.current = null;
@@ -298,12 +172,22 @@ export default function Chat({ name, features }: { name: string; features: Featu
     setFocusIdx(null);
   }
 
-  // Pin anything (chart/table artifact, source card) → open the board picker (choose board[s]).
-  function pinArtifact(a: Artifact) { setPinTarget(a); }
-  function pinCitation(c: Citation) {
-    // a source/evidence/provenance card pinned as a board asset (kind="source").
-    setPinTarget({ kind: "source", title: c.source || c.ticker || "출처", ...c });
+  // SA-1: one-tap 질문 구독 — the question is THIS turn's user message; the probe is the
+  // periodic source the answer actually used (recorded by the engine, cadence-gated).
+  async function subscribeStanding(i: number, m: Msg) {
+    const q = messages[i - 1]?.role === "user" ? messages[i - 1].content : null;
+    const offer = m.standing_offer;
+    if (!q || !offer) return;
+    try {
+      const r = await fetch("/api/standing", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: q, ticker: offer.ticker ?? null, market: offer.market ?? null,
+                               cadence: offer.cadence, probe: offer.probe }),
+      });
+      if (r.ok) setStandingDone((prev) => new Set(prev).add(i));
+    } catch { /* the chip stays tappable */ }
   }
+
 
   async function loadAgents() {
     try {
@@ -319,29 +203,30 @@ export default function Chat({ name, features }: { name: string; features: Featu
   async function loadHandles() {
     try {
       const r = await fetch("/api/watchlists");
-      if (r.ok) setHandles(((await r.json()).watchlists ?? []).map((w: Watchlist) => w.name));
+      if (r.ok) setGroups((await r.json()).watchlists ?? []);
     } catch {}
   }
   useEffect(() => {
     loadAgents();
     loadHandles();
     loadHistory();
+    // V-5: 공유 페이지 딥링크(/?q=질문) → 컴포저 프리필 (전환 루프의 착지점)
+    try {
+      const q = new URLSearchParams(window.location.search).get("q");
+      if (q) { setInput(q); window.history.replaceState(null, "", window.location.pathname); }
+    } catch {}
     (async () => {
       try {
         const r = await fetch("/api/me");
-        setOnboarded(r.ok ? !!(await r.json()).onboarded : true);  // on error, don't block the app
+        const me = r.ok ? await r.json() : null;
+        setOnboarded(me ? !!me.onboarded : true);  // on error, don't block the app
+        if (me?.guest) setGuestInfo({ used: me.guest.used ?? 0, limit: me.guest.limit ?? null });
       } catch { setOnboarded(true); }
     })();
     (async () => {
       try {
         const r = await fetch("/api/connectors");
         if (r.ok) setCategories((await r.json()).categories ?? []);
-      } catch {}
-    })();
-    (async () => {
-      try {
-        const r = await fetch("/api/prompts/community");
-        if (r.ok) setLibPrompts((await r.json()).prompts ?? []);
       } catch {}
     })();
   }, []);
@@ -352,36 +237,18 @@ export default function Chat({ name, features }: { name: string; features: Featu
     const m = v.match(/@([^\s@]*)$/);
     if (m) {
       const tok = m[1].toLowerCase();
-      setMention(handles.filter((h) => h.toLowerCase().includes(tok)).slice(0, 6));
+      setMention(groups.filter((g) => g.name.toLowerCase().includes(tok)).slice(0, 6));
     } else setMention([]);
   }
-  function pickHandle(h: string) {
-    setInput((v) => v.replace(/@([^\s@]*)$/, `@${h} `));
+  function pickHandle(g: Watchlist) {
+    setInput((v) => v.replace(/@([^\s@]*)$/, `@${g.name} `));
     setMention([]);
     inputRef.current?.focus();
   }
-
-  // {tickers}/{ticker} placeholder fill — from a prompt-library import. Click a watchlist group
-  // or search a company; the chosen value replaces the first placeholder in the box.
-  const [tkQuery, setTkQuery] = useState("");
-  const [tkRes, setTkRes] = useState<{ ticker: string; name?: string; market?: string }[]>([]);
-  const hasPlaceholder = /\{tickers?\}/i.test(input);  // matches {TICKER}/{TICKERS}/{ticker}/{tickers}
-  async function searchTicker(q: string) {
-    setTkQuery(q);
-    if (!q.trim()) { setTkRes([]); return; }
-    try {
-      const [us, kr] = await Promise.all([
-        fetch(`/api/company/search?q=${encodeURIComponent(q)}&market=US&limit=4`).then((r) => (r.ok ? r.json() : { results: [] })),
-        fetch(`/api/company/search?q=${encodeURIComponent(q)}&market=KR&limit=4`).then((r) => (r.ok ? r.json() : { results: [] })),
-      ]);
-      setTkRes([...(us.results || []), ...(kr.results || [])].slice(0, 8));
-    } catch { setTkRes([]); }
-  }
-  function fillPlaceholder(v: string) {
-    setInput((s) => s.replace(/\{tickers?\}/i, v));
-    setTkQuery(""); setTkRes([]);
-    inputRef.current?.focus();
-  }
+  // known groups the user has @-mentioned in the current input (exact name, token-bounded — same
+  // matching as the server expansion), rendered as preview chips below the composer.
+  const mentionedGroups = groups.filter((g) =>
+    new RegExp("@" + g.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![0-9A-Za-z_가-힣])").test(input));
 
   const selected = agents.find((a) => a.id === agentId) || null;
 
@@ -399,6 +266,11 @@ export default function Chat({ name, features }: { name: string; features: Featu
         a.clarify = { prompt: ev.prompt, options: ev.options || [], multi: !!ev.multi, origin };
       }
       else if (ev.type === "suggestions") a.suggestions = (ev.items || []) as string[];
+      else if (ev.type === "quota") {
+        // PLAN-2: 한도 판정 — blocked(턴 시작 안 됨) / degraded(표준 모델로 강등하고 계속)
+        a.quota = { mode: ev.mode, scope: ev.scope, plan: ev.plan, used: ev.used,
+                    limit: ev.limit ?? null, reset_at: ev.reset_at ?? null, message: ev.message || "" };
+      }
       else if (ev.type === "subagent") {
         const list = [...(a.subagents || [])];
         const card: SubAgent = { id: ev.id, title: ev.title, status: ev.status, sources: ev.sources, steps: ev.steps };
@@ -411,34 +283,21 @@ export default function Chat({ name, features }: { name: string; features: Featu
         if (!dup) a.artifacts = [...(a.artifacts || []), ev.artifact as Artifact];
       }
       else if (ev.type === "citation") {
-        const cite: Citation = {
-          tool: ev.tool, source: ev.source, url: ev.url, index: ev.index, kind: ev.kind,
-          doc_type: ev.doc_type, as_of: ev.as_of, freshness: ev.freshness,
-          // periodicity + category of the source datasource — rides along so the pinned widget
-          // knows whether it can carry a notification bot (cadence != one_shot).
-          cadence: ev.cadence, category: ev.category,
-          snippet: ev.snippet, ticker: ev.ticker, page: ev.page,
-          // carry the extracted table + the /evidence params (market/accession/concept/value/cik)
-          // the in-app filing viewer opens from; else the source card can't reach the original.
-          table: ev.table, evidence_image_url: ev.evidence_image_url,
-        };
+        const cite = toCitation(ev);
         const dup = (a.citations || []).some((c) => c.source === cite.source && c.url === cite.url);
         if (!dup) a.citations = [...(a.citations || []), cite];
       }
       // done: guardrail flag + the evidence set (which [n] actually backed the answer)
       else if (ev.type === "done") {
         if (ev.refused) a.refused = true;
+        if (ev.audit) a.audit = ev.audit;   // QT-2 — gates share-card minting
+        if (ev.hook) a.hook = ev.hook;      // V-7 — 공유 제목(발견 한 줄)
+        if (ev.standing_offer) a.standing_offer = ev.standing_offer;   // M-SA
         if (Array.isArray(ev.used)) a.used = ev.used;
         // PH-PROV3d: the done list is authoritative — its citations carry the evidence
         // image re-anchored on the figure the answer actually cited. Replace the streamed set.
         if (Array.isArray(ev.citations) && ev.citations.length) {
-          a.citations = ev.citations.map((c: any) => ({
-            tool: c.tool, source: c.source, url: c.url, index: c.index, kind: c.kind,
-            doc_type: c.doc_type, as_of: c.as_of, freshness: c.freshness,
-            cadence: c.cadence, category: c.category,
-            snippet: c.snippet, ticker: c.ticker, page: c.page,
-            table: c.table, evidence_image_url: c.evidence_image_url, used: c.used,
-          }));
+          a.citations = ev.citations.map(toCitation);
         }
         // PH-VIZ-2: the done list carries the chart artifacts enriched with sourced
         // event markers + price lines (added after later tool results landed).
@@ -483,6 +342,13 @@ export default function Chat({ name, features }: { name: string; features: Featu
           // user moved to a different conversation → stop rendering (the run keeps generating server-side)
           if (myConv && viewConvRef.current !== myConv) { try { await reader.cancel(); } catch {} return; }
           if (ev.type === "conversation") { setConversationId(ev.id); continue; }
+          if (ev.type === "quota" && ev.scope === "guest" && guest) {
+            // GUEST-2: 체험 한도 도달 → 가입 월. 마지막 질문은 로그인 왕복에서 /?q=로 보존된다.
+            setGuestWall(ev.message || "게스트 체험을 모두 사용했어요.");
+          }
+          if (ev.type === "done" && guest && !ev.quota) {
+            setGuestInfo((g) => (g ? { ...g, used: g.used + 1 } : g));
+          }
           applyEvent(ev);
         }
       }
@@ -554,30 +420,69 @@ export default function Chat({ name, features }: { name: string; features: Featu
   }
   const panelIdx = focusIdx != null && messages[focusIdx]?.role === "assistant" ? focusIdx : lastAssistantIdx;
   const panelMsg = panelIdx >= 0 ? messages[panelIdx] : null;
+  // LG-3: an [n] click in answer i pins that answer to the panel AND flashes its card there.
+  const citeClickFor = (i: number) => (n: number) => {
+    setFocusIdx(i);
+    setFlashCite({ n, ts: Date.now() });
+  };
+  const [shareArt, setShareArt] = useState<Artifact | null>(null);  // SH-2 share sheet
+  const [shareMsg, setShareMsg] = useState<{ title: string; msg: Msg } | null>(null);  // SH-ANSWER: whole-answer share
+  // Mobile shell: the desktop 3-column grid collapses to one column; the rail becomes a
+  // left drawer and the 근거 패널 becomes a bottom sheet, each toggled by these flags.
+  const isMobile = useIsMobile();
+  const [drawer, setDrawer] = useState(false);       // rail drawer (mobile)
+  const [ctxSheet, setCtxSheet] = useState(false);   // 근거 패널 bottom sheet (mobile)
+  const [loadError, setLoadError] = useState<string | null>(null);  // IMP-5: conv-load failure banner
   const panelStreaming = busy && panelIdx === messages.length - 1;
 
   return (
     <FeaturesProvider value={features}>
-    {onboarded === false && (
-      <Onboarding onDone={() => { setOnboarded(true); setView(features.dashboard ? "dashboard" : "explore"); loadHandles(); }} />
+    {onboarded === false && !guest && (
+      <Onboarding onDone={() => { setOnboarded(true); setView("explore"); loadHandles(); }} />
     )}
-    <div className={`shell ${view === "explore" ? "with-ctx" : "no-right"}`}
-      style={view === "explore" ? { gridTemplateColumns: `210px minmax(0,1fr) ${ctxWidth}px` } : undefined}>
-      <nav className="rail">
+    {guestWall && (
+      <GuestWall message={guestWall} providers={providers}
+        pending={[...messages].reverse().find((m) => m.role === "user")?.content || ""} />
+    )}
+    {shareArt && (
+      <ShareSheet a={shareArt} audit={panelMsg?.audit ?? null} onClose={() => setShareArt(null)} />
+    )}
+    <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)}
+      convs={convs} groups={groups} onOpenConv={openConversation}
+      onAsk={(q) => { setView("explore"); setInput(q); inputRef.current?.focus(); }} />
+    {shareMsg && (
+      <ShareSheet answer={{ title: shareMsg.title, content: shareMsg.msg.content,
+        artifacts: shareMsg.msg.artifacts, citations: shareMsg.msg.citations,
+        audit: (shareMsg.msg.audit ?? null) as Record<string, unknown> | null,
+        suggestions: shareMsg.msg.suggestions }}
+        onClose={() => setShareMsg(null)} />
+    )}
+    <div className={`shell ${view === "explore" && messages.length > 0 ? "with-ctx" : "no-right"}`
+        + `${isMobile ? " mobile" : ""}${drawer ? " drawer-open" : ""}${ctxSheet ? " ctx-open" : ""}`}
+      style={!isMobile && view === "explore" && messages.length > 0
+        ? { gridTemplateColumns: `210px minmax(0,1fr) ${ctxWidth}px` } : undefined}>
+      {/* Mobile top bar — always reachable (the rail is an off-canvas drawer on phones). */}
+      <div className="m-topbar">
+        <button className="m-menu" onClick={() => setDrawer(true)} aria-label="메뉴 열기">☰</button>
+        <span className="m-brand"><span className="mascot" aria-hidden /><span className="wordmark">ValueGraph</span></span>
+        <button className="m-newchat" onClick={newChat} aria-label="새 탐구">✎</button>
+      </div>
+      {drawer && <div className="m-backdrop" onClick={() => setDrawer(false)} aria-hidden />}
+      <nav className="rail" onClick={() => { if (isMobile) setDrawer(false); }}>
         <div className="rail-brand"><span className="mascot" aria-hidden /><span className="wordmark">ValueGraph</span></div>
         <button className="rail-new" onClick={newChat}>
-          <span className="ic">✎</span><span>새 탐색</span>
+          <span className="ic">✎</span><span>분석 시작하기</span>
         </button>
         {features.dashboard && (
           <button className={`rail-item ${view === "dashboard" ? "on" : ""}`} onClick={() => setView("dashboard")}>
             <span className="ic">📊</span><span className="lbl">대시보드</span>
           </button>
         )}
-        <button className={`rail-item ${view === "explore" ? "on" : ""}`} onClick={() => setView("explore")}>
-          <span className="ic">🔍</span><span className="lbl">탐색</span>
-        </button>
         <button className={`rail-item ${view === "watch" ? "on" : ""}`} onClick={() => setView("watch")}>
-          <span className="ic">⭐</span><span className="lbl">관심</span>
+          <span className="ic">⭐</span><span className="lbl">관심종목</span>
+        </button>
+        <button className={`rail-item ${view === "settings" ? "on" : ""}`} onClick={() => { setView("settings"); if (isMobile) setDrawer(false); }}>
+          <span className="ic">⚙️</span><span className="lbl">설정</span>
         </button>
         {features.alerts && (
           <button className={`rail-item ${view === "bot" ? "on" : ""}`} onClick={() => setView("bot")}>
@@ -587,25 +492,52 @@ export default function Chat({ name, features }: { name: string; features: Featu
         {convs.length > 0 && (
           <div className="rail-hist">
             <div className="rail-hist-h">최근 대화</div>
-            {convs.slice(0, 12).map((c) => (
-              <button key={c.id} className={`rail-conv ${c.id === conversationId ? "on" : ""}`}
-                title={c.title} onClick={() => openConversation(c.id)}>{c.title || "(제목 없음)"}</button>
+            <input className="rail-search mono" value={convQuery} placeholder="대화 검색"
+              onChange={(e) => setConvQuery(e.target.value)} />
+            {convs.filter((c) => !convQuery.trim()
+                || (c.title || "").toLowerCase().includes(convQuery.trim().toLowerCase()))
+              .slice(0, convQuery.trim() ? 30 : 12).map((c) => (
+              <div key={c.id} className={`rail-conv-row ${c.id === conversationId ? "on" : ""}`}>
+                <button className="rail-conv" title={c.title}
+                  onClick={() => openConversation(c.id)}>{c.title || "(제목 없음)"}</button>
+                <button className="rail-conv-act" title="이름 바꾸기" onClick={async (e) => {
+                  e.stopPropagation();
+                  const t = window.prompt("대화 제목", c.title || "");
+                  if (!t?.trim()) return;
+                  const r = await fetch(`/api/conversations/${c.id}`, { method: "PATCH",
+                    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: t.trim() }) });
+                  if (r.ok) loadHistory();
+                }}>✎</button>
+                <button className="rail-conv-act danger" title="삭제" onClick={async (e) => {
+                  e.stopPropagation();
+                  if (!window.confirm("이 대화를 삭제할까요? 되돌릴 수 없어요.")) return;
+                  const r = await fetch(`/api/conversations/${c.id}`, { method: "DELETE" });
+                  if (r.ok) { if (c.id === conversationId) newChat(); loadHistory(); }
+                }}>🗑</button>
+              </div>
             ))}
           </div>
         )}
         <div className="rail-spacer" />
-        <div className="rail-foot">
-          <span className="acct-ava" aria-hidden />
+        <button className="rail-foot" onClick={() => setView("settings")} title="설정">
+          {image ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img className="acct-ava" src={image} alt="" width={22} height={22} referrerPolicy="no-referrer" />
+          ) : (
+            <span className="acct-ava mg" aria-hidden>{(name || "?").trim().charAt(0).toUpperCase()}</span>
+          )}
           <div className="acct-meta">
-            <span className="acct-name" title={name}>{(name?.split("@")[0] ?? "me").slice(0, 12)}</span>
-            <span className="acct-sub">tenant ✓</span>
+            <span className="acct-name" title={name}>{(name?.split("@")[0] ?? "me").slice(0, 14)}</span>
+            <span className="acct-sub">설정 · 요금제</span>
           </div>
-          <a href="/api/auth/signout" title="로그아웃">↩</a>
-        </div>
+          <span className="acct-gear" aria-hidden>⚙</span>
+        </button>
       </nav>
 
       <div className="main">
-        {view === "watch" ? (
+        {view === "settings" ? (
+          <Settings name={name} email={email ?? name} image={image} />
+        ) : view === "watch" ? (
           <Watchlists embedded onChanged={loadHandles} />
         ) : view === "dashboard" && features.dashboard ? (
           <BoardCanvas onEvidence={setViewer} />
@@ -617,35 +549,35 @@ export default function Chat({ name, features }: { name: string; features: Featu
               <div className="desk-id">
                 <Mascot />
                 <FreshnessDot f="fresh" />
-                <span className="explore-title">탐색<span className="explore-sub"> — 자연어로 데이터를 찾아 대시보드에 추가</span></span>
+                <span className="explore-title">탐구<span className="explore-sub"> — 출처와 함께 분석해요</span></span>
               </div>
-              <div className="agentbar">
-                <Button variant="ghost" size="sm" onClick={() => setLibrary(true)} title="프롬프트 라이브러리">프롬프트</Button>
-              </div>
+              {guest && (
+                <span className="guest-pill" title="가입하면 대화가 그대로 이어져요">
+                  게스트 체험 중
+                  {guestInfo?.limit != null && ` · 남은 질문 ${Math.max(0, guestInfo.limit - guestInfo.used)}개`}
+                </span>
+              )}
             </header>
 
             <main className="chat" ref={scrollRef}>
               {messages.length === 0 && (
                 <div className="empty">
-                  <h2>무엇이든 물어보세요</h2>
-                  <p>보유 종목, 뉴스, 시황, 경제 — 우리 데이터로 답하고 출처를 보여줍니다. 답변의 차트·표·출처는 <b>＋ 대시보드</b>로 홈에 올릴 수 있어요.</p>
-                  {libPrompts.length > 0 ? (
-                    // prompt-library examples rising in an infinite loop; hover pauses; click
-                    // drops the FULL prompt into the composer to fill {TICKER} and send.
-                    <PromptWaterfall
-                      prompts={libPrompts}
-                      onPick={(body) => { setInput(body); inputRef.current?.focus(); }}
-                    />
-                  ) : (
-                    <div className="examples">
-                      {EXAMPLES.map((e) => (
-                        <button key={e} className="chip" onClick={() => send(e)}>{e}</button>
-                      ))}
-                    </div>
-                  )}
+                  {/* ASK-6: 물어보기 엔트리 — 종목 탭 → 온디맨드 분석거리 3개 · 뉴스 질문 피드(10분 캐시).
+                      모든 탭은 컴포저를 채운다 (auto-send 금지); 접속 시 LLM 0회. */}
+                  <CockpitEntry
+                    onPick={(q) => { setInput(q); inputRef.current?.focus(); }}
+                    onQuestions={setTodayQs}
+                    onEvidence={setViewer}
+                  />
                 </div>
               )}
 
+              {loadError && (
+                <div className="load-error" role="alert">
+                  대화를 불러오지 못했어요.
+                  <button className="chip" onClick={() => openConversation(loadError)}>다시 시도</button>
+                </div>
+              )}
               {messages.map((m, i) => (
                 <div key={i} className={`msg ${m.role} ${m.role === "assistant" && panelIdx === i ? "focused" : ""}`}>
                   {m.role === "assistant" && (m.thinking?.length || 0) > 0 && (
@@ -665,26 +597,73 @@ export default function Chat({ name, features }: { name: string; features: Featu
                       className="answer-focusable"
                       role="button"
                       tabIndex={0}
+                      style={{ position: "relative" }}
                       aria-pressed={panelIdx === i}
-                      onClick={() => setFocusIdx(i)}
-                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setFocusIdx(i); } }}
+                      onClick={() => { setFocusIdx(i); if (isMobile) setCtxSheet(true); }}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setFocusIdx(i); if (isMobile) setCtxSheet(true); } }}
                     >
+                      {m.content && !(busy && i === messages.length - 1) && (
+                        <button type="button" className="ans-share-top" title="이 답변 공유"
+                          onClick={(e) => { e.stopPropagation();
+                            const q = messages[i - 1]?.role === "user" ? messages[i - 1].content : m.content;
+                            setShareMsg({ title: (m.hook || q || "ValueGraph 리서치").slice(0, 90), msg: m }); }}>↗</button>
+                      )}
                       <div className="bubble">
                         {m.content
-                          ? <div className="md"><ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkEmphasis]} components={mdComponents}>{m.content}</ReactMarkdown></div>
+                          ? <AnswerArticle content={m.content} artifacts={m.artifacts}
+                              ledger={(m.audit?.ledger ?? []) as LedgerRow[]}
+                              streaming={busy && i === messages.length - 1}
+                              mdComponents={makeMdComponents(panelIdx === i ? hoverCite : null, setHoverCite, citeClickFor(i),
+                                { rows: (m.audit?.ledger ?? []) as LedgerRow[], citations: m.citations ?? [],
+                                  onEvidence: setViewer })}
+                              onEvidence={setViewer} onShare={(a) => setShareArt(a)} />
                           : (busy && !(m.thinking?.length) ? "…" : "")}
                       </div>
+                      {/* Answer footer — one clean action row: evidence stats (left) + a clear
+                          공유 button (right). SH-ANSWER: 공유 snapshots the whole answer to a public
+                          link; shown on every finished answer (hidden only while still streaming). */}
                       {(() => {
                         const nArt = m.artifacts?.length || 0;
                         const nUsed = evidenceOf(m).length;
                         const nTool = uniqueTools(m.tools).length;
-                        if (!(nArt || nUsed || nTool)) return null;
+                        const hasStats = nArt || nUsed || nTool;
+                        const streaming = busy && i === messages.length - 1;
+                        const showShare = !!m.content && !streaming;
+                        // 답변이 다 작성되기 전엔 하단 액션 행 전체를 숨긴다(스트리밍 중 노출 금지).
+                        if (streaming || (!hasStats && !showShare)) return null;
                         return (
-                          <div className="ctx-hint">
-                            {nArt > 0 && <span className="ch-stat">📊 차트·표 {nArt}</span>}
-                            {nUsed > 0 && <span className="ch-stat">🔗 근거 {nUsed}</span>}
-                            {nTool > 0 && <span className="ch-stat">🔧 도구 {nTool}</span>}
-                            <span className="ch-go">{panelIdx === i ? "근거 패널에 표시 중" : "근거 패널에서 보기 →"}</span>
+                          <div className="answer-foot">
+                            {hasStats ? (
+                              <div className="ctx-hint">
+                                {nArt > 0 && <span className="ch-stat">📊 차트·표 {nArt}</span>}
+                                {nUsed > 0 && <span className="ch-stat">🔗 근거 {nUsed}</span>}
+                                {nTool > 0 && <span className="ch-stat">🔧 도구 {nTool}</span>}
+                                <span className="ch-go">{panelIdx === i ? "근거 패널에 표시 중" : "근거 패널에서 보기 →"}</span>
+                              </div>
+                            ) : <span className="af-spacer" />}
+                            {showShare && (
+                              <>
+                              <button type="button" className="ans-share" title="답변 텍스트 복사"
+                                onClick={async (e) => { e.stopPropagation();
+                                  try { await navigator.clipboard.writeText(m.content.replace(/\{\{figure:\d+\}\}/g, "")); } catch {} }}>
+                                ⧉ 복사
+                              </button>
+                              {i === messages.length - 1 && !busy && messages[i - 1]?.role === "user" && (
+                                <button type="button" className="ans-share" title="같은 질문으로 다시 생성"
+                                  onClick={(e) => { e.stopPropagation(); send(messages[i - 1].content); }}>
+                                  ↻ 재생성
+                                </button>
+                              )}
+                              </>
+                            )}
+                            {showShare && (
+                              <button type="button" className="ans-share" title="이 답변을 공개 링크로 공유해요"
+                                onClick={(e) => { e.stopPropagation();
+                                  const q = messages[i - 1]?.role === "user" ? messages[i - 1].content : m.content;
+                                  setShareMsg({ title: (m.hook || q || "ValueGraph 리서치").slice(0, 90), msg: m }); }}>
+                                <span aria-hidden>↗</span> 공유
+                              </button>
+                            )}
                           </div>
                         );
                       })()}
@@ -697,7 +676,13 @@ export default function Chat({ name, features }: { name: string; features: Featu
                       onSubmit={(labels) => send(`${m.clarify!.origin} — ${labels.join(", ")}`)} />
                   )}
                   {m.role === "assistant" && m.refused && (
-                    <GuardrailLabel>매수/매도·목표가·전망·점수는 제공하지 않아요 — 가드레일에서 자동 거절됩니다.</GuardrailLabel>
+                    <GuardrailLabel>매수·매도, 목표가, 전망은 답하지 않아요 — 신뢰를 위해 항상 지키는 원칙이에요.</GuardrailLabel>
+                  )}
+                  {m.role === "assistant" && m.quota && (
+                    <div className={`quota-note ${m.quota.mode}`} role="status">
+                      <b>{m.quota.mode === "degraded" ? "지금은 표준 모델로 답해요" : "한도에 도달했어요"}</b>
+                      <p>{m.quota.message}</p>
+                    </div>
                   )}
                   {m.role === "assistant" && (m.suggestions?.length || 0) > 0 && (
                     <div className="followups">
@@ -708,6 +693,14 @@ export default function Chat({ name, features }: { name: string; features: Featu
                             {q} <span className="fu-arrow">→</span>
                           </button>
                         ))}
+                        {m.standing_offer && (
+                          <button type="button" className={`fu-chip standing ${standingDone.has(i) ? "on" : ""}`}
+                            disabled={busy || standingDone.has(i)}
+                            title="이 데이터가 업데이트되면 다음에 왔을 때 알려드려요"
+                            onClick={() => void subscribeStanding(i, m)}>
+                            {standingDone.has(i) ? "✓ 지켜보는 중 — 갱신되면 데스크에 알림" : "🔔 이 질문 계속 지켜보기"}
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}
@@ -716,42 +709,42 @@ export default function Chat({ name, features }: { name: string; features: Featu
             </main>
 
             <footer className="composer">
-              {hasPlaceholder && (
-                <div className="tickerfill">
-                  <span className="tf-label">⌗ 종목 채우기</span>
-                  {handles.slice(0, 6).map((h) => (
-                    <button key={h} type="button" className="tf-chip group" onClick={() => fillPlaceholder("@" + h)}>@{h}</button>
-                  ))}
-                  <input className="tf-search" value={tkQuery} placeholder="종목 검색 (예: 삼성, AAPL)…"
-                    onChange={(e) => searchTicker(e.target.value)} />
-                  {tkRes.map((r, i) => (
-                    <button key={`${r.ticker}${i}`} type="button" className="tf-chip" title={r.name}
-                      onClick={() => fillPlaceholder(r.ticker)}>{r.ticker} · {(r.name || "").slice(0, 12)}</button>
-                  ))}
-                </div>
-              )}
               {mention.length > 0 && (
                 <div className="mention">
-                  {mention.map((h, i) => (
-                    <div key={h} className={`mention-item ${i === 0 ? "on" : ""}`}
-                      onMouseDown={(e) => { e.preventDefault(); pickHandle(h); }}>
-                      <span className="h">@{h}</span>
-                      <span className="c">관심 그룹</span>
+                  {mention.map((g, i) => (
+                    <div key={g.id} className={`mention-item ${i === 0 ? "on" : ""}`}
+                      onMouseDown={(e) => { e.preventDefault(); pickHandle(g); }}>
+                      <span className="h">@{g.name}</span>
+                      <span className="mi-logos">
+                        {(g.items ?? []).slice(0, 5).map((it) => (
+                          <TickerLogo key={it.id} market={it.market} ticker={it.ticker} name={it.name} size={16} />
+                        ))}
+                      </span>
+                      <span className="c mono">{g.count}종목</span>
                     </div>
                   ))}
                 </div>
               )}
-              <form onSubmit={(e) => { e.preventDefault(); if (mention.length) { pickHandle(mention[0]); return; } send(input); }}>
+              <form className={messages.length === 0 ? "hero" : undefined}
+                onSubmit={(e) => { e.preventDefault(); if (mention.length) { pickHandle(mention[0]); return; } send(input); }}>
+                {busy && conversationId && (
+                  <button type="button" className="btn ghost stop-btn" title="답변 생성 중지"
+                    onClick={() => { fetch(`/api/conversations/${conversationId}/stop`, { method: "POST" }).catch(() => {}); }}>
+                    ⏹ 중지
+                  </button>
+                )}
                 <input ref={inputRef} className="input" value={input} onChange={(e) => onInput(e.target.value)}
                   onBlur={() => setTimeout(() => setMention([]), 120)}
-                  placeholder="무엇이든 물어보거나 — /프롬프트 · @그룹 호출…" disabled={busy} />
+                  placeholder={messages.length === 0 && todayQs.length
+                        ? `오늘: “${todayQs[phIdx % todayQs.length]}”`
+                        : "무엇이든 물어보세요 — @그룹으로 관심종목을 부를 수 있어요"} disabled={busy} />
                 <Button disabled={busy || !input.trim()}>보내기</Button>
               </form>
-              {(input.match(/@([^\s@]+)/g) ?? []).length > 0 && (
-                <div className="composer-meta">
-                  {(input.match(/@([^\s@]+)/g) ?? []).slice(0, 3).map((h) => (
-                    <Chip key={h} tone="accent">{h}</Chip>
-                  ))}
+              {mentionedGroups.length > 0 && (
+                <div className="composer-meta mentions">
+                  <span className="cm-label mono">관심종목 태그</span>
+                  {mentionedGroups.map((g) => <MentionChip key={g.id} group={g} />)}
+                  <span className="cm-hint mono">이 그룹의 종목들이 질문에 함께 들어가요</span>
                 </div>
               )}
               <div className="disclaimer">투자 자문이 아니며, 가격 예측을 제공하지 않습니다.</div>
@@ -760,15 +753,31 @@ export default function Chat({ name, features }: { name: string; features: Featu
         )}
       </div>
 
-      {view === "explore" && (
-        <ContextPanel
-          msg={panelMsg}
-          streaming={panelStreaming}
-          onEvidence={setViewer}
-          onPinArtifact={features.dashboard ? pinArtifact : undefined}
-          onPinCitation={features.dashboard ? pinCitation : undefined}
-          onResizeStart={startCtxResize}
-        />
+      {view === "explore" && messages.length > 0 && (
+        <>
+          {/* 모바일: 스트리밍 중 근거 수집이 보이도록 하단 라이브 필 — 탭하면 근거 시트 오픈 */}
+          {isMobile && !ctxSheet && panelMsg && (busy || panelStreaming) && (
+            <button type="button" className="m-live-pill" onClick={() => setCtxSheet(true)}
+              aria-label="근거 수집 현황 보기">
+              <span className="tl-spin" aria-hidden />
+              <span>근거 수집 중</span>
+              <span className="mono">🔗 {(panelMsg.citations ?? []).length} · 📊 {(panelMsg.artifacts ?? []).length}</span>
+              <span className="mlp-open" aria-hidden>▲</span>
+            </button>
+          )}
+          {isMobile && ctxSheet && <div className="m-backdrop ctx" onClick={() => setCtxSheet(false)} aria-hidden />}
+          <ContextPanel
+            hoverCite={hoverCite}
+            setHoverCite={setHoverCite}
+            flashCite={flashCite}
+            msg={panelMsg}
+            streaming={panelStreaming}
+            onEvidence={setViewer}
+            onShareArtifact={(a) => setShareArt(a)}
+            onResizeStart={startCtxResize}
+            onCloseMobile={isMobile ? () => setCtxSheet(false) : undefined}
+          />
+        </>
       )}
 
       {builder.open && (
@@ -780,21 +789,8 @@ export default function Chat({ name, features }: { name: string; features: Featu
         />
       )}
 
-      {library && (
-        <PromptLibrary
-          onClose={() => setLibrary(false)}
-          onUse={(body) => {
-            setInput(body);
-            setLibrary(false);
-            setTimeout(() => inputRef.current?.focus(), 0);
-          }}
-        />
-      )}
-
-      {viewer && <SourceViewer c={viewer} onClose={() => setViewer(null)} />}
-      {pinTarget && (
-        <PinPicker spec={pinTarget} onClose={() => setPinTarget(null)} onPinned={() => setPinTarget(null)} />
-      )}
+      {viewer && <SourceViewer c={viewer} onClose={() => setViewer(null)}
+        onQuote={(q) => { setViewer(null); setShareArt(q); }} />}
     </div>
     </FeaturesProvider>
   );

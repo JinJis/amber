@@ -9,6 +9,7 @@ console reads these so an empty store is obvious (and fixable) rather than silen
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
@@ -53,7 +54,8 @@ def update_progress(job_id: int, done: int) -> None:
         pass
 
 
-def finish_job(job_id: int, status: str, rows: int = 0, error: str | None = None) -> None:
+def finish_job(job_id: int, status: str, rows: int = 0, error: str | None = None,
+               error_details: list[dict] | None = None) -> None:
     with SessionLocal() as db:
         job = db.get(IngestionJob, job_id)
         if job is None:
@@ -61,8 +63,21 @@ def finish_job(job_id: int, status: str, rows: int = 0, error: str | None = None
         job.status = status
         job.rows = rows
         job.error = (error or "")[:2000] or None
+        job.error_details = json.dumps(error_details, ensure_ascii=False)[:8000] if error_details else None
         job.ended_at = _now()
         db.commit()
+
+
+def group_ticker_errors(errors: dict[str, str]) -> list[dict]:
+    """Group per-ticker failure messages by identical cause → ``[{error, tickers, count}]`` sorted by
+    count desc (OPS-1). Turns a 47-ticker failure into "2 causes" the admin can actually read + act on."""
+    groups: dict[str, list[str]] = {}
+    for ticker, msg in errors.items():
+        groups.setdefault(msg or "(알 수 없는 오류)", []).append(ticker)
+    return sorted(
+        ({"error": msg, "tickers": tickers, "count": len(tickers)} for msg, tickers in groups.items()),
+        key=lambda g: g["count"], reverse=True,
+    )
 
 
 def record_pipeline_error(kind: str, market: str | None, error: str) -> int:
@@ -158,6 +173,7 @@ def latest_job(kind: str, market: str | None = None) -> dict | None:
             return None
         return {"id": j.id, "kind": j.kind, "market": j.market, "spec": j.spec, "status": j.status,
                 "rows": j.rows, "total": j.total, "done": j.done, "error": j.error,
+                "error_details": _load_details(j.error_details),
                 "started_at": j.started_at.isoformat() if j.started_at else None,
                 "ended_at": j.ended_at.isoformat() if j.ended_at else None}
 
@@ -179,12 +195,23 @@ def list_jobs(limit: int = 25) -> list[dict]:
             {
                 "id": j.id, "kind": j.kind, "market": j.market, "spec": j.spec,
                 "status": j.status, "rows": j.rows, "total": j.total, "done": j.done,
-                "error": j.error,
+                "error": j.error, "error_details": _load_details(j.error_details),
                 "started_at": j.started_at.isoformat() if j.started_at else None,
                 "ended_at": j.ended_at.isoformat() if j.ended_at else None,
             }
             for j in rows
         ]
+
+
+def _load_details(raw: str | None) -> list[dict]:
+    """Parse the stored error_details JSON back to a list (empty on legacy/None/garbage rows)."""
+    if not raw:
+        return []
+    try:
+        val = json.loads(raw)
+        return val if isinstance(val, list) else []
+    except (ValueError, TypeError):
+        return []
 
 
 async def run_ticker_job(
@@ -202,6 +229,7 @@ async def run_ticker_job(
     job = await asyncio.to_thread(start_job, kind, market, spec, len(tickers))
     await asyncio.to_thread(log_activity, kind, market, f"▶ 시작 · {len(tickers)}종목", job)
     per: dict[str, int] = {}
+    errors: dict[str, str] = {}   # OPS-1: real per-ticker failure message, kept for grouping
     try:
         for i, t in enumerate(tickers, 1):
             try:
@@ -210,13 +238,20 @@ async def run_ticker_job(
                                         f"[{t}] {per[t]} rows ✓ ({i}/{len(tickers)})", job)
             except Exception as exc:  # noqa: BLE001 — one ticker never sinks the run
                 per[t] = -1
+                errors[t] = f"{type(exc).__name__}: {exc}"[:500]
                 logger.warning("%s ingest failed %s:%s — %s", kind, market, t, exc)
-                await asyncio.to_thread(log_activity, kind, market,
-                                        f"[{t}] 실패 — {type(exc).__name__}: {exc}", job, "error")
             await asyncio.to_thread(update_progress, job, i)
         rows = sum(v for v in per.values() if v > 0)
         failed = [t for t, v in per.items() if v == -1]
-        await asyncio.to_thread(finish_job, job, "success", rows, (f"failed: {failed}" if failed else None))
+        # Group failures by cause and emit ONE activity row per cause (not per ticker), then persist the
+        # grouped detail on the job so the admin shows the real error + a retry-failed-only action.
+        groups = group_ticker_errors(errors) if errors else []
+        for g in groups:
+            preview = ", ".join(g["tickers"][:8]) + ("…" if g["count"] > 8 else "")
+            await asyncio.to_thread(log_activity, kind, market,
+                                    f"실패 {g['count']}종목 — {g['error']} · [{preview}]", job, "error")
+        summary = f"실패 {len(failed)} · 원인 {len(groups)}종" if failed else None
+        await asyncio.to_thread(finish_job, job, "success", rows, summary, groups or None)
         await asyncio.to_thread(log_activity, kind, market,
                                 f"✓ 완료 · {rows} rows" + (f", {len(failed)} 실패" if failed else ""), job)
         return {"status": "success", "rows": rows, "per_ticker": per, "failed": failed}
@@ -268,7 +303,12 @@ async def run_backfill(
         per = result if isinstance(result, dict) else {}  # {ticker: rows} (-1 = per-ticker failure)
         rows = sum(v for v in per.values() if isinstance(v, int) and v > 0)
         failed = [t for t, v in per.items() if v == -1]
-        finish_job(job_id, "success", rows=rows, error=(f"failed: {failed}" if failed else None))
+        # Bulk loaders return only a rows-or-(-1) code per ticker (no per-ticker message), so all
+        # failures group under one cause — still enough for the admin's retry-failed-only action.
+        groups = ([{"error": "재무 수집 실패 (상세 메시지 없음 — bulk 로더)", "tickers": failed, "count": len(failed)}]
+                  if failed else [])
+        summary = f"실패 {len(failed)} · 원인 {len(groups)}종" if failed else None
+        finish_job(job_id, "success", rows=rows, error=summary, error_details=groups or None)
         log_activity("backfill", market, f"✓ 완료 · {rows} rows" + (f", {len(failed)} 실패" if failed else ""), job_id)
         return {"job_id": job_id, "status": "success", "rows": rows, "per_ticker": per, "failed": failed}
     except Exception as exc:  # noqa: BLE001 — record the failure, don't crash the worker

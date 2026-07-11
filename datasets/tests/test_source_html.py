@@ -189,6 +189,10 @@ async def test_sanitize_strips_base_and_injects_csp(monkeypatch, tmp_path):
     respx.get("https://src.example/p").mock(return_value=httpx.Response(200, html=page))
     out = await S.get_source_html("https://src.example/p")
     assert out is not None
-    assert "<base" not in out.lower()
-    assert "default-src 'none'" in out
+    # the SOURCE's base is stripped; OUR base (the page's own origin) is injected so relative
+    # assets resolve inside srcdoc — never the attacker-chosen one.
+    assert "evil.example" not in out
+    assert '<base href="https://src.example/">' in out
+    # external pages get the PASSIVE csp: styles/images may load over https, scripts stay dead
+    assert "default-src 'none'" in out and "img-src https: data:" in out
     assert "1,234.5" in out                       # the cited figure survives

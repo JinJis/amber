@@ -9,28 +9,12 @@
 
 import { useState } from "react";
 import type { CalcRow, Computation } from "../lib/types";
+import { DerivationCard } from "./DerivationCard";
 
-function RowList({ title, rows }: { title: string; rows?: CalcRow[] }) {
-  if (!rows || rows.length === 0) return null;
-  return (
-    <div className="cp-sec">
-      <div className="cp-sec-h mono">{title}</div>
-      <dl className="cp-rows">
-        {rows.map((r, i) => (
-          <div className="cp-row" key={i}>
-            <dt className="cp-label">{r.label}</dt>
-            <dd className="cp-val mono">
-              {r.value}
-              {r.source ? <span className="cp-src"> · {r.source}</span> : null}
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  );
-}
-
-export function ComputationPanel({ comp }: { comp?: Computation | null }) {
+export function ComputationPanel({ comp, onEvidence }: {
+  comp?: Computation | null;
+  onEvidence?: (evidenceUrl: string, row: CalcRow) => void;
+}) {
   const [open, setOpen] = useState(false);
   if (!comp) return null;
   return (
@@ -42,11 +26,8 @@ export function ComputationPanel({ comp }: { comp?: Computation | null }) {
       </button>
       {open && (
         <div className="cp-body">
-          {comp.formula ? <div className="cp-formula mono">{comp.formula}</div> : null}
-          <RowList title="사용한 데이터" rows={comp.inputs} />
-          <RowList title="가정" rows={comp.assumptions} />
-          <RowList title="계산 단계" rows={comp.steps} />
-          {comp.note ? <div className="cp-note">{comp.note}</div> : null}
+          {/* DRV-3: the Derivation Card (symbol chips ↔ rows, numbered steps, evidence links) */}
+          <DerivationCard comp={comp} onEvidence={onEvidence} />
         </div>
       )}
     </div>

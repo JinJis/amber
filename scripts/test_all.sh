@@ -23,7 +23,7 @@ unit() {
   docker run --rm \
     -v "$PWD/$1:/app" -v "vg_uvcache:/root/.cache/uv" -v "vg_venv_${1//[^a-zA-Z0-9]/_}:/app/.venv" \
     -w /app -e UV_COMPILE_BYTECODE=0 -e UV_LINK_MODE=copy -e AUTH_DISABLED=true "$UVIMG" \
-    sh -lc "rm -f studio.db; uv run --extra dev ${2:-} pytest -q"
+    sh -lc "rm -f studio.db datasets.db; uv run --extra dev ${2:-} pytest -q"
 }
 
 step "Unit tests (in docker — uv image, no host uv)"
@@ -31,6 +31,11 @@ for d in datasets control-plane mcp agent-engine studio-api; do
   echo "-- $d"; unit "$d" "" || FAIL=1
 done
 echo "-- rag (pipeline on a fake embedder; live semantic skips without GOOGLE_API_KEY)"; unit rag "" || FAIL=1
+
+step "Web unit tests (vitest in docker node — IMP-8/UX-4)"
+docker run --rm -v "$PWD/web:/app" -v "vg_webmodules:/app/node_modules" -w /app node:20-alpine \
+  sh -lc "npm install --no-audit --no-fund --loglevel=error >/dev/null && ./node_modules/.bin/vitest run" \
+  && echo "  web unit ok" || FAIL=1
 
 step "Web build (docker build)"
 docker compose build web >/dev/null 2>&1 && echo "  web build ok" || { echo "  web build FAILED"; FAIL=1; }

@@ -45,6 +45,10 @@ class Chunk(BaseModel):
 
 class IngestRequest(BaseModel):
     documents: list[IngestDoc]
+    # RQ-2: before inserting, DELETE existing chunks whose meta equals every key here (e.g.
+    # {"accession": "..."}). Structure-aware re-chunking changes section boundaries, so the
+    # old per-section ids no longer line up — replace-by-key prevents stale chunks piling up.
+    replace: dict[str, str] | None = None
 
 
 class SearchRequest(BaseModel):
@@ -52,6 +56,7 @@ class SearchRequest(BaseModel):
     top_k: int | None = None
     ticker: str | None = None
     market: str | None = None
+    doc_type: str | None = None   # filing | news | transcript | presentation | earnings | era_news
 
 
 class SearchHit(BaseModel):

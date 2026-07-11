@@ -22,8 +22,28 @@ async def _run_financials(market: str, tickers: list[str]) -> None:
 
 async def _run_prices(market: str, tickers: list[str]) -> None:
     from app.config import settings
-    from app.store.prices_ingest import run_prices_ingest
+    from app.store.prices_ingest import history_universe_symbols, run_prices_ingest
+
+    # HL-1: every US prices sweep also refreshes the History Lab anchor universe (^GSPC, ^VIX,
+    # ^KS11 … — all Yahoo-global symbols living in the US namespace). First ingest deep-backfills
+    # to max history inside run_prices_ingest; afterwards it's the same cheap incremental fetch.
+    if market.upper() == "US":
+        seen = {t.upper() for t in tickers}
+        tickers = list(tickers) + [s for s in sorted(history_universe_symbols()) if s not in seen]
     await run_prices_ingest(market, tickers, years=settings.prices_backfill_years)
+    if market.upper() == "US":
+        # HL-2: re-derive drawdown episodes for the anchors while their bars are fresh (idempotent;
+        # cheap — pure function of the closes) + keep the curated regimes seeded.
+        from app.store.history import recompute_episodes, seed_regimes
+        for s in sorted(history_universe_symbols()):
+            try:
+                recompute_episodes("US", s)
+            except Exception as exc:  # noqa: BLE001 — one anchor never sinks the sweep
+                logger.warning("episode recompute failed for %s: %s", s, exc)
+        try:
+            seed_regimes()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("regime seeding failed: %s", exc)
 
 
 async def _run_corp_actions(market: str, tickers: list[str]) -> None:
@@ -54,6 +74,16 @@ async def _run_presentation_text(market: str, tickers: list[str]) -> None:
 async def _run_kr_earnings(market: str, tickers: list[str]) -> None:
     from app.store.kr_earnings_ingest import run_kr_earnings_ingest
     await run_kr_earnings_ingest(market, tickers)
+
+
+async def _run_era_news(market: str, tickers: list[str]) -> None:
+    from app.store.era_news_ingest import run_era_news_ingest
+    await run_era_news_ingest(market, tickers)   # tickers = regime slugs (empty = all)
+
+
+async def _run_logos(market: str, tickers: list[str]) -> None:
+    from app.routers.logos import run_logo_ingest
+    await run_logo_ingest(market, tickers)
 
 
 # pipeline cadence tiers — the scheduler skips a pipeline that ran within `min_interval_seconds`,
@@ -119,16 +149,18 @@ PIPELINES: list[dict] = [
      ],
      "fetch": "재무제표에 등장한 최근 4개 공시 본문 HTML을 텍스트 추출→RAG 색인(doc_id={accession}:s.{n}). "
               "HTML은 인앱 뷰어와 동일 원천을 공유·캐시(증분)."},
-    {"id": "transcript_text", "label": "어닝콜 트랜스크립트 → RAG", "source": "Alpha Vantage", "store": "RAG corpus",
-     "kind": "transcript", "markets": ["US"], "default": False, "runner": _run_transcript_text,
+    {"id": "transcript_text", "label": "어닝콜 트랜스크립트 → RAG", "source": "API Ninjas / Alpha Vantage", "store": "RAG corpus",
+     "kind": "transcript", "markets": ["US", "KR"], "default": False, "runner": _run_transcript_text,
      "min_interval_seconds": _WEEK,
-     "desc": "분기 어닝콜 전문(화자별)을 RAG 색인 — 인앱 트랜스크립트 프리뷰와 동일 원천 (US, 무료 키 필요)",
+     "desc": "분기 어닝콜 전문(화자별)을 RAG 색인 — 인앱 트랜스크립트 프리뷰와 동일 원천 (US+KR, API_NINJAS_KEY)",
      "upstream": [
-         "US · Alpha Vantage 어닝콜 전문 — GET https://www.alphavantage.co/query"
-         "?function=EARNINGS_CALL_TRANSCRIPT&symbol={ticker}&quarter={YYYYQn}&apikey=…",
+         "US·KR · API Ninjas 어닝콜 전문 — GET https://api.api-ninjas.com/v1/earningstranscript"
+         "?ticker={SYM|005930.KS}&year={YYYY}&quarter={n} (X-Api-Key, 프리미엄 · ~5년 깊이)",
+         "US 폴백 · Alpha Vantage — GET https://www.alphavantage.co/query"
+         "?function=EARNINGS_CALL_TRANSCRIPT&symbol={ticker}&quarter={YYYYQn} (무료, 일 25콜)",
      ],
-     "fetch": "최근 TRANSCRIPT_INGEST_LIMIT개 분기(기본 4) 어닝콜 전문을 화자별 텍스트로 RAG 색인 "
-              "(doc_id=TR:{ticker}:{quarter}:s.{n}). KR은 무료 API 미제공 → no-op. AV 무료 키는 일 25콜 제한."},
+     "fetch": "최근 TRANSCRIPT_INGEST_LIMIT개 분기(기본 8) 어닝콜 전문을 화자별 텍스트로 RAG 색인 "
+              "(doc_id=TR:{ticker}:{quarter}:s.{n}). KR 코드는 .KS→.KQ로 시도(API Ninjas 전용)."},
     {"id": "presentation_text", "label": "어닝 발표자료(8-K 덱) → RAG", "source": "SEC EDGAR · Document AI",
      "kind": "presentation", "markets": ["US"], "default": False, "runner": _run_presentation_text,
      "min_interval_seconds": _WEEK,
@@ -152,7 +184,31 @@ PIPELINES: list[dict] = [
      "fetch": "최근 KR_EARNINGS_INGEST_LIMIT개(기본 4) 잠정실적 공정공시 본문 HTML을 텍스트 추출→RAG 색인 "
               "(doc_id={rcept_no}:s.{n}, doc_type=earnings). HTML은 인앱 DART 뷰어와 동일 원천 공유·캐시. "
               "US는 no-op(어닝콜 트랜스크립트 파이프라인 사용)."},
+    {"id": "era_news", "label": "시대 뉴스 → RAG", "source": "GDELT · NYT Archive", "store": "RAG corpus",
+     "kind": "era_news", "markets": ["US"], "default": False, "runner": _run_era_news,
+     "min_interval_seconds": _WEEK,
+     "desc": "큐레이션된 역사적 국면(닷컴버블·GFC·코로나·IMF 등)의 구간 뉴스를 RAG 색인(doc_type=era_news) — "
+             "2017+는 GDELT(무료), 이전은 NYT Archive(NYT_API_KEY 필요, 없으면 갭). ticker=국면 slug로 검색 범위.",
+     "upstream": [
+         "US · GDELT DOC 2.0 artlist — GET https://api.gdeltproject.org/api/v2/doc/doc?mode=artlist (키 불필요, 2017+)",
+         "US · NYT Archive — GET https://api.nytimes.com/svc/archive/v1/{year}/{month}.json?api-key=… (1851+)",
+     ],
+     "fetch": "각 국면 구간(start~end)의 위기 관련 기사(제목·초록)를 최대 60건 RAG 색인 "
+              "(doc_id=era:{slug}:{url}). 커버리지 없는 구간(2017 이전+NYT 키 없음)은 0 chunks(갭)."},
 ]
+
+PIPELINES.append(
+    {"id": "logos", "label": "회사 로고", "source": "Logo.dev / FMP / favicon", "store": "logos(volume)",
+     "kind": "logo", "markets": ["US", "KR"], "default": False, "runner": _run_logos,
+     "min_interval_seconds": _WEEK,
+     "desc": "종목 로고 이미지(하이브리드 해석·캐시). 없으면 UI가 모노그램 표시(무 날조).",
+     "upstream": [
+         "Logo.dev — GET https://img.logo.dev/ticker/{SYMBOL} 또는 /{domain} (LOGODEV_TOKEN 있을 때)",
+         "FMP — GET https://financialmodelingprep.com/stable/profile?symbol={SYMBOL} (image/website)",
+         "Google favicon — GET https://www.google.com/s2/favicons?domain={domain}&sz=128 (도메인 있을 때만)",
+     ],
+     "fetch": "티커별 로고 1장을 해석→/data/logos에 캐시(.img+.meta), 미스는 .miss 마커. 재실행 시 "
+              "기존 캐시는 건너뛰고 미스만 재시도."})
 
 PIPELINE_BY_ID = {p["id"]: p for p in PIPELINES}
 KIND_TO_PIPELINE = {p["kind"]: p for p in PIPELINES}

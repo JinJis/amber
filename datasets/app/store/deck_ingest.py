@@ -96,7 +96,8 @@ async def ingest_deck_for_ticker(market: str, ticker: str, limit: int | None = N
         return 0
     limit = limit or settings.deck_ingest_limit
     decks = await recent_decks(ticker, limit)
-    docs: list[dict] = []
+    rag = rag_url or settings.rag_url
+    total_docs, chunks = 0, 0
     for d in decks:
         pdf = await _fetch_pdf(d["pdf_url"])
         if not pdf:
@@ -104,12 +105,17 @@ async def ingest_deck_for_ticker(market: str, ticker: str, limit: int | None = N
         path = _cache_path(d["ticker"], d["accession"])     # cache the PDF so the viewer can serve it
         path.parent.mkdir(parents=True, exist_ok=True)
         await asyncio.to_thread(path.write_bytes, pdf)
-        chunks = await parse_pdf(pdf)
-        if chunks:
-            docs += _chunks_to_docs(d, chunks)
-    if not docs:
+        parsed = await parse_pdf(pdf)
+        if not parsed:
+            continue
+        docs = _chunks_to_docs(d, parsed)
+        if not docs:
+            continue
+        total_docs += len(docs)
+        # replace by the deck's synthetic accession so a re-parse swaps its chunks cleanly (RQ-2)
+        chunks += await _ingest_to_rag(rag, docs, replace={"accession": docs[0]["accession"]})
+    if not total_docs:
         return 0
-    chunks = await _ingest_to_rag(rag_url or settings.rag_url, docs)
     log.info("deck: %s → %d decks, %d chunks indexed", ticker.upper(), len(decks), chunks)
     return chunks
 

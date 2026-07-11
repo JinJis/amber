@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     gateway_url: str = "http://control-plane:8001"
     agent_engine_url: str = "http://agent-engine:8003"   # AGENT_ENGINE_URL (agent /agent/info)
     admin_token: str = "dev-admin-token"          # ADMIN_TOKEN, for control-plane admin proxies
+    studio_url: str = "http://studio-api:8004"    # STUDIO_URL (Macro Trends 수동 갱신 ops)
+    service_token: str = "dev-service-token"      # SERVICE_TOKEN (studio-api first-party guard)
 
 
 settings = Settings()

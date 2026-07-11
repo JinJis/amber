@@ -148,7 +148,9 @@ and what the agent engine resolves tools from — so REST, MCP, and the agent al
 A financial datasets API covering the US and Korean markets. Market chosen with `market=US|KR`.
 
 - **Connectors (provider adapters + registry):** SEC EDGAR (US fundamentals/filings/earnings/insider/13F),
-  Yahoo Finance (US+KR prices), FRED (US macro), OpenDART (KR fundamentals/filings/earnings/insider),
+  Yahoo Finance (US+KR prices — IMP-15: `PRICES_PROVIDER_*=auto` runs a fallback chain, Yahoo →
+  Stooq(US)/KIS(KR); the response `source` field names the upstream that actually served),
+  FRED (US macro), OpenDART (KR fundamentals/filings/earnings/insider),
   BOK ECOS (KR macro), Google News (US+KR). Free/open defaults; paid adapters behind env keys.
 - **Endpoints (real):** company facts, prices + snapshot, 3 financial statements (+ combined), filings,
   macro interest rates, financial-metrics snapshot, news, earnings, insider-trades, 13F (filer_cik),
@@ -181,7 +183,11 @@ A gateway in front of the data plane. Package `controlplane` (talks to data plan
 - **Entitlement:** fetches the data-plane `/catalog`, maps `(method, path, market)` → connector(s); a
   request is allowed iff the project activated one of them.
 - **Gateway flow:** authenticate → entitle → rate-limit → proxy to data plane → meter + audit. Returns
-  `x-connector` / `x-cost-units` headers; public `/catalog` passthrough.
+  `x-connector` / `x-cost-units` headers; public `/catalog` passthrough. **Ungoverned passthroughs**
+  (not in any manifest → no entitlement, auth+meter only): `/evidence/*` (sourced HTML) and `/logos`
+  (company brand images — hybrid resolver Logo.dev→FMP→favicon, cached on the datasets volume; a miss
+  returns 204 and the UI draws a monogram — never a fabricated logo). Admins fill KR/coverage gaps via
+  `POST /logos` (studio proxy → `web /api/logos → TickerLogo`; admin panel has an upload form).
 - **Admin (X-Admin-Token):** create tenant/project/key, activate connectors, usage + audit summaries.
 - **6 tests.** Verified live: activate `yahoo` → `/prices` 200; unactivated → 403; usage metered.
 

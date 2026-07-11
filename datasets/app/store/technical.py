@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 from datetime import date
 
+from app.derivation import TECH_FORMULA, calc_row, computation
 from app.providers.registry import get_prices_provider
 from app.symbols import Market, build_ref
 
@@ -162,6 +163,26 @@ def _build(kind: str, n: int, dates: list[str], closes: list[float]) -> dict | N
     return None
 
 
+def _tech_derivation(dates: list[str], closes: list[float], parsed: list[tuple]) -> dict:
+    """M-DERIV (DRV-1): the definition of every requested indicator + its window — the
+    derivation of a technical figure is its formula over the (sourced) close series."""
+    kinds = [(k, n) for k, n in parsed if k]
+    formulas = []
+    seen = set()
+    for k, _n in kinds:
+        f = TECH_FORMULA.get(k)
+        if f and k not in seen:
+            seen.add(k)
+            formulas.append(f)
+    inputs = []
+    if dates:
+        inputs.append(calc_row("종가 시계열", f"{len(closes)} bars ({dates[0]} ~ {dates[-1]})", source=SOURCE))
+    assumptions = [calc_row(f"{k.upper()} 윈도우", f"{n}일", symbol="n")
+                   for k, n in kinds if k != "macd" and n]
+    return computation("기술적 지표 (종가 파생 · 신호 아님)", " · ".join(formulas) or None,
+                       inputs=inputs, assumptions=assumptions, note=_NOTE)
+
+
 async def technical_indicators(market: str, ticker: str, indicators: str | None,
                                interval: str, start: date, end: date) -> dict:
     mk = Market(market)
@@ -189,4 +210,6 @@ async def technical_indicators(market: str, ticker: str, indicators: str | None,
         if ind:
             out.append(ind)
     return {"ticker": ref.ticker, "market": mk.value, "interval": interval, "source": SOURCE,
-            "as_of": (dates[-1] if dates else None), "indicators": out, "note": _NOTE}
+            "as_of": (dates[-1] if dates else None), "indicators": out, "note": _NOTE,
+            # M-DERIV (DRV-1): how each indicator is derived from the close series
+            "computation": _tech_derivation(dates, closes, [(_parse(t) or (None, 0)) for t in tokens])}

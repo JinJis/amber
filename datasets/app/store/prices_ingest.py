@@ -14,6 +14,7 @@ from datetime import date
 
 from sqlalchemy import func, select
 
+from app.providers.chain import ChainPricesProvider
 from app.providers.registry import get_prices_provider
 from app.store._ingest_helpers import _incremental_start, _num, _retry, _to_date
 from app.store.db import SessionLocal, init_db
@@ -35,7 +36,12 @@ def _last_bar_date(market: str, ticker: str) -> date | None:
 async def ingest_prices_ticker(market: Market, ticker: str, start: date, end: date, retries: int = 1) -> int:
     ref = build_ref(market, ticker)
     provider = get_prices_provider(market)
-    bars = await _retry(lambda: provider.prices(ref, _INTERVAL, start, end), retries)
+    if isinstance(provider, ChainPricesProvider):
+        member, bars = await _retry(lambda: provider.prices_labeled(ref, _INTERVAL, start, end), retries)
+        source = member.key
+    else:
+        bars = await _retry(lambda: provider.prices(ref, _INTERVAL, start, end), retries)
+        source = "yahoo"
     rows = []
     for p in bars:
         d = p.model_dump() if hasattr(p, "model_dump") else dict(p)
@@ -45,7 +51,7 @@ async def ingest_prices_ticker(market: Market, ticker: str, start: date, end: da
         rows.append({
             "market": market.value, "ticker": ref.ticker, "interval": _INTERVAL, "bar_date": bd,
             "open": _num(d.get("open")), "high": _num(d.get("high")), "low": _num(d.get("low")),
-            "close": _num(d.get("close")), "volume": _num(d.get("volume")), "source": "yahoo",
+            "close": _num(d.get("close")), "volume": _num(d.get("volume")), "source": source,
         })
 
     def _write() -> int:
@@ -68,21 +74,34 @@ async def ingest_prices_ticker(market: Market, ticker: str, start: date, end: da
     return await asyncio.to_thread(_write)
 
 
+def history_universe_symbols() -> set[str]:
+    """The HL-1 anchor set (upper-cased), parsed from settings.history_universe."""
+    from app.config import settings
+    return {s.strip().upper() for s in settings.history_universe.split(",") if s.strip()}
+
+
 async def run_prices_ingest(market: str, tickers: list[str], years: int = 2, retries: int = 1,
                             overlap_days: int = 5) -> dict:
     """Collect daily OHLCV for ``tickers`` into ``PriceBar``; recorded as an IngestionJob.
 
     Incremental: each ticker is fetched only from its last stored bar (minus ``overlap_days`` to
-    re-check recent corrections); a ticker with no data yet gets the full ``years``-year backfill."""
+    re-check recent corrections); a ticker with no data yet gets the full ``years``-year backfill —
+    except HL-1 history-universe anchors (^GSPC, ^VIX, ^KS11 …), whose first ingest starts at
+    ``history_backfill_start`` ("max" in practice; Yahoo clips to its earliest bar)."""
+    from app.config import settings
+
     init_db()
     mk = Market(market)
     end = date.today()
     full_start = date(end.year - years, end.month, end.day) if end.year - years > 0 else date(end.year - years, 1, 1)
+    deep_start = date.fromisoformat(settings.history_backfill_start)
+    universe = history_universe_symbols()
 
     async def _one(t: str) -> int:
         nt = build_ref(mk, t).ticker
         last = await asyncio.to_thread(_last_bar_date, market, nt)
-        start = _incremental_start(last, full_start, overlap_days)
+        first_full = deep_start if t.strip().upper() in universe else full_start
+        start = _incremental_start(last, first_full, overlap_days)
         return await ingest_prices_ticker(mk, t, start, end, retries)
 
     return await run_ticker_job("prices", market, f"prices · {len(tickers)} tickers (증분)", tickers, _one)

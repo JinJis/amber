@@ -188,11 +188,11 @@ export default function AgentBuilder({
                 </div>
               );
             })}
-            {categories.length === 0 && <div className="muted-note">툴 목록을 불러오지 못했습니다.</div>}
+            {categories.length === 0 && <div className="muted-note">도구 목록을 불러오지 못했어요.</div>}
           </div>
         </div>
 
-        <GuardrailLabel>매수/매도·목표가·전망은 자동 거절됩니다 (끌 수 없음)</GuardrailLabel>
+        <GuardrailLabel>매수·매도, 목표가, 전망에는 답하지 않아요 (항상 켜져 있어요)</GuardrailLabel>
 
         {err && <div className="err" style={{ marginTop: 10 }}>{err}</div>}
     </Modal>

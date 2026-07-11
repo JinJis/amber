@@ -44,11 +44,16 @@ def _last_user(messages: list[dict]) -> str:
 
 
 async def _followups_event(task: str, final_text: str, citations: list[dict],
-                           bk: str | None, conversation: list | None = None) -> dict | None:
+                           bk: str | None, conversation: list | None = None,
+                           audit: dict | None = None, artifacts: list[dict] | None = None,
+                           client: PlatformClient | None = None, tools: dict | None = None,
+                           cite_ctx: list | None = None) -> dict | None:
     """Build the 'suggestions' SSE event for a finished answer. Always non-empty when there's an
     answer — suggest_followups uses the deep LLM on gemini and a deterministic capability-aware
     fallback otherwise — so the chip row renders on EVERY answer path (conceptual + data). The
-    recent transcript is passed so the chips DEEPEN the thread instead of restarting it."""
+    recent transcript is passed so the chips DEEPEN the thread instead of restarting it. When the
+    turn had a gateway client, a LIVE PULSE (오늘 가격·최신 공시·헤드라인·수급/어닝·RAG 원문) is
+    fetched RIGHT NOW so the chips can point at real, current facts the answer didn't contain."""
     if not (final_text or "").strip():
         return None
     from agentengine.agent import _intake_context, suggest_followups
@@ -59,15 +64,43 @@ async def _followups_event(task: str, final_text: str, citations: list[dict],
         ctx_bits.append("다룬 종목: " + ", ".join(tickers[:5]))
     if kinds:
         ctx_bits.append("사용한 데이터: " + ", ".join(kinds))
+    # RC-2: 이번 답변의 검증된 수치·그린 차트 종류를 문맥으로 — 후속질문이 "그 12%가 왜"처럼
+    # 구체 수치를 파고들게 한다 (검증 통과분만 — 날조 수치로 유도하지 않음).
+    if audit and audit.get("ledger"):
+        nums = [str(r.get("raw")) for r in audit["ledger"] if r.get("supported")][:6]
+        if nums:
+            ctx_bits.append("검증된 핵심 수치: " + ", ".join(nums))
+    if artifacts:
+        akinds = sorted({str(a.get("kind")) for a in artifacts if a.get("kind")})[:4]
+        if akinds:
+            ctx_bits.append("그린 차트·표: " + ", ".join(akinds))
     # recent prior turns → the suggester builds on the conversation (심화), not generic chips
     transcript = _intake_context(conversation) if conversation else ""
     conv_block = f"최근 대화:\n{transcript}\n\n" if transcript and transcript != "(no prior turns)" else ""
     eff_backend = bk or settings.llm_backend
-    logger.info("chat: requesting follow-up chips (backend=%s, answer_len=%d, tickers=%s, kinds=%s)",
-                eff_backend, len(final_text), tickers, kinds)
+    # 실시간 펄스: 이 턴이 다룬 종목의 "지금"(가격·새 공시·헤드라인·수급/어닝·보유 원문)을 방금
+    # 게이트웨이로 조회해 제안 프롬프트에 넣는다 — 칩이 답변에 없던 새 사실을 지목할 수 있게.
+    # (ticker, market)은 이 턴의 실제 툴 호출 인자에서 복원; best-effort — 실패해도 칩은 뜬다.
+    live = ""
+    if client is not None and tools and eff_backend == "gemini":
+        from agentengine.enrichment import live_pulse
+        targets: list[tuple[str, str | None]] = []
+        seen_t: set[str] = set()
+        for cit, tool, args, data in (cite_ctx or []):
+            tk = (args or {}).get("ticker")
+            if tk and tk not in seen_t:
+                seen_t.add(tk)
+                targets.append((tk, (args or {}).get("market") or _market_hint(tool, data)))
+        for tk in tickers:  # citations without a recorded call (e.g. resolved upstream)
+            if tk and tk not in seen_t:
+                seen_t.add(tk)
+                targets.append((tk, None))
+        live = await live_pulse(client.call_tool, tools, targets, task)
+    logger.info("chat: requesting follow-up chips (backend=%s, answer_len=%d, tickers=%s, kinds=%s, live_len=%d)",
+                eff_backend, len(final_text), tickers, kinds, len(live))
     sugg = await suggest_followups(task, final_text, settings.model, bk,
                                    context=" · ".join(ctx_bits) or None, tickers=tickers, kinds=kinds,
-                                   conversation=conv_block)
+                                   conversation=conv_block, live=live)
     logger.info("chat: follow-up chips → %d suggestion(s)", len(sugg))
     return {"type": "suggestions", "items": sugg} if sugg else None
 
@@ -132,12 +165,16 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
     if intake.value_chain:
         yield {"type": "thinking", "phase": "plan", "text": "밸류체인(공급망 구조)으로 정리할게요…"}
         system = ((system or "") + _VALUE_CHAIN_GUIDE).strip()
-
     planner = get_planner(bk)
+    # PLAN-3: plan-tier synthesis override (free/guest → flash) — resource config from the
+    # spec studio-api merged per turn; the planner instance is per-turn, so no cross-talk.
+    if spec and getattr(spec, "synthesis_model", None) and hasattr(planner, "synthesis_override"):
+        planner.synthesis_override = spec.synthesis_model
     from agentengine.planner import resolve_ticker
     history: list = []
     citations: list[dict] = []
-    cite_ctx: list[tuple[dict, dict, object]] = []  # (citation, tool, data) → re-anchor evidence post-answer
+    cite_ctx: list[tuple[dict, dict, dict, object]] = []  # (citation, tool, args, data) → post-answer 재앵커/패시지
+    probes: list[dict] = []   # SA-1: periodic sources this turn → the standing-question offer
     artifacts: list[dict] = []
     art_objs: list = []          # the Artifact objects → enrich with chart markers post-loop
     seen_artifacts: set = set()
@@ -164,33 +201,71 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                 c["confidence_why"] = sc.get("why")
         return note
 
+    def _figures_block() -> str:
+        # The charts/tables THIS turn rendered, numbered by their position in art_objs — the
+        # synthesis model places each inline with {{figure:N}} (the UI swaps it for the card).
+        lines = []
+        for i, a in enumerate(art_objs, 1):
+            bits = [f"{{{{figure:{i}}}}}", getattr(a, "kind", None) or "chart",
+                    getattr(a, "title", None) or ""]
+            if getattr(a, "source", None):
+                bits.append(f"출처 {a.source}")
+            lines.append(" · ".join(b for b in bits if b))
+        return "\n".join(lines)
+
     async def _synthesize(tools_arg, history_arg, system_arg):
         # REAL streaming of the final answer (gemini) — yields token events as the responder
         # generates them. Fallback/stub path char-chunks a one-shot result (newline-preserving).
         nonlocal final_text
         sources = number_sources(citations)
+        figures = _figures_block()
         if hasattr(planner, "stream_final") and (bk or settings.llm_backend) == "gemini":
             got = False
+            # ANCHOR-NORM: 묶음 인용([1,2]·[3-5])을 스트림 중에 개별 [n]으로 정규화 — 클라
+            # 링크화·used 마킹·감사 스팬이 전부 단일 마커 규약 위에서 동작한다.
+            from agentengine.anchors import AnchorStream
+            ns = AnchorStream()
             async for delta in planner.stream_final(task, tools_arg, history_arg, system_arg,
-                                                     conversation=messages, sources=sources):
+                                                     conversation=messages, sources=sources,
+                                                     figures=figures):
                 got = True
-                final_text += delta
-                yield {"type": "token", "text": delta}
+                out = ns.feed(delta)
+                if out:
+                    final_text += out
+                    yield {"type": "token", "text": out}
+            tail = ns.flush()
+            if tail:
+                final_text += tail
+                yield {"type": "token", "text": tail}
             if not got:
                 for ch in _chunks(fallback_answer(citations)):
                     final_text += ch
                     yield {"type": "token", "text": ch}
         else:
             dec = await planner.plan(task, tools_arg, history_arg, system_arg,
-                                     conversation=messages, force_final=True, sources=sources)
-            for ch in _chunks(dec.final or fallback_answer(citations)):
+                                     conversation=messages, force_final=True, sources=sources,
+                                     figures=figures)
+            from agentengine.anchors import normalize_anchor_groups
+            for ch in _chunks(normalize_anchor_groups(dec.final or fallback_answer(citations))):
                 final_text += ch
                 yield {"type": "token", "text": ch}
 
+    async def _emit_synthesis(tools_arg, history_arg, system_arg, note="답변을 작성하는 중…"):
+        # the "답변을 작성하는 중…" thinking line + the streamed answer — the exact pair the
+        # loop emits at every finalize site (the A2A combiner passes its own `note`).
+        yield {"type": "thinking", "phase": "synthesize", "text": note}
+        async for ev in _synthesize(tools_arg, history_arg, system_arg):
+            yield ev
+
+    async def _emit_verify():
+        # the cross-check thinking line shown just before synthesis at the two sites that
+        # refine — emitted ONLY there (other finalize sites deliberately skip it).
+        if citations and (bk or settings.llm_backend) == "gemini" and not refined:
+            yield {"type": "thinking", "phase": "verify", "text": "근거를 교차검증하는 중…"}
+
     # Conceptual / definitional question → answer from expertise, no tools, streamed.
     if not intake.needs_data:
-        yield {"type": "thinking", "phase": "synthesize", "text": "답변을 작성하는 중…"}
-        async for ev in _synthesize({}, [], system):
+        async for ev in _emit_synthesis({}, [], system):
             yield ev
         sev = await _followups_event(task, final_text, [], bk, conversation=messages)
         if sev:
@@ -217,9 +292,12 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
 
         # A2A: a complex, multi-facet request → dispatch focused sub-agents in PARALLEL (each
         # gathers its own evidence), stream their live cards, then COMBINE into one cited answer.
-        if intake.subtasks and len(intake.subtasks) >= 2:
+        # PLAN-3: the plan tier caps the fan-out (guest/free → 0/1 = no decomposition; the
+        # request still runs as one normal loop, so the answer never disappears — just narrower).
+        max_sub = spec.max_subagents if (spec and spec.max_subagents is not None) else None
+        if intake.subtasks and len(intake.subtasks) >= 2 and (max_sub is None or max_sub >= 2):
             from agentengine.orchestrator import run_subagent, SUBAGENT_BUDGET
-            subs = intake.subtasks
+            subs = intake.subtasks if max_sub is None else intake.subtasks[:max_sub]
             yield {"type": "thinking", "phase": "plan",
                    "text": f"분석을 {len(subs)}개 작업으로 나눠 동시에 진행할게요…"}
             for i, st in enumerate(subs):
@@ -236,11 +314,8 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                 results[i] = res
                 yield {"type": "subagent", "id": i, "title": res.title, "status": "done",
                        "sources": len({(c.source, c.url) for c in res.citations}), "steps": res.steps}
-
-            for res in results:  # unify evidence (global de-dup + 1-based [n]), artifacts, history
-                if not res:
-                    continue
-                history.extend(res.history)
+                # stream this facet's evidence NOW (global de-dup + 1-based [n]) — the 근거 패널
+                # fills live as each sub-agent lands, not in one dump after the slowest one.
                 for c in res.citations:
                     cit = c.model_dump()
                     key = (cit.get("source"), cit.get("url"))
@@ -259,13 +334,16 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                     artifacts.append(art)
                     yield {"type": "artifact", "artifact": art}
 
+            for res in results:  # history stays in SUB ORDER (deterministic synthesis grounding)
+                if res:
+                    history.extend(res.history)
+
             # combine: ONE rich synthesis weaving every facet, citing the unified sources. Pass the
             # full sub-agent `history` (the actual tool results) so the deep synthesis model grounds
             # on real evidence, not just the per-facet notes.
-            yield {"type": "thinking", "phase": "synthesize", "text": "하위 분석을 종합해 답변을 작성하는 중…"}
             notes = "\n".join(f"- [{r.title}] {r.note or '근거 수집 완료'}" for r in results if r)
             system_c = ((system or "") + f"\n\n[하위 분석 결과]\n{notes}").strip()
-            async for ev in _synthesize({}, history, system_c):  # streamed combiner
+            async for ev in _emit_synthesis({}, history, system_c, "하위 분석을 종합해 답변을 작성하는 중…"):
                 yield ev
             answered = True
 
@@ -274,11 +352,10 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
             decisions = await _plan_batch(is_last)
             # finalize when forced, or when the model returned prose instead of tool calls
             if is_last or (decisions and decisions[0].final is not None):
-                if citations and (bk or settings.llm_backend) == "gemini" and not refined:
-                    yield {"type": "thinking", "phase": "verify", "text": "근거를 교차검증하는 중…"}
+                async for ev in _emit_verify():
+                    yield ev
                 await _maybe_refine()  # grounds the synthesis + scores source confidence
-                yield {"type": "thinking", "phase": "synthesize", "text": "답변을 작성하는 중…"}
-                async for ev in _synthesize(tools, history, system):  # real streaming
+                async for ev in _emit_synthesis(tools, history, system):  # real streaming
                     yield ev
                 answered = True
                 break
@@ -294,11 +371,10 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
             # an identical batch as last step means the model is stuck — synthesize now
             sig = "|".join(sorted(s for s in (call_sig(d) for d in batch) if s))
             if sig and sig == last_sig:
-                if not refined and citations and (bk or settings.llm_backend) == "gemini":
-                    yield {"type": "thinking", "phase": "verify", "text": "근거를 교차검증하는 중…"}
+                async for ev in _emit_verify():
+                    yield ev
                 await _maybe_refine()
-                yield {"type": "thinking", "phase": "synthesize", "text": "답변을 작성하는 중…"}
-                async for ev in _synthesize(tools, history, system):
+                async for ev in _emit_synthesis(tools, history, system):
                     yield ev
                 answered = True
                 break
@@ -317,8 +393,7 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                 yield {"type": "thinking", "phase": "fetch", "text": f"{label} 살펴보는 중…", "tool": d.tool}
             if not valid:  # nothing runnable → synthesize from what we have
                 await _maybe_refine()
-                yield {"type": "thinking", "phase": "synthesize", "text": "답변을 작성하는 중…"}
-                async for ev in _synthesize(tools, history, system):
+                async for ev in _emit_synthesis(tools, history, system):
                     yield ev
                 answered = True
                 break
@@ -334,6 +409,11 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                     yield {"type": "thinking", "phase": "found", "text": f"· {label} 호출에 실패했어요"}
                     continue
                 yield {"type": "tool_result", "status": result["status"], "connector": result.get("connector")}
+                # SA-1: a 200 from a PERIODIC source makes this question standing-able —
+                # record the call as the subscription's change probe (path+args+cadence).
+                if result.get("status") == 200 and tool.get("cadence") not in (None, "one_shot"):
+                    probes.append({"path": tool.get("path"), "args": d.args or {},
+                                   "cadence": tool.get("cadence"), "source": tool.get("source")})
                 before = len(citations)
                 for c in _citations(tool, result):
                     cit = c.model_dump()
@@ -343,7 +423,7 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                     seen_cites.add(key)
                     cit["index"] = len(citations) + 1  # 1-based [n] anchor
                     citations.append(cit)
-                    cite_ctx.append((cit, tool, result.get("data")))
+                    cite_ctx.append((cit, tool, d.args or {}, result.get("data")))
                     yield {"type": "citation", **cit}
                 for a in _artifacts(tool, result):  # U3: connector-backed figure cards
                     if a.title in seen_artifacts:
@@ -360,8 +440,7 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                        "text": (f"✓ {label} · 근거 {added}건 확보" if ok else f"· {label}에서 새 근거를 찾지 못함")}
                 history.append((d, result))
         if not answered:
-            yield {"type": "thinking", "phase": "synthesize", "text": "답변을 작성하는 중…"}
-            async for ev in _synthesize(tools, history, system):
+            async for ev in _emit_synthesis(tools, history, system):
                 yield ev
     except Exception as e:
         logger.exception("Error in stream_chat loop")
@@ -387,7 +466,7 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
 
     # PH-PROV3d: re-anchor each filing citation's evidence image on the figure the ANSWER
     # actually cites (net income / R&D / assets …), not always the first headline (revenue).
-    for cit, tool, data in cite_ctx:
+    for cit, tool, _args, data in cite_ctx:
         if not isinstance(data, dict):
             continue
         market = _market_hint(tool, data)
@@ -409,6 +488,21 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
         for c in (data_bearing or citations):
             c["used"] = True
 
+    # EV-PASSAGE: filings-LISTING citations the answer used still carry only the report TITLE
+    # (the index tool has no body) — swap in the REAL passage from the ingested filing text
+    # (RAG, accession-matched) so the viewer highlights content, not "주요사항보고서".
+    rag_tool = tools.get("rag__search") if isinstance(tools, dict) else None
+    if rag_tool and cite_ctx and final_text:
+        from agentengine.passages import enrich_listing_passages, looks_like_title
+        search_tool = tools.get("datasets_store__filing_search") if isinstance(tools, dict) else None
+        targets = [(cit, _market_hint(tool, data), (args or {}).get("ticker"))
+                   for cit, tool, args, data in cite_ctx
+                   if cit.get("kind") == "filing" and cit.get("used") and cit.get("page")
+                   and looks_like_title(cit.get("snippet"))]
+        if targets:
+            await enrich_listing_passages(client.call_tool, rag_tool, targets[:4], final_text,
+                                          search_tool=search_tool)
+
     # PH-4c: if the prose carries no inline [n] markers, stream a trailing anchor group
     # for the EVIDENCE only (don't claim every consulted source produced the figures).
     if citations and final_text and not has_anchors(final_text):
@@ -416,10 +510,58 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
         yield {"type": "token", "text": " " + anchor_markers(used_idx)}
     used = [c.get("index") for c in citations if c.get("used")]
 
+    # Inline-figure fallback: the article contract says every rendered chart/table appears in
+    # the body. If the model placed no {{figure:N}} at all, append the markers at the end so
+    # the figures still land inline (the UI swaps each marker for the real artifact card).
+    if art_objs and final_text and "{{figure:" not in final_text:
+        tail = "\n\n" + "\n\n".join(f"{{{{figure:{i}}}}}" for i in range(1, len(art_objs) + 1))
+        final_text += tail
+        yield {"type": "token", "text": tail}
+
+    # QT-2: the number audit (publish trust floor) — every numeral in the prose must trace to a
+    # value a tool returned THIS turn (deterministic extraction+matching, no LLM). Skipped for
+    # tool-less conceptual answers (no pool to match against). The result rides `done`; M-SHARE
+    # gates share-card minting on it, and the verify line makes the check visible (trust brand).
+    audit = None
+    if cite_ctx and final_text:
+        from agentengine.audit import audit_ledger
+        # LG-1: attribute each pool to its citation's [n] so the ledger can say WHICH source
+        # backs each numeral (artifacts ride unindexed — they derive from the same tool data).
+        attributed = [(cit.get("index"), data) for cit, _tool, _args, data in cite_ctx]             + [(None, art) for art in artifacts]
+        audit = audit_ledger(final_text, attributed)
+        if audit["checked"]:
+            ok = not audit["unsupported"]
+            yield {"type": "thinking", "phase": "verify",
+                   "text": (f"숫자 검증 ✓ {audit['checked']}개 수치 모두 자료와 대조 확인" if ok else
+                            f"숫자 검증: {audit['checked']}개 중 {audit['supported']}개 확인 · "
+                            f"미확인 {len(audit['unsupported'])}건")}
+
     # PH-THINK: capability-aware follow-up chips — ALWAYS shown after a real answer (deep LLM when
     # gemini, deterministic capability-aware fallback otherwise), so the chip row is never empty.
-    sev = await _followups_event(task, final_text, citations, bk, conversation=messages)
+    sev = await _followups_event(task, final_text, citations, bk, conversation=messages, audit=audit,
+                                 artifacts=artifacts, client=client, tools=tools, cite_ctx=cite_ctx)
     if sev:
         yield sev
 
-    yield {"type": "done", "citations": citations, "artifacts": artifacts, "refused": False, "used": used}
+    # SA-1: offer "이 질문 계속 지켜보기" when the turn touched a periodic source. The chip is
+    # cadence-gated here (never a keyword rule) and shown ONCE by the client; event-y sources
+    # (filings/earnings) beat daily prices as the probe (the reader cares about the event).
+    standing_offer = None
+    if probes:
+        rank = {"event": 0, "scheduled": 1, "daily": 2, "intraday": 3, "streaming": 4}
+        best = sorted(probes, key=lambda p: rank.get(p.get("cadence"), 9))[0]
+        sa_cadence = {"event": "event", "scheduled": "event"}.get(best.get("cadence"), "daily")
+        standing_offer = {"cadence": sa_cadence,
+                          "ticker": (best.get("args") or {}).get("ticker"),
+                          "market": (best.get("args") or {}).get("market"),
+                          "probe": {"path": best.get("path"), "args": best.get("args"),
+                                    "source": best.get("source")}}
+
+    # V-7: 공유 훅 — 발견 한 줄(수치는 본문 실재분만; 검증 탈락 시 None → 질문 제목 폴백)
+    hook = None
+    if final_text and citations:
+        from agentengine.enrichment import make_hook
+        hook = await make_hook(task, final_text, spec.backend if spec else None)
+
+    yield {"type": "done", "citations": citations, "artifacts": artifacts, "refused": False,
+           "used": used, "audit": audit, "standing_offer": standing_offer, "hook": hook}

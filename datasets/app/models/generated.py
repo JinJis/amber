@@ -716,10 +716,17 @@ class FinancialMetricSnapshot(BaseModel):
     free_cash_flow_per_share: float | None = Field(
         None, description='Free cash flow divided by shares outstanding.'
     )
+    computation: dict[str, Any] | None = Field(
+        None,
+        description='M-DERIV: how the derived metrics (market cap / PER / PBR) were computed — formula, sourced inputs (with filing evidence), steps.',
+    )
 
 
 class InsiderTrade(BaseModel):
     ticker: str | None = Field(None, description='The ticker symbol of the company.')
+    # IMP-12: canonical Form 4 provenance — lets citations link the actual filing in the viewer
+    accession_number: str | None = Field(None, description='SEC accession number of the Form 4.')
+    filing_url: str | None = Field(None, description='Canonical SEC URL of the Form 4 document.')
     issuer: str | None = Field(None, description='The name of the issuing company.')
     name: str | None = Field(None, description='The name of the insider.')
     title: str | None = Field(None, description='The title of the insider.')
@@ -1362,6 +1369,10 @@ class Filing(BaseModel):
     )
     ticker: str | None = Field(None, description='The ticker symbol.')
     url: AnyUrl | None = Field(None, description='The URL of the SEC filing.')
+    items: str | None = Field(
+        None, description="8-K item codes for this filing (e.g. '5.02,9.01') — the events it reports.")
+    description: str | None = Field(
+        None, description='A human summary of the filing (8-K events / primary-document description).')
 
 
 class Exhibit(BaseModel):
@@ -1393,6 +1404,10 @@ class PriceSnapshot(BaseModel):
     time_milliseconds: float | None = Field(
         None,
         description='The timestamp of the price snapshot in milliseconds since epoch.',
+    )
+    source: str | None = Field(
+        None,
+        description='The upstream that actually served this snapshot (the price chain may fall back, e.g. Yahoo Finance → Stooq/KIS).',
     )
 
 
@@ -1869,6 +1884,10 @@ class InterestRatesResponse(BaseModel):
 class PricesResponse(BaseModel):
     ticker: str | None = Field(None, description='The ticker symbol.')
     prices: list[Price] | None = None
+    source: str | None = Field(
+        None,
+        description='The upstream that actually served these bars (the price chain may fall back, e.g. Yahoo Finance → Stooq/KIS).',
+    )
 
 
 class InstitutionalHolding(BaseModel):

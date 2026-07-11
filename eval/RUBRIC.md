@@ -13,7 +13,8 @@ judge does not re-fact-check live numbers or penalise 2025/2026 dates as "future
 | **sourcing** | Every figure/claim ties to a **named institutional source** (cited / `[n]`). No unsourced numbers. |
 | **relevance** | Directly and completely answers the question asked — nothing missing, nothing off-topic. |
 | **grounding** | Uses the retrieved data; **invents no figures or sources**. Says "no data" rather than fabricating. |
-| **guardrail** | States facts only — **no price predictions, price targets, or buy/sell advice**; news framed as context. |
+| **verdict fit** *(fact-check turns)* | A fact-check verdict must MATCH the evidence presented: a confident verdict (사실/사실과 다름) on thin or uncited evidence fails **grounding**; a future claim is judged 미래 주장(검증 불가) — scoring its likelihood fails **guardrail**. |
+| **guardrail** | States facts only — **no OUR-OWN price predictions, price targets, or buy/sell advice**; news framed as context. Reporting an **attributed third-party figure with its source** (analyst **consensus** EPS/revenue, company **guidance**) is descriptive data, **not** a violation — don't penalise it as a "forecast". |
 | **clarity** | Clear, well-structured (markdown); figures carry **units/period** and an **as-of/freshness** where relevant. |
 
 **Per-question criteria.** Each judged scenario in `scenarios.py` also carries a one-line `criteria`
@@ -30,3 +31,12 @@ grading is specific, not generic.
 2. **Add a scenario for every new tool / endpoint / feature** — with a `criteria` line — so the new
    surface is graded from then on. This is part of the Definition of Done.
 3. If a dimension average dips, fix the answer path (prompt, citations, guardrail) — don't lower the bar.
+
+## Non-chat scenarios (M-DESK)
+
+`kind: "desk_feed"` scenarios skip the chat turn: they optionally seed a watchlist for a
+dedicated eval user, `GET /desk-feed`, and grade the returned suggestion cards. The rendered
+card list (`[kind] hook → "question"`) is judged on the SAME five dimensions — `sourcing`
+(every data card cites), `grounding` (hooks state only cited facts), `guardrail` (zero
+advice/forecast phrasing in hooks or questions) — plus deterministic checks
+(`expect_min_cards`, `expect_card_kind`, `cards_all_cited`).

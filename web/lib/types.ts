@@ -39,7 +39,10 @@ export type ChartOverlay = {
 };
 // PH-DATA-6: the auditable derivation of a self-computed figure (valuation/backtest/screener) —
 // what was queried, what was assumed, the formula, and the intermediate steps. Shown as a panel.
-export type CalcRow = { label: string; value: string; source?: string | null };
+// M-DERIV (DRV-2): symbol binds the row to a variable in Computation.formula (symbol chips);
+// evidence deep-links a sourced input into the /evidence cell-highlight viewer.
+export type CalcEvidence = { market?: string; accession?: string; concept?: string; value?: number | string; cik?: string };
+export type CalcRow = { label: string; value: string; source?: string | null; symbol?: string | null; evidence?: CalcEvidence | null };
 // PH-DEMO widget item shapes.
 export type StatItem = {
   label: string; value: number; unit?: string | null; delta?: number | null;  // delta in %
@@ -56,6 +59,33 @@ export type Computation = {
   steps?: CalcRow[];
   note?: string | null;
 };
+// --- History Lab (M1 / HL-7) ------------------------------------------------------------------
+export type BaseRateHorizon = {
+  h: number; n: number;
+  median: number | null; p25: number | null; p75: number | null;
+  min: number | null; max: number | null;
+  pos_share: number | null;  // 상승 마감 비율(과거) — a record, NEVER a probability
+};
+export type BaseRatesData = {
+  event: { text: string; spec: Record<string, number> };
+  n: number; raw_n?: number;              // clustered vs raw event counts
+  horizons: BaseRateHorizon[];
+  event_dates: string[];                  // enumerable — the trust feature
+  histogram?: { h_ref: number; bins: { lo: number; hi: number; count: number }[] };
+};
+export type AnalogueMatch = {
+  ticker: string; start_date?: string | null; end_date?: string | null;
+  score: number | null;                   // null for regime-compare (curated, not searched)
+  path: number[];                         // rebased to 100
+  aftermath?: number[];                   // what actually happened next — drawn dashed, as history
+  depth_pct?: number | null;
+};
+export type AnalogueData = {
+  window: number; anchor: string;
+  current: { label: string; path: number[]; depth_pct?: number | null };
+  matches: AnalogueMatch[];               // never averaged into one path (no manufactured forecast)
+};
+
 export type Artifact = {
   kind: string;
   chart_style?: string | null;  // "bar" for money amounts (revenue/income); else line
@@ -78,6 +108,20 @@ export type Artifact = {
   items?: FeedItem[];     // kind=feed: a vertical live news/event stream
   events?: CalEvent[];    // kind=calendar: upcoming dated events
   computation?: Computation | null;  // PH-DATA-6: how a self-computed figure was derived
+  // --- History Lab (M1 / HL-7) — descriptive statistics of the record, never forecasts -------
+  // the badge text ("과거 기록 · 전망 아님"); the renderers for base_rates/analogue show a
+  // HistoricalLabel UNCONDITIONALLY (ROADMAP §2 invariant), whether or not this rides along.
+  label?: string | null;
+  base_rates?: BaseRatesData | null;  // kind=base_rates
+  analogue?: AnalogueData | null;     // kind=analogue
+  vol_context?: {                     // HL-8c: vol ribbon folded onto the price chart
+    windows?: Record<string, { realized_vol_pct?: number | null; percentile?: number | null }>;
+    level?: { current?: number | null; percentile?: number | null } | null;
+    source?: string | null; as_of?: string | null;
+  } | null;
+  passage?: string | null;            // kind=quote (SH-4 원문 인용 카드) — verbatim highlighted text
+  doc_title?: string | null;          // kind=quote: the document the passage came from
+  url?: string | null;                // kind=quote: link back to the source document
   source?: string | null;
   as_of?: string | null;
   freshness?: string | null;
@@ -109,6 +153,9 @@ export type Citation = {
   evidence_image_url?: string;  // /evidence?… params (market/accession/concept/value/text/cik) → in-app filing viewer
   confidence?: string;  // PH-THINK verify pass: high | medium | low (evidentiary support)
   confidence_why?: string;
+  // M-DERIV (DRV-2): a derived figure's derivation rides its citation, so the 출처
+  // preview (SourceViewer data shape) can render the Derivation Card (DRV-3).
+  computation?: Computation | null;
 };
 
 // --- chat / SSE stream events (rendered into a Msg) -------------------------------------------
@@ -124,11 +171,25 @@ export type Msg = {
   citations?: Citation[];
   artifacts?: Artifact[];
   refused?: boolean;
+  audit?: {
+    checked: number; supported: number; unsupported: string[];
+    // LG-1: the Figure Ledger — every claim numeral, attributed to its citation [n]
+    ledger?: { raw: string; value: number; pct?: boolean; span?: [number, number];
+               citation_idx?: number | null; supported: boolean }[];
+  } | null;  // QT-2 + LG-1
   used?: number[];
   thinking?: Think[];
   clarify?: Clarify;
   subagents?: SubAgent[];
   suggestions?: string[];
+  hook?: string | null;   // V-7: 공유 훅(발견 한 줄) — 공유 제목·OG 제목에 사용
+  // PLAN-2: 턴 쿼터 판정 — blocked(한도 도달, 턴 시작 안 됨) 또는 degraded(pro fair-use 초과,
+  // 표준 모델로 강등하고 계속). 웹은 이 카드를 렌더하고 blocked면 업그레이드 CTA를 보여준다.
+  quota?: { mode: string; scope: string; plan: string; used: number; limit?: number | null;
+    reset_at?: string | null; message: string } | null;
+  // M-SA: the turn touched a periodic source → offer "이 질문 계속 지켜보기" (cadence-gated)
+  standing_offer?: { cadence: string; ticker?: string | null; market?: string | null;
+    probe: { path?: string | null; args?: Record<string, unknown>; source?: string | null } } | null;
 };
 
 // --- dashboard widget (a pinned artifact OR citation OR a text note) --------------------------

@@ -13,6 +13,7 @@ import logging
 from dataclasses import dataclass, field
 
 from agentengine.config import settings
+from agentengine.usage import report as report_usage
 
 logger = logging.getLogger(__name__)
 
@@ -61,15 +62,38 @@ _INTAKE_PROMPT = (
     "historical/descriptive facts (public filings, financials, prices, macro data, news). It must "
     "REFUSE to *produce* forward-looking or advisory content. Read the user's question and reply "
     "with JSON.\n\n"
-    "GUARDRAIL — decide whether the user is REQUESTING, as the desired output, any of:\n"
-    "- a price/market PREDICTION or FORECAST (future direction, 'will it go up', earnings forecast)\n"
+    "GUARDRAIL — decide whether the user is asking the SERVICE ITSELF to PRODUCE, as the desired "
+    "output, any of:\n"
+    "- OUR OWN price/market PREDICTION or FORECAST (future direction, 'will it go up', our own projection)\n"
     "- BUY/SELL/HOLD advice, an investment recommendation, or entry/exit timing\n"
     "- a PRICE TARGET (목표가 / 목표주가)\n"
-    "Judge INTENT, not vocabulary. A request is NOT restricted merely because it MENTIONS these "
-    "words. If the user EXCLUDES or NEGATES them it is ALLOWED — they want facts. ALLOWED examples: "
-    "'목표가는 제시하지 말고 가격 흐름만', '전망·매수의견은 넣지 말고 사실 위주로', 'do NOT give a "
-    "forecast, just what happened'. Descriptive past/current facts, news summaries, filings, "
-    "financials, and macro data are ALWAYS allowed.\n\n"
+    "Judge INTENT, not vocabulary. A request is NOT restricted merely because it MENTIONS these words.\n"
+    "KEY DISTINCTION — reporting a SOURCED THIRD-PARTY figure WITH attribution is DATA, not our forecast, "
+    "so it is ALLOWED: analyst CONSENSUS ESTIMATES (consensus/컨센서스 매출·EPS 추정치), a company's OWN "
+    "published GUIDANCE (가이던스), or any cited estimate — we state what a NAMED source published (with "
+    "as-of), like a news headline about a forecast; WE are not the one forecasting. (Analyst PRICE TARGETS "
+    "and BUY/SELL RATINGS stay refused even when third-party — those are advisory, not descriptive data.)\n"
+    "VALUATION MODELS are ALLOWED (our own transparent calculator, CE-5): a DCF/DDM/RIM 내재가치 "
+    "computed from the company's REAL financials under the user's STATED assumptions (성장률·할인율 등) "
+    "is a reproducible, assumption-based CALCULATION we show the derivation for — it is NOT a price "
+    "target or forecast (change an assumption, the number changes; we label it '가정 기반 · 예측·목표가 "
+    "아님'). '애플 DCF 내재가치 계산해줘', '할인율 10%로 밸류에이션 해줘' → ALLOWED (run the valuation "
+    "tool). Only refuse if the user wants US to assert a single FUTURE price/target as advice.\n"
+    "HISTORICAL STATISTICS are descriptive and ALLOWED (History Lab): past drawdowns/episodes, volatility "
+    "percentiles, base rates ('과거에 하루 −5% 하락 뒤 20일 수익률 기록'), and analogous past windows — these "
+    "describe what OCCURRED, not what will. '지금 낙폭 닷컴버블이랑 비교해줘', '과거 이런 하락 뒤 어땠어?' → "
+    "ALLOWED (answer with the historical record + the 과거 기록 label). But if the user insists on a FUTURE "
+    "claim as the output ('그래서 내일 반등 확률은?', 'will it bounce?') that is a forecast → restricted; the "
+    "refusal may OFFER the descriptive historical record instead.\n"
+    "VERIFYING a third-party claim is ALLOWED and never restricted: when the user quotes or reports "
+    "something SOMEONE ELSE said and asks whether it is true ('~라던데 맞아?', '~넘었대', '이거 사실이야?'), "
+    "we answer with the record — even when the quoted claim is about the future (we describe what the "
+    "record shows; we do not score the future claim itself).\n"
+    "If the user EXCLUDES or NEGATES restricted output it is ALLOWED — they want facts. ALLOWED examples: "
+    "'애플 컨센서스 매출·EPS 추정치', '회사 가이던스 알려줘', '목표가는 제시하지 말고 가격 흐름만', "
+    "'전망·매수의견은 넣지 말고 사실 위주로', 'do NOT give a forecast, just what happened'. Descriptive "
+    "past/current facts, news summaries, filings, financials, macro data, and ATTRIBUTED analyst consensus "
+    "are ALWAYS allowed.\n\n"
     "PLAN — when allowed, size the work and outline it (no answer, no numbers).\n"
     "DATA ROUTING — set needs_data=true when answering requires looking up sourced financial DATA "
     "(prices, filings, financial statements, macro indicators, holdings, news, a specific company's "
@@ -81,7 +105,12 @@ _INTAKE_PROMPT = (
     "set clarify=true with a short clarify_prompt and 2-4 concrete ASPECT options (each "
     "{{\"label\", \"description\"}}, same language) so the user can steer — Claude-Code style. set multi=true "
     "if several aspects can be combined. Do NOT clarify a clearly specific request (e.g. 'AAPL 최근 종가', "
-    "'엔비디아 매출').\n"
+    "'엔비디아 매출'). CRUCIAL: do NOT clarify an ACTIONABLE request that already names enough to RUN with "
+    "sensible defaults — just DO it (prefer running with a reasonable default over asking to narrow). "
+    "Examples that must NOT clarify: a SCREEN with explicit factors ('ROE 높고 PER 낮은 미국 종목 스크리닝', "
+    "'저PER 고배당 종목') → run the screener; a BACKTEST naming tickers+weights ('애플50 MSFT50 백테스트') → "
+    "run the backtest; '거장 공통 보유종목' → use the tracked superinvestors; a macro-panel/overview of a "
+    "named country → run it. Asking a specific-enough request to narrow further is a FAILURE.\n"
     "DECOMPOSE — set subtasks ONLY when the user EXPLICITLY asks for a comprehensive / all-in-one analysis "
     "(e.g. '종합적으로 분석', '전반적으로', 'comprehensive', '다 분석해줘') → 2-4 focused "
     "{{\"title\", \"question\"}} sub-tasks researched in PARALLEL. Otherwise leave subtasks empty.\n"
@@ -92,10 +121,15 @@ _INTAKE_PROMPT = (
     "narrow fact (e.g. '엔비디아 매출') leave narrative=false.\n"
     "NEWS BRIEF — set news_brief=true when the user wants a NEWS briefing / market pulse / 시황 / 뉴스 "
     "정리 / '무슨 일이야' / what's happening (a company's news flow, or the market's). Then gather RECENT "
-    "NEWS (and related context) and do NOT clarify.\n"
+    "NEWS (and related context) and do NOT clarify. BUT: a question with a SPECIFIC structured answer is "
+    "NOT a news brief — leave these false so the right tool runs: '어느 섹터가 강하고 약해?'(→섹터 히트맵), "
+    "'최근 주가 흐름/차트'(→가격 시계열), '매출총이익률 추이'(→지표 히스토리), '어느 공급사가 칩을 만들어?'"
+    "(→공시 검색). news_brief is for a headline SUMMARY, not a specific datum with its own tool.\n"
     "VALUE CHAIN — set value_chain=true when the user asks about a company's 밸류체인 / 공급망 구조 / "
     "공급사·고객사 / value chain / supply chain (who it buys from, sells to, competes with). Then gather "
-    "its filings + news and do NOT clarify.\n\n"
+    "its filings + news and do NOT clarify.\n"
+    "A quoted/heard CLAIM the user wants verified ('~라던데 맞아?', '이거 팩트야?') is a normal data "
+    "question: plan to look up the PRIMARY records that confirm or refute it and do NOT clarify.\n\n"
     "Reply JSON ONLY:\n"
     '{{"restricted": <bool — true ONLY if the user truly wants restricted output>, '
     '"category": "forecast|advice|price_target|none", '
@@ -181,6 +215,7 @@ async def analyze_task(task: str, backend: str | None = None, conversation: list
             contents=_INTAKE_PROMPT.format(task=(task or "")[:800], context=_intake_context(conversation)),
             config=types.GenerateContentConfig(temperature=0, response_mime_type="application/json",
                                                response_schema=_INTAKE_SCHEMA, max_output_tokens=400))
+        report_usage("intake", settings.budget_model, resp)
         d = json.loads(getattr(resp, "text", "") or "{}")
         try:
             n = int(d.get("steps"))

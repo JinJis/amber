@@ -55,9 +55,9 @@ export function Card(
 // Freshness is computed (fresh <30d · aging <90d · stale). The ONLY saturated color.
 export const FRESH_LABEL: Record<string, string> = {
   fresh: "최신 (30일 이내)",
-  aging: "갱신 권장",
+  aging: "업데이트 필요",
   stale: "오래됨",
-  gap: "공백",
+  gap: "자료 없음",
 };
 export function FreshnessDot({ f }: { f?: string }) {
   if (!f) return null;
@@ -72,17 +72,17 @@ export function CadenceTag({ c }: { c?: string | null }) {
   const label = cadenceLabel(c);
   return (
     <span className={`cad-tag ${periodic ? "periodic" : "oneshot"}`}
-      title={periodic ? `주기성 데이터 (${label}) — 대시보드에 고정하면 알림봇 설정 가능` : "단발성 데이터 — 고정 시 값으로 표시 (알림 없음)"}>
-      {periodic ? `↻ ${label}` : "단발성"}
+      title={periodic ? `새 값이 나오면 자동으로 업데이트되는 데이터예요 (${label})` : "이 시점의 값이에요"}>
+      {periodic ? `↻ ${label}` : "1회성"}
     </span>
   );
 }
 // One legend, reused everywhere a freshness dot appears (the signature legend).
 export function TrustLegend() {
   return (
-    <div className="legend" aria-label="신선도 범례">
+    <div className="legend" aria-label="데이터 최신 상태 안내">
       <span><i className="fdot fresh" /> 최신</span>
-      <span><i className="fdot aging" /> 갱신 권장</span>
+      <span><i className="fdot aging" /> 업데이트 필요</span>
       <span><i className="fdot stale" /> 오래됨</span>
     </div>
   );
@@ -92,6 +92,14 @@ export function TrustLegend() {
 // The trust brand, shown not hidden (invariant #5). Amber callout.
 export function GuardrailLabel({ icon = "🛡", children }: { icon?: string; children: ReactNode }) {
   return <div className="guard">{icon} {children}</div>;
+}
+
+// ── Historical label (M1 / HL-7, UX_SPEC §6.4) ───────────────────────────────
+// The descriptive-statistics badge for History Lab artifacts. Deliberately NOT amber — it marks
+// safe-by-design content (aggregates of the historical record), not a refusal. Fixed copy,
+// non-dismissable; base_rates/analogue renderers show it unconditionally (ROADMAP §2 invariant).
+export function HistoricalLabel() {
+  return <span className="histlabel" title="과거에 있었던 사례를 정리한 통계예요 — 미래 예측이 아니에요">⏳ 과거 기록 · 전망 아님</span>;
 }
 
 // ── Pixel mascot ──────────────────────────────────────────────────────────--

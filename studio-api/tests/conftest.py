@@ -12,3 +12,5 @@ import tempfile
 
 _db_path = os.path.join(tempfile.mkdtemp(prefix="studio-test-"), "studio_test.db")
 os.environ["DATABASE_URL"] = f"sqlite:///{_db_path}"
+# ASK-5: keep the ask-feed refresher loop out of the suite (its ticks would hit agent-engine).
+os.environ["ASK_FEED_ENABLED"] = "false"

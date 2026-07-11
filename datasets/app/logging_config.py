@@ -38,6 +38,7 @@ _LIB_FLOORS = {
     "PIL": logging.WARNING,
     "asyncio": logging.INFO,       # selector spam at DEBUG
     "pykrx": logging.WARNING,
+    "procrastinate": logging.INFO,  # worker internals — keep job start/end lines, drop DEBUG spam
 }
 
 logger = logging.getLogger(_PKG)

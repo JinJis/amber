@@ -52,9 +52,13 @@ _RAG_INGEST_BATCH = 40
 _RAG_INGEST_TIMEOUT = 300.0
 
 
-async def _ingest_to_rag(rag_url: str, docs: list[dict]) -> int:
+async def _ingest_to_rag(rag_url: str, docs: list[dict], replace: dict | None = None) -> int:
     """POST the docs to the RAG service (global corpus) and return the chunk count. Batched so a
-    large filing (many section docs) never exceeds the client timeout in one shot."""
+    large filing (many section docs) never exceeds the client timeout in one shot.
+
+    ``replace`` (e.g. {"accession": "..."}) is sent on the FIRST batch only, so re-chunking a
+    filing deletes its old chunks once, then inserts the fresh set (RQ-2 — section boundaries
+    move when structure-aware chunking changes, so a plain UPSERT would orphan stale sections)."""
     if not docs:
         return 0
     url = f"{rag_url.rstrip('/')}/rag/ingest"
@@ -62,7 +66,10 @@ async def _ingest_to_rag(rag_url: str, docs: list[dict]) -> int:
     async with httpx.AsyncClient(timeout=_RAG_INGEST_TIMEOUT) as client:
         for i in range(0, len(docs), _RAG_INGEST_BATCH):
             batch = docs[i:i + _RAG_INGEST_BATCH]
-            resp = await client.post(url, json={"documents": batch})
+            body: dict = {"documents": batch}
+            if replace and i == 0:
+                body["replace"] = replace
+            resp = await client.post(url, json=body)
             resp.raise_for_status()
             total += int((resp.json() or {}).get("chunks", 0))
     return total

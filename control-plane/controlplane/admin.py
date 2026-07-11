@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from controlplane.auth import generate_key
 from controlplane.config import settings
 from controlplane.db import SessionLocal
-from controlplane.models import Activation, ApiKey, AuditLog, Project, Tenant, UsageEvent
+from controlplane.models import Activation, ApiKey, AuditLog, LlmUsage, Project, Tenant, UsageEvent
 
 
 async def require_admin(x_admin_token: Annotated[str | None, Header(alias="X-Admin-Token")] = None) -> None:
@@ -62,6 +62,22 @@ async def create_project(tenant_id: str, body: NameIn) -> dict:
         return {"id": p.id, "tenant_id": tenant_id, "name": p.name}
 
 
+class ProjectPatchIn(BaseModel):
+    plan: str | None = None      # guest | free | pro — drives the gateway's per-key rate tier
+
+
+@router.patch("/projects/{project_id}", summary="Update a project (PLAN-2: set its plan tier)")
+async def patch_project(project_id: str, body: ProjectPatchIn) -> dict:
+    with SessionLocal() as db:
+        p = db.get(Project, project_id)
+        if p is None:
+            raise HTTPException(404, "Unknown project.")
+        if body.plan is not None:
+            p.plan = body.plan
+        db.commit()
+        return {"id": p.id, "tenant_id": p.tenant_id, "name": p.name, "plan": p.plan}
+
+
 @router.post("/projects/{project_id}/keys", summary="Create an API key (shown once)")
 async def create_key(project_id: str, body: KeyIn) -> dict:
     with SessionLocal() as db:
@@ -99,6 +115,88 @@ async def list_activations(project_id: str) -> dict:
     with SessionLocal() as db:
         rows = db.execute(select(Activation).where(Activation.project_id == project_id)).scalars().all()
         return {"activations": [{"connector_id": a.connector_id, "enabled": a.enabled} for a in rows]}
+
+
+class LlmUsageIn(BaseModel):
+    service: str
+    kind: str
+    model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    calls: int = 1
+    estimated: bool = False
+    project_id: str | None = None   # METER-1: per-user cost attribution (None = shared/background)
+
+
+@router.post("/llm-usage", summary="COST-1: record one LLM/embedding call's token usage")
+async def llm_usage_ingest(body: LlmUsageIn) -> dict:
+    with SessionLocal() as db:
+        db.add(LlmUsage(service=body.service[:24], kind=body.kind[:32], model=body.model[:64],
+                        input_tokens=max(0, body.input_tokens), output_tokens=max(0, body.output_tokens),
+                        calls=max(1, body.calls), estimated=body.estimated,
+                        project_id=(body.project_id or None) and body.project_id[:40]))
+        db.commit()
+    return {"ok": True}
+
+
+@router.get("/llm-usage/summary", summary="COST-1: token usage grouped by model × kind (+ per-day tail)")
+async def llm_usage_summary(days: int = 30) -> dict:
+    from datetime import datetime as _dt, timedelta as _td
+    since = _dt.utcnow() - _td(days=max(1, min(days, 365)))
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(LlmUsage.service, LlmUsage.model, LlmUsage.kind,
+                   func.count(), func.coalesce(func.sum(LlmUsage.input_tokens), 0),
+                   func.coalesce(func.sum(LlmUsage.output_tokens), 0),
+                   func.coalesce(func.sum(LlmUsage.calls), 0),
+                   func.max(LlmUsage.estimated))
+            .where(LlmUsage.ts >= since)
+            .group_by(LlmUsage.service, LlmUsage.model, LlmUsage.kind)
+        ).all()
+        daily = db.execute(
+            select(func.date(LlmUsage.ts), func.coalesce(func.sum(LlmUsage.input_tokens), 0),
+                   func.coalesce(func.sum(LlmUsage.output_tokens), 0), func.coalesce(func.sum(LlmUsage.calls), 0))
+            .where(LlmUsage.ts >= since).group_by(func.date(LlmUsage.ts)).order_by(func.date(LlmUsage.ts))
+        ).all()
+    return {
+        "since": since.isoformat(), "days": days,
+        "rows": [{"service": s, "model": m, "kind": k, "records": n,
+                  "input_tokens": int(i), "output_tokens": int(o), "calls": int(c),
+                  "estimated": bool(e)} for s, m, k, n, i, o, c, e in rows],
+        "daily": [{"date": str(d), "input_tokens": int(i), "output_tokens": int(o), "calls": int(c)}
+                  for d, i, o, c in daily],
+    }
+
+
+@router.get("/llm-usage/by-project", summary="METER-2: 프로젝트(유저)별 LLM 토큰 롤업 — 유닛 이코노믹스")
+async def llm_usage_by_project(days: int = 30) -> dict:
+    """LLM 토큰을 project(=유저 테넌트) × model로 롤업 — admin '유저별 원가' 화면이 pricing
+    레지스트리로 달러화한다. project_id NULL = 공용/백그라운드(피드·인제스트)."""
+    from datetime import datetime as _dt, timedelta as _td
+    since = _dt.utcnow() - _td(days=max(1, min(days, 365)))
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(LlmUsage.project_id, LlmUsage.model,
+                   func.coalesce(func.sum(LlmUsage.input_tokens), 0),
+                   func.coalesce(func.sum(LlmUsage.output_tokens), 0),
+                   func.coalesce(func.sum(LlmUsage.calls), 0))
+            .where(LlmUsage.ts >= since)
+            .group_by(LlmUsage.project_id, LlmUsage.model)
+            .order_by(func.sum(LlmUsage.input_tokens).desc())
+        ).all()
+        # project → tenant 이름(=유저 이메일) 매핑
+        pids = {p for p, *_ in rows if p}
+        names: dict[str, str] = {}
+        if pids:
+            for pid, tname in db.execute(
+                select(Project.id, Tenant.name).join(Tenant, Project.tenant_id == Tenant.id)
+                .where(Project.id.in_(pids))
+            ).all():
+                names[pid] = tname
+    return {"since": since.isoformat(), "days": days,
+            "rows": [{"project_id": p, "tenant": names.get(p) if p else None, "model": m,
+                      "input_tokens": int(i), "output_tokens": int(o), "calls": int(c)}
+                     for p, m, i, o, c in rows]}
 
 
 @router.get("/projects/{project_id}/usage", summary="Usage + cost summary")

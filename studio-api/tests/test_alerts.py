@@ -182,6 +182,27 @@ def test_scheduler_tick_fires_due_active_alerts(monkeypatch):
     assert after == before
 
 
+def test_scheduler_start_gated_by_feature_alerts(monkeypatch):
+    """FLAG-1: the alert scheduler stays dormant unless FEATURE_ALERTS is on (chat-first default off);
+    the secondary ALERTS_SCHEDULER_ENABLED kill-switch is also respected when the feature is on."""
+    import asyncio
+
+    async def _run(feature_alerts: bool, enabled: bool) -> int:
+        monkeypatch.setattr(settings, "feature_alerts", feature_alerts)
+        monkeypatch.setattr(settings, "alerts_scheduler_enabled", enabled)
+        holder: list = []
+        scheduler.start(holder)
+        n = len(holder)
+        for t in holder:
+            t.cancel()
+        await asyncio.gather(*holder, return_exceptions=True)  # clean loop shutdown
+        return n
+
+    assert asyncio.run(_run(False, True)) == 0   # chat-first default: feature off → no ticks
+    assert asyncio.run(_run(True, False)) == 0   # kill-switch off → no ticks even with feature on
+    assert asyncio.run(_run(True, True)) == 1    # both on → scheduler runs
+
+
 @respx.mock
 def test_onboarding_flag(monkeypatch):
     _cfg(monkeypatch); _mock_control_plane()

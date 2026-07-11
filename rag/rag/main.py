@@ -50,13 +50,16 @@ async def ingest(body: IngestRequest, request: Request) -> dict:
     if tenant:
         for doc in body.documents:
             doc.tenant = tenant
-    n = await ingest_docs(body.documents)
+    # scope the replace to the tenant so one tenant's re-ingest can't delete another's chunks.
+    replace = {**body.replace, "tenant": tenant} if body.replace and tenant else body.replace
+    n = await ingest_docs(body.documents, replace=replace)
     return {"chunks": n}
 
 
 @app.post("/rag/search", tags=["RAG"], summary="Retrieve passages with provenance")
 async def search(body: SearchRequest, request: Request) -> dict:
-    filters = {k: v for k, v in (("ticker", body.ticker), ("market", body.market)) if v}
+    filters = {k: v for k, v in (("ticker", body.ticker), ("market", body.market),
+                                 ("doc_type", body.doc_type)) if v}
     tenant = request.headers.get(_TENANT_HEADER)
     if tenant:
         filters["tenant"] = tenant

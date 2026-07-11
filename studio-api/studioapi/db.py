@@ -54,29 +54,43 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
 
 def _add_missing_columns() -> None:
-    """Lightweight forward migration for legacy SQLite stores: ADD COLUMN for new fields on existing
-    tables (create_all only creates missing TABLES, not columns). SQLite-only — Postgres starts from
-    the full schema via create_all, and these ALTER decls (e.g. ``BOOLEAN DEFAULT 0``) are SQLite-
-    flavored. Idempotent; skips columns already present."""
-    if engine.dialect.name != "sqlite":
+    """Lightweight forward migration: ADD COLUMN for fields added to a model AFTER its table was first
+    created (``create_all`` only creates missing TABLES, never columns on an existing one). Runs for
+    BOTH real runtimes — SQLite (unit tests) and Postgres (compose) — since a long-lived Postgres DB
+    hits exactly this gap when the schema evolves. Idempotent: skips columns already present, and the
+    type/default decls are chosen per dialect."""
+    dialect = engine.dialect.name
+    if dialect not in ("sqlite", "postgresql"):
         return
     from sqlalchemy import inspect, text
 
+    ts = "TIMESTAMP" if dialect == "postgresql" else "DATETIME"      # SQLAlchemy DateTime → TIMESTAMP on PG
+    bool_default = "false" if dialect == "postgresql" else "0"
     inspector = inspect(engine)
-    names = inspector.get_table_names()
-    if "pinned_artifacts" in names:
-        existing = {c["name"] for c in inspector.get_columns("pinned_artifacts")}
-        add = {"board_id": "VARCHAR(48)", "x": "INTEGER", "y": "INTEGER", "w": "INTEGER", "h": "INTEGER"}
+    names = set(inspector.get_table_names())
+
+    def add_cols(table: str, cols: dict[str, str]) -> None:
+        """ADD COLUMN each missing column of ``table`` (skip absent table / present columns)."""
+        if table not in names:
+            return
+        have = {c["name"] for c in inspector.get_columns(table)}
         with engine.begin() as conn:
-            for col, decl in add.items():
-                if col not in existing:
-                    conn.execute(text(f"ALTER TABLE pinned_artifacts ADD COLUMN {col} {decl}"))
-    # F1: onboarding flag on users (default 0 = not yet onboarded)
-    if "users" in names:
-        ucols = {c["name"] for c in inspector.get_columns("users")}
-        if "onboarded" not in ucols:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE users ADD COLUMN onboarded BOOLEAN DEFAULT 0"))
+            for col, decl in cols.items():
+                if col not in have:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {decl}"))
+
+    add_cols("pinned_artifacts",
+             {"board_id": "VARCHAR(48)", "x": "INTEGER", "y": "INTEGER", "w": "INTEGER", "h": "INTEGER"})
+    add_cols("users", {  # F1 onboarding flag · M-DESK last-visit window
+        "onboarded": f"BOOLEAN DEFAULT {bool_default}", "last_seen_at": ts,
+        # PLAN-1/REF-1/AUTH-4: 플랜 게이팅 + 레퍼럴 + 메일 게이트 (기존 유저는 verified 취급 —
+        # 지금까지의 가입 경로는 전부 구글 OAuth라 이메일이 실재한다)
+        "plan_updated_at": ts, "bonus_daily_turns": "INTEGER DEFAULT 0", "bonus_turns_until": ts,
+        "referral_code": "VARCHAR(16)", "referred_by": "VARCHAR(256)",
+        "email_verified": ("BOOLEAN DEFAULT true" if dialect == "postgresql" else "BOOLEAN DEFAULT 1")})
+    add_cols("messages", {"artifacts": "TEXT", "audit": "TEXT",   # inline figures + number audit
+                          "suggestions": "TEXT"})                 # 더 파고들기 chips survive reload
+    add_cols("share_links", {"expires_at": ts, "og_image": "TEXT"})  # IMP-13 expiry · SH-2b OG image
 
 
 def init_db() -> None:

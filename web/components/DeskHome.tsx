@@ -1,0 +1,164 @@
+"use client";
+
+// 오늘의 데스크 (M-DESK / DK-2) — the turn-zero briefing in the empty chat. Renders the
+// per-user desk feed (GET /api/desk-feed): sourced suggestion cards; tapping one pre-fills
+// the composer (editable — never auto-sends). A user without @groups gets the watchlist
+// nudge with an inline quick-add (shared presets). Every data card carries its provenance
+// footer (source · as_of · freshness). When the feed is empty/degraded this renders nothing —
+// the parent's capability examples remain, so the screen is never blank.
+
+import { useCallback, useEffect, useState } from "react";
+import { PRESETS } from "@/lib/presets";
+import type { Artifact, Citation } from "@/lib/types";
+import { FreshnessDot } from "./ui";
+
+export type DeskCard = {
+  kind: string;
+  question: string;
+  query?: string | null;   // 실행용 명령문 — tap 시 컴포저 프리필 (없으면 question 폴백)
+  hook: string;
+  citations?: Citation[];
+  deeplink?: string | null;
+  ticker?: string | null;
+};
+
+type Feed = { cards: DeskCard[]; generated_at?: string | null; cached?: boolean; degraded?: boolean };
+
+const ICONS: Record<string, string> = {
+  price_move: "📈", filing_new: "📄", earnings_upcoming: "📅", econ_calendar: "🗓",
+  news_cluster: "📰", market_pulse: "🌐", continue_thread: "↩", watchlist_nudge: "⭐",
+};
+
+export default function DeskHome({ onPick, onChanged, onShareBriefing }: {
+  onPick: (question: string) => void;   // tap → composer pre-fill (never auto-send)
+  onChanged?: () => void;               // quick-add created a watchlist → reload @handles
+  onShareBriefing?: (a: Artifact) => void;  // SH-5: compose the day's top cards into one share card
+}) {
+  const [feed, setFeed] = useState<Feed | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);  // IMP-3: fetch failure ≠ silent skeleton
+  const [adding, setAdding] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(false);
+    try {
+      const r = await fetch("/api/desk-feed");
+      if (!r.ok) { setError(true); setFeed(null); return; }
+      setFeed(await r.json());
+    } catch {
+      setError(true);
+      setFeed(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function quickAdd(presetId: string) {
+    const p = PRESETS.find((x) => x.id === presetId);
+    if (!p || adding) return;
+    setAdding(presetId);
+    try {
+      const r = await fetch("/api/watchlists", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: p.name }),
+      });
+      if (r.ok) {
+        const wl = await r.json();
+        for (const it of p.items) {
+          await fetch(`/api/watchlists/${wl.id}/items`, {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(it),
+          }).catch(() => {});
+        }
+        onChanged?.();
+        await load(); // the edit invalidated the cache → a personalized feed comes back
+      }
+    } finally {
+      setAdding(null);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="deskfeed" aria-busy="true">
+        <div className="df-label">오늘의 데스크</div>
+        <div className="df-grid">
+          {[0, 1, 2, 3].map((i) => <div key={i} className="df-card df-skel" />)}
+        </div>
+      </div>
+    );
+  }
+
+  // IMP-3: a failed/degraded feed shows an explicit, retryable state — never an endless skeleton
+  if (error || feed?.degraded) {
+    return (
+      <div className="deskfeed">
+        <div className="df-label">오늘의 데스크</div>
+        <div className="df-error" role="alert">
+          {feed?.degraded ? "데스크 구성에 필요한 데이터 서비스가 잠시 응답하지 않아요." : "데스크를 불러오지 못했습니다."}
+          <button type="button" className="chip" onClick={() => void load()}>다시 시도</button>
+        </div>
+      </div>
+    );
+  }
+  const cards = feed?.cards ?? [];
+  if (!cards.length) return null; // graceful: the parent's capability examples stay visible
+
+  // SH-5: the day's top DATA cards (skip nudge/continue — no sourced hook) → one briefing artifact.
+  // Each hook was already number-audited at feed generation (uncited cards are dropped), so the
+  // composite carries only sourced lines; it shares through the same pipeline (kind reuses `table`).
+  const briefingCards = cards.filter((c) => c.kind !== "watchlist_nudge" && c.kind !== "continue_thread"
+    && (c.citations?.length ?? 0) > 0).slice(0, 3);
+  const day = (feed?.generated_at || "").slice(0, 10);
+  function shareBriefing() {
+    if (!onShareBriefing || !briefingCards.length) return;
+    const table = [["오늘의 데스크", "출처"], ...briefingCards.map((c) => [
+      c.hook, `${c.citations![0].source ?? ""}${c.citations![0].as_of ? ` · ${c.citations![0].as_of}` : ""}`])];
+    onShareBriefing({
+      kind: "table", title: `오늘의 데스크 브리핑${day ? ` · ${day}` : ""}`, series: [],
+      table, source: "ValueGraph 데스크", as_of: day || null,
+    });
+  }
+
+  return (
+    <div className="deskfeed">
+      <div className="df-label">
+        오늘의 데스크
+        {onShareBriefing && briefingCards.length > 0 && (
+          <button type="button" className="df-brief" onClick={shareBriefing}
+            title="오늘의 데스크 상위 카드를 한 장으로 공유">↗ 오늘 브리핑 공유</button>
+        )}
+        <button type="button" className="df-refresh" onClick={() => void load()} title="새로 고침">↻</button>
+      </div>
+      <div className="df-grid">
+        {cards.map((c, i) => c.kind === "watchlist_nudge" ? (
+          <div key={i} className="df-card df-nudge">
+            <div className="df-hook"><span className="df-ic">{ICONS[c.kind] ?? "•"}</span>{c.hook}</div>
+            <div className="df-presets">
+              {PRESETS.map((p) => (
+                <button key={p.id} type="button" className="chip" disabled={adding !== null}
+                  onClick={() => void quickAdd(p.id)}>
+                  {adding === p.id ? "만드는 중…" : `＋ ${p.name}`}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <button key={i} type="button" className="df-card" onClick={() => onPick(c.query || c.question)}>
+            <div className="df-hook"><span className="df-ic">{ICONS[c.kind] ?? "•"}</span>{c.hook}</div>
+            <div className="df-q">“{c.question}” <span className="df-arrow">→</span></div>
+            {(c.citations?.length ?? 0) > 0 && (
+              <div className="df-foot mono">
+                <FreshnessDot f={c.citations![0].freshness} />
+                <span>{c.citations![0].source}</span>
+                {c.citations![0].as_of && <span>· {c.citations![0].as_of}</span>}
+              </div>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}

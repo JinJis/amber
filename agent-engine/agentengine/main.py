@@ -16,6 +16,8 @@ from agentengine.agent import refresh_artifact, run_agent
 from agentengine.chat import stream_chat
 from agentengine.client import PlatformClient
 from agentengine.config import settings
+from agentengine.askfeed import AskFeedRequest, build_ask_feed
+from agentengine.deskfeed import DeskFeedRequest, build_desk_feed
 from agentengine.logging_config import install_request_logging, setup_logging
 from agentengine.models import (
     AgentSpec,
@@ -59,14 +61,41 @@ async def artifact_refresh(body: ArtifactRefreshRequest, x_api_key: Annotated[st
 
 
 @app.post("/agent/chat", tags=["Agent"], summary="Streaming multi-turn chat (SSE)")
-async def chat(body: ChatRequest, x_api_key: Annotated[str | None, Header(alias="X-API-KEY")] = None) -> StreamingResponse:
+async def chat(body: ChatRequest, x_api_key: Annotated[str | None, Header(alias="X-API-KEY")] = None,
+               x_project_id: Annotated[str | None, Header(alias="X-Project-Id")] = None) -> StreamingResponse:
     messages = [m.model_dump() for m in body.messages]
+    # METER-1: 이 턴의 모든 Gemini 콜 텔레메트리에 유저 프로젝트를 귀속 (contextvar — 동시
+    # 스트림 간 격리; StreamingResponse 제너레이터 안에서 심어야 스트림 태스크에 전파된다).
+    from agentengine.usage_context import set_project
 
     async def gen():
+        set_project(x_project_id)
         async for event in stream_chat(messages, x_api_key, body.spec):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.post("/agent/desk-feed", tags=["Agent"], summary="M-DESK: turn-zero suggestion cards (sourced)")
+async def desk_feed(body: DeskFeedRequest, x_api_key: Annotated[str | None, Header(alias="X-API-KEY")] = None) -> dict:
+    """Compose the Proactive Desk briefing: parallel entitled tool gather → one Gemini pass →
+    4–8 cards {kind, question, hook, citations[]}. Data cards without citations are dropped."""
+    return await build_desk_feed(body, x_api_key)
+
+
+@app.post("/agent/ask-feed", tags=["Agent"], summary="ASK-6: ask-feed (news_feed background / ticker on-demand)")
+async def ask_feed(body: AskFeedRequest, x_api_key: Annotated[str | None, Header(alias="X-API-KEY")] = None) -> dict:
+    """scope=news_feed: studio-api's 10-minute background refresher. scope=ticker: on demand when
+    the user taps a watchlist ticker on the entry screen. Either way: gather the scope's latest
+    records → signature check (unchanged → no LLM) → one Gemini pass → audited cards."""
+    return await build_ask_feed(body, x_api_key)
+
+
+@app.post("/agent/onboarding-showcase", tags=["Agent"], summary="ONB-LIVE: 온보딩 라이브 쇼케이스 (핫 KR 종목)")
+async def onboarding_showcase(x_api_key: Annotated[str | None, Header(alias="X-API-KEY")] = None) -> dict:
+    """온보딩 3스텝(근거·분석거리·후속질문)용 라이브 번들 — studio가 일 1회 캐시."""
+    from agentengine.askfeed import build_onboarding_showcase
+    return await build_onboarding_showcase(x_api_key)
 
 
 @app.post("/agent/compile", tags=["Agent"], summary="Natural-language → reusable AgentSpec")

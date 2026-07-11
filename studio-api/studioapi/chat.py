@@ -9,6 +9,7 @@ persisted when the run completes.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 
@@ -29,8 +30,40 @@ def _title(messages: list[dict]) -> str:
     return "New chat"
 
 
+def _merge_plan_spec(spec: dict | None, user: User, degraded: bool) -> dict | None:
+    """PLAN-3: 유저의 플랜 티어(모델·스텝·서브에이전트·커넥터 셋)를 이 턴의 AgentSpec에 병합.
+    유저 에이전트의 자체 제한은 '좁히기만' 가능 — 플랜이 스텝 8이면 에이전트가 12를 원해도 8.
+    하드 방어는 게이트웨이 엔타이틀먼트(403); 여기서의 allowed_tools 교집합은 플래너가 403날
+    툴에 스텝을 낭비하지 않게 하는 최적화다."""
+    from studioapi import plans as plans_mod
+
+    ov = plans_mod.spec_overrides(plans_mod.plan_of(user), degraded)
+    if not ov:
+        return spec
+    out = dict(spec or {})
+    if ov.get("synthesis_model"):
+        out["synthesis_model"] = ov["synthesis_model"]
+    if ov.get("max_steps") is not None:
+        cur = out.get("max_steps")
+        out["max_steps"] = min(int(cur), ov["max_steps"]) if cur else ov["max_steps"]
+    if ov.get("max_subagents") is not None:
+        out["max_subagents"] = ov["max_subagents"]
+    conns = ov.get("allowed_connectors")
+    if conns:
+        allowed = out.get("allowed_tools")
+        if allowed:
+            # 에이전트 제한과 플랜 셋의 교집합(툴 이름은 connector__tool, 항목이 커넥터 id일 수도).
+            filtered = [t for t in allowed if str(t).split("__")[0] in conns]
+            # 에이전트가 전부 플랜 밖 툴만 요구하면 → 플랜 셋으로 폴백(턴이 죽는 것보다 정직한 강등).
+            out["allowed_tools"] = filtered or list(conns)
+        else:
+            out["allowed_tools"] = list(conns)
+    return out
+
+
 def prepare_turn(
     user: User, conversation_id: str | None, messages: list[dict], agent_id: str | None,
+    degraded: bool = False,
 ) -> tuple[str, dict]:
     """Resolve the agent → spec, ensure the conversation, persist the user message, and build
     the agent-engine payload. Runs synchronously BEFORE the background run so the conversation
@@ -62,6 +95,9 @@ def prepare_turn(
     payload: dict = {"messages": resolved_messages}
     if spec is not None:
         payload["spec"] = spec
+    merged = _merge_plan_spec(payload.get("spec"), user, degraded)  # PLAN-3: 플랜 티어 병합
+    if merged is not None:
+        payload["spec"] = merged
     return conv_id, payload
 
 
@@ -71,10 +107,18 @@ async def drive_run(run: Run, user: User, conv_id: str, payload: dict) -> None:
     browser connection — leaving the chat doesn't stop this."""
     text_parts: list[str] = []
     citations: list[dict] = []
-    async with httpx.AsyncClient(timeout=None) as client:
+    artifacts: list[dict] = []
+    suggestions: list = []
+    hook: str | None = None
+    audit: dict | None = None
+    cancelled = False
+    try:
+      async with httpx.AsyncClient(timeout=None) as client:
         async with client.stream(
             "POST", f"{settings.agent_engine_url}/agent/chat",
-            json=payload, headers={"X-API-KEY": user.api_key},
+            json=payload,
+            # METER-1: X-Project-Id → 이 턴의 모든 Gemini 콜이 유저 프로젝트로 원가 귀속된다.
+            headers={"X-API-KEY": user.api_key, "X-Project-Id": user.project_id or ""},
         ) as resp:
             async for line in resp.aiter_lines():
                 if not line.startswith("data:"):
@@ -86,16 +130,37 @@ async def drive_run(run: Run, user: User, conv_id: str, payload: dict) -> None:
                 await manager.append(run, ev)
                 if ev.get("type") == "token":
                     text_parts.append(ev.get("text", ""))
+                elif ev.get("type") == "suggestions":
+                    # 더 파고들기 chips ride their own event (before `done`) — capture them so the
+                    # row survives leaving + reopening the conversation, not just the live stream.
+                    suggestions = ev.get("items") or suggestions
                 elif ev.get("type") == "done":
                     citations = ev.get("citations") or citations
+                    artifacts = ev.get("artifacts") or artifacts
+                    hook = ev.get("hook") or hook
+                    audit = ev.get("audit") or audit
+    except asyncio.CancelledError:
+        # UXQ-2: 사용자가 중지 — CancelledError를 여기서 흡수하면 이후 저장은 정상 실행.
+        # 지금까지의 부분 답변을 그대로 영속(유실·날조 없음)하고 중지 표식을 남긴다.
+        cancelled = True
+
+    if cancelled and text_parts:
+        text_parts.append("\n\n*⏹ 여기서 중지했어요*")
 
     with SessionLocal() as db:
         db.add(Message(
             conversation_id=conv_id, role="assistant",
-            content="".join(text_parts), citations=json.dumps(citations, ensure_ascii=False),
+            content="".join(text_parts), hook=(hook or None),
+            citations=json.dumps(citations, ensure_ascii=False),
+            artifacts=json.dumps(artifacts, ensure_ascii=False),
+            audit=json.dumps(audit, ensure_ascii=False) if audit else None,
+            suggestions=json.dumps(suggestions, ensure_ascii=False) if suggestions else None,
         ))
         db.commit()
     # final marker so a tail learns the (already-known) conversation id and can stop
+    if cancelled:
+        await manager.append(run, {"type": "done", "citations": citations, "artifacts": artifacts,
+                                   "refused": False, "stopped": True})
     await manager.append(run, {"type": "conversation", "id": conv_id})
 
 
@@ -107,6 +172,29 @@ async def sse_tail(run: Run, from_index: int = 0) -> AsyncIterator[str]:
 
 
 def start_turn(user: User, conversation_id: str | None, messages: list[dict], agent_id: str | None) -> Run:
-    """Public entry: prepare the turn and launch its background run. Returns the Run to tail."""
-    conv_id, payload = prepare_turn(user, conversation_id, messages, agent_id)
-    return manager.start(conv_id, lambda run: drive_run(run, user, conv_id, payload))
+    """Public entry: PLAN-2 quota gate → prepare the turn → launch its background run.
+
+    한도 초과(blocked)면 실제 턴을 시작하지 않는다 — 유저 메시지도 저장하지 않고, 합성 Run이
+    quota SSE 이벤트 + done만 흘린다(HTTP 4xx가 아니라 SSE라 스트림 배관·재개 tail이 그대로).
+    pro fair-use 초과(degraded)는 진행하되 quota 알림 이벤트를 먼저 흘리고, prepare_turn이
+    스펙을 flash 티어로 강등한다(PLAN-3)."""
+    from studioapi import quotas
+
+    verdict = quotas.check_and_consume(user, conversation_id)
+    if verdict.mode == "blocked":
+        async def _quota_driver(run: Run) -> None:
+            await manager.append(run, verdict.event())
+            await manager.append(run, {"type": "done", "citations": [], "artifacts": [],
+                                       "refused": False, "quota": True})
+        return manager.start(conversation_id or f"quota_{user.email}", _quota_driver)
+
+    conv_id, payload = prepare_turn(user, conversation_id, messages, agent_id,
+                                    degraded=(verdict.mode == "degraded"))
+    notice = verdict.event() if verdict.mode == "degraded" else None
+
+    async def _drive(run: Run) -> None:
+        if notice:
+            await manager.append(run, notice)
+        await drive_run(run, user, conv_id, payload)
+
+    return manager.start(conv_id, _drive)

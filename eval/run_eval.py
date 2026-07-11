@@ -101,7 +101,8 @@ def chat_messages(messages: list[dict], agent_id: str) -> dict:
     code, raw = _request("POST", f"{STUDIO}/chat/stream",
                          {"messages": messages, "agent_id": agent_id}, headers)
     tools, statuses, cites, ans, arts, cads = [], [], [], [], [], []
-    confs, suggestions, subagents, cite_urls = [], [], {}, []
+    audit = {}
+    confs, suggestions, subagents, cite_urls, cite_comps = [], [], {}, [], []
     clarify = None
     refused = None
     for line in raw.decode("utf-8", "replace").splitlines():
@@ -120,6 +121,8 @@ def chat_messages(messages: list[dict], agent_id: str) -> dict:
         elif t == "citation":
             if ev.get("source"):
                 cites.append(ev["source"])
+            if isinstance(ev.get("computation"), dict):   # M-DERIV: derivation rides the citation
+                cite_comps.append(ev["computation"])
             if ev.get("url"):                # the external source page the in-app viewer renders
                 cite_urls.append(ev["url"])
             if ev.get("cadence"):
@@ -142,6 +145,7 @@ def chat_messages(messages: list[dict], agent_id: str) -> dict:
             ans.append(ev.get("text", ""))
         elif t == "done":
             refused = ev.get("refused")
+            audit = ev.get("audit") or {}
             # the done list is authoritative — the verify pass enriches its citations with
             # per-source confidence (not present on the earlier streamed `citation` events).
             for c in ev.get("citations") or []:
@@ -149,8 +153,11 @@ def chat_messages(messages: list[dict], agent_id: str) -> dict:
                     confs.append(c["confidence"])
                 if isinstance(c, dict) and c.get("url"):
                     cite_urls.append(c["url"])
+                if isinstance(c, dict) and isinstance(c.get("computation"), dict):
+                    cite_comps.append(c["computation"])
     return {"http": code, "tools": tools, "statuses": statuses, "citations": cites,
             "artifacts": arts, "cadences": cads, "confidences": confs, "cite_urls": cite_urls,
+            "cite_computations": cite_comps, "audit": audit,
             "clarify": clarify, "subagents": list(subagents.values()), "suggestions": suggestions,
             "answer": "".join(ans).strip(), "refused": bool(refused)}
 
@@ -175,6 +182,49 @@ def rag_ingest(docs: list[dict]) -> None:
     _request("POST", f"{RAG}/rag/ingest", {"documents": docs}, {"Content-Type": "application/json"})
 
 
+# --- desk-feed scenarios (M-DESK / DK-4) -----------------------------------
+def _studio_as(email: str, method: str, path: str, body=None) -> tuple[int, dict]:
+    """studio() but as an explicit user — desk-feed scenarios need their own users (one seeded
+    with a watchlist, one fresh for the nudge state) so they can't contaminate the shared
+    eval user or each other."""
+    headers = {"X-Service-Token": SVC, "X-User-Email": email, "Content-Type": "application/json"}
+    code, raw = _request(method, f"{STUDIO}{path}", body, headers)
+    try:
+        return code, json.loads(raw or b"{}")
+    except ValueError:
+        return code, {"_raw": raw.decode("utf-8", "replace")}
+
+
+def run_scenario_desk_feed(sc: dict) -> dict:
+    """Execute a `kind: desk_feed` scenario: optional watchlist seeding → GET /desk-feed →
+    fold the cards into the same result shape the graders/judge consume (the 'answer' is the
+    rendered card list, 'citations' the card sources)."""
+    email = f"eval-desk-{sc['name'].__hash__() & 0xffffff:x}@valuegraph.local"
+    _studio_as(email, "POST", "/users/ensure")
+    wl = sc.get("setup_watchlist")
+    if wl:
+        code, created = _studio_as(email, "POST", "/watchlists", {"name": wl["name"]})
+        if code == 200 and "id" in created:
+            for it in wl.get("items", []):
+                _studio_as(email, "POST", f"/watchlists/{created['id']}/items", it)
+    code, feed = _studio_as(email, "GET", "/desk-feed")
+    cards = feed.get("cards") or []
+
+    def _render(c: dict) -> str:
+        # render each card WITH its cited sources inline so the (prose-oriented) judge can see the
+        # feed IS sourced — the cards carry citations structurally; the deep rubric grades text.
+        srcs = ", ".join(f"{ci.get('source')}{(' ' + ci['as_of']) if ci.get('as_of') else ''}"
+                         for ci in (c.get("citations") or []) if ci.get("source"))
+        tail = f"  [출처: {srcs}]" if srcs else ""
+        return f"[{c.get('kind')}] {c.get('hook')} → “{c.get('question')}”{tail}"
+
+    answer = "\n".join(_render(c) for c in cards) or "(no cards)"
+    cites = sorted({(ci.get("source") or "?") for c in cards for ci in (c.get("citations") or [])})
+    return {"tools": feed.get("used_tools") or [], "statuses": [code], "citations": cites,
+            "answer": answer, "cards": cards, "artifacts": [], "cadences": [], "cite_urls": [],
+            "confidences": [], "suggestions": [], "subagents": {}, "clarify": None, "refused": False}
+
+
 # --- LLM judge (deep Gemini, rubric-based; optional) ----------------------
 # The rubric: each dimension scored 1-5 by the deep judge. Keep this in sync with
 # eval/RUBRIC.md (the human-facing spec). `overall` is the headline score.
@@ -182,14 +232,32 @@ RUBRIC = [
     ("sourcing",  "Every figure/claim ties to a NAMED institutional source (cited / [n]); no unsourced numbers."),
     ("relevance", "Directly and completely answers the question that was asked — nothing missing, nothing off-topic."),
     ("grounding", "Uses the retrieved data; invents NO figures or sources (retrieved figures are GROUND TRUTH)."),
-    ("guardrail", "States facts only — no price predictions, price targets, or buy/sell advice; frames news as context, not a call."),
+    ("guardrail", "States facts only — no OUR-OWN price predictions, price targets, or buy/sell advice; frames news as context. "
+                  "Reporting an ATTRIBUTED third-party figure WITH its source — analyst CONSENSUS estimates (EPS/revenue), a company's own GUIDANCE — is descriptive DATA, not a violation (it says what a named source published, like a news headline). Do NOT penalise attributed consensus/guidance as a 'forecast'. "
+                  "A transparent VALUATION model (DCF/DDM/RIM 내재가치) or a BACKTEST computed from real data under STATED assumptions, shown WITH a 'assumption-based, not a target/forecast' or 'past performance' disclaimer, is an allowed sourced calculation — do NOT penalise it as a price target."),
     ("clarity",   "Clear, well-structured (markdown); figures carry units/period and an as-of/freshness where relevant."),
 ]
 RUBRIC_KEYS = [k for k, _ in RUBRIC]
 
 
 def judge(question: str, answer: str, citations: list[str], criteria: str | None = None) -> dict | None:
-    """Deep-model rubric grade. Returns {overall, dims:{...}, reason} or None."""
+    """Rubric grade with variance control (JUDGE-4.5 ④): EVAL_JUDGE_VOTES calls (default 2);
+    if the two overalls disagree by >1 a third breaks the tie; the MEDIAN result is returned.
+    Single-run judge scores flip ±2 on identical answers — voting stabilizes the signal."""
+    votes = int(os.environ.get("EVAL_JUDGE_VOTES") or _envval("EVAL_JUDGE_VOTES") or "2")
+    results = [r for r in (_judge_once(question, answer, citations, criteria) for _ in range(max(1, votes))) if r]
+    if not results:
+        return None
+    if len(results) >= 2 and abs(results[0]["overall"] - results[1]["overall"]) > 1:
+        extra = _judge_once(question, answer, citations, criteria)
+        if extra:
+            results.append(extra)
+    results.sort(key=lambda r: r["overall"])
+    return results[len(results) // 2]
+
+
+def _judge_once(question: str, answer: str, citations: list[str], criteria: str | None = None) -> dict | None:
+    """One deep-model rubric grade. Returns {overall, dims:{...}, reason} or None."""
     if not GKEY or not answer:
         return None
     today = os.environ.get("EVAL_TODAY") or datetime.date.today().isoformat()
@@ -240,13 +308,40 @@ def grade(checks: dict, r: dict) -> list[tuple[str, bool, str]]:
         out.append((f"tool status {s}", s in r["statuses"], f"statuses={r['statuses']}"))
     if "expect_cite" in checks:
         c = checks["expect_cite"]
-        out.append((f"cites {c}", any(c in s for s in r["citations"]), f"cites={r['citations']}"))
+        opts = c if isinstance(c, list) else [c]  # list = any-of (price chain may fall back Yahoo→Stooq/KIS)
+        ok = any(o in s for o in opts for s in r["citations"])
+        out.append((f"cites {'|'.join(opts)}", ok, f"cites={r['citations']}"))
+    if checks.get("expect_ledger"):
+        # LG-5: the Figure Ledger rides the done event — every claim numeral traced to a source.
+        led = (r.get("audit") or {}).get("ledger") or []
+        ok = bool(led) and all(row.get("supported") for row in led)
+        out.append(("ledger: every numeral traced", ok,
+                    f"rows={len(led)} unsupported={[x['raw'] for x in led if not x.get('supported')][:3]}"))
+    if checks.get("expect_citation_computation"):
+        # M-DERIV (DRV-5): a derived figure's CITATION carries its derivation —
+        # formula + at least one sourced input (the 출처 preview renders the card from this).
+        comps = r.get("cite_computations") or []
+        ok = any(c.get("formula") and (c.get("inputs") or c.get("steps")) for c in comps)
+        out.append(("citation carries computation (formula+inputs)", ok,
+                    f"computations={[(c.get('method'), bool(c.get('formula'))) for c in comps]}"))
     if "expect_artifact" in checks:
         kind = checks["expect_artifact"]
         arts = r.get("artifacts") or []
         kinds = [a.get("kind") for a in arts]
         ok = bool(arts) if kind is True else (kind in kinds)
         out.append((f"emits artifact {kind if kind is not True else ''}".strip(), ok, f"artifacts={kinds}"))
+    if "expect_min_cards" in checks:
+        # M-DESK: the desk feed produced at least N suggestion cards
+        n, cards = checks["expect_min_cards"], r.get("cards") or []
+        out.append((f"≥{n} desk cards", len(cards) >= n, f"cards={len(cards)}"))
+    if "expect_card_kind" in checks:
+        k, kinds = checks["expect_card_kind"], [c.get("kind") for c in r.get("cards") or []]
+        out.append((f"card kind {k}", k in kinds, f"kinds={kinds}"))
+    if checks.get("cards_all_cited"):
+        # every DATA card carries ≥1 citation (state cards — nudge/continue — are exempt)
+        data = [c for c in r.get("cards") or [] if c.get("kind") not in ("watchlist_nudge", "continue_thread")]
+        bad = [c.get("question") for c in data if not c.get("citations")]
+        out.append(("all data cards cited", not bad, f"uncited={bad}"))
     if "expect_computation" in checks:
         # PH-DATA-6: a self-computed figure (valuation/backtest/screener) must carry the auditable
         # derivation — method + at least one input/assumption/step row — so the math isn't a black box.
@@ -301,6 +396,13 @@ def grade(checks: dict, r: dict) -> list[tuple[str, bool, str]]:
         want = checks["expect_suggestions"]
         n = len(r.get("suggestions") or [])
         out.append((f"≥{want} follow-ups", n >= want, f"suggestions={n}"))
+    if "suggestions_regex" in checks:
+        # follow-up SPECIFICITY: at least one chip names something concrete (ticker/figure),
+        # not a generic "관련 뉴스 보여줘" — the live-pulse grounding regression gate.
+        pat = checks["suggestions_regex"]
+        sugg = r.get("suggestions") or []
+        ok = any(re.search(pat, s) for s in sugg)
+        out.append((f"follow-up ~ /{pat}/", ok, f"suggestions={sugg}"))
     if "expect_confidence" in checks:
         # verify pass scored per-source evidentiary confidence (high|medium|low).
         confs = r.get("confidences") or []
@@ -382,17 +484,29 @@ def main() -> int:
         name = sc["name"]
         tag = cyan(f"[{i:>2}/{n}]")
         try:
-            if sc.get("rag_docs"):
-                rag_ingest(sc["rag_docs"])
-            ac, agent = studio("POST", "/agents", {
-                "name": sc["agent"]["name"], "model": sc["agent"].get("model", "gemini"),
-                "data_sources": sc["agent"]["data_sources"], "system_prompt": sc["agent"].get("system_prompt"),
-            })
-            if ac != 200 or "id" not in agent:
-                print(f"{tag} {red('✗')} {bold(name)}  {red(f'agent-create-failed ({ac})')}")
-                rows.append((name, 0, 1, "")); total += 1; print(); continue
-            r = _run_scenario_chat(sc, agent["id"])
-            question = sc["turns"][-1] if sc.get("turns") else sc["question"]
+            if sc.get("kind") == "desk_feed":  # M-DESK: non-chat scenario — GET /desk-feed
+                r = run_scenario_desk_feed(sc)
+                question = f"(오늘의 데스크 · {name})"
+            else:
+                if sc.get("rag_docs"):
+                    rag_ingest(sc["rag_docs"])
+                ac, agent = studio("POST", "/agents", {
+                    "name": sc["agent"]["name"], "model": sc["agent"].get("model", "gemini"),
+                    "data_sources": sc["agent"]["data_sources"], "system_prompt": sc["agent"].get("system_prompt"),
+                })
+                if ac != 200 or "id" not in agent:
+                    print(f"{tag} {red('✗')} {bold(name)}  {red(f'agent-create-failed ({ac})')}")
+                    rows.append((name, 0, 1, "")); total += 1; print(); continue
+                r = _run_scenario_chat(sc, agent["id"])
+                # transient upstream failure (5xx / dropped conn) is an INFRA flake, not answer
+                # quality — retry the scenario once (marked), like a flaky-CI retry. 4xx never retries.
+                statuses = [int(x) for x in (r.get("statuses") or []) if str(x).isdigit()]
+                gen_failed = (r.get("answer") or "").startswith("답변 생성 중 문제")  # Gemini-side 503 fallback
+                if (any(x >= 500 or x in (0, 403) for x in statuses) or gen_failed
+                        or (r.get("tools") and not (r.get("answer") or "").strip())):
+                    print(dim("        ↻ transient failure (5xx/403/generation) — retrying scenario once"))
+                    r = _run_scenario_chat(sc, agent["id"])
+                question = sc["turns"][-1] if sc.get("turns") else sc["question"]
         except Exception as e:  # never let one scenario abort the run
             print(f"{tag} {red('✗')} {bold(name)}  {red(f'ERROR {type(e).__name__}: {e}')}")
             rows.append((name, 0, 1, "")); total += 1; print(); continue

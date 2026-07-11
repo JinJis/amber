@@ -12,6 +12,7 @@ import {
   type Time,
 } from "lightweight-charts";
 import type { Artifact, ArtifactMarker, ChartAnnotations, Citation } from "../lib/types";
+import { attachRegimeZones, underwaterSeries } from "./chartPrimitives";
 import { fmtBig } from "../lib/format";
 
 const MARKER_SHAPE: Record<string, "circle" | "arrowUp" | "arrowDown" | "square"> = {
@@ -69,11 +70,26 @@ export function TradeChart(
   const [range, setRange] = useState("MAX");  // default to all available data (fitContent) — a short
   //                                              window looks empty/ugly when the series is sparse
   const [logScale, setLogScale] = useState(false);
+  const [underwater, setUnderwater] = useState(false);   // HL-8(a): drawdown % sub-pane toggle
   const [rebase, setRebase] = useState(false);   // line mode only: index each series to 100
   // PH-VIZ-5: drawing mode (only when onDraw is provided). The pending point of a 2-click
   // trend line lives in a ref so it survives a re-render between clicks.
   const [drawMode, setDrawMode] = useState<null | "trend" | "hline">(null);
   const pending = useRef<{ time: string; price: number } | null>(null);
+
+  // Rebuild the chart only when the DATA actually changes — not when a parent re-render hands
+  // down new object identities. Streaming recreates the message (and its artifacts) on every SSE
+  // event, so identity-based deps tore the chart down at stream end and re-fit it (the "suddenly
+  // zooms out / goes blank" bug). The signature captures content: lengths + last timestamps.
+  const dataSig = [
+    a.kind, a.title, a.chart_style ?? "",
+    candleData.length, candleData[candleData.length - 1]?.time ?? "",
+    lineData.map((s) => `${s.label}:${s.points?.length ?? 0}:${s.points?.[s.points.length - 1]?.x ?? ""}`).join("|"),
+    overlays.map((o) => `${o.key}:${o.lines?.length ?? 0}`).join("|"),
+    a.markers?.length ?? 0, a.pricelines?.length ?? 0,
+    (a.annotations?.lines?.length ?? 0) + (a.annotations?.hlines?.length ?? 0) + (a.annotations?.zones?.length ?? 0),
+    (userAnn?.lines?.length ?? 0) + (userAnn?.hlines?.length ?? 0),
+  ].join("§");
 
   useEffect(() => {
     const el = box.current;
@@ -343,6 +359,36 @@ export function TradeChart(
       });
     }
 
+    // HL-8(b): regime shading — semi-transparent background spans for the fetched regimes
+    // (annotations.zones), behind the series. Only meaningful on long ranges; the primitive
+    // clips to the visible window itself.
+    let detachZones: (() => void) | null = null;
+    if (mainSeries && a.annotations?.zones?.length) {
+      detachZones = attachRegimeZones(mainSeries as any, a.annotations.zones.map((z) => ({
+        t0: toTime(z.t0) ?? z.t0, t1: toTime(z.t1) ?? z.t1, label: z.label, color: z.color,
+      })));
+    }
+
+    // HL-8(a): underwater (drawdown %) sub-pane — computed peer-to-date from the chart's OWN
+    // close series (no extra fetch). Its own bottom scale; area under zero.
+    if (underwater) {
+      const closes = isCandle
+        ? candleData.map((c) => ({ time: toTime(c.time) ?? "", value: c.close ?? 0 }))
+        : (lineData[0]?.points ?? []).map((p) => ({ time: toTime(p.x) ?? "", value: p.y ?? 0 }));
+      const uw = underwaterSeries(closes.filter((c) => c.time && c.value > 0));
+      if (uw.length) {
+        const uwSeries = chart.addAreaSeries({
+          priceScaleId: "uw", lineColor: "rgba(209,72,58,0.7)", lineWidth: 1,
+          topColor: "rgba(209,72,58,0.04)", bottomColor: "rgba(209,72,58,0.22)",
+          priceFormat: { type: "custom", formatter: (v: number) => `${v.toFixed(0)}%` },
+          lastValueVisible: false, priceLineVisible: false,
+        });
+        uwSeries.setData(uw.map((u) => ({ time: u.time as Time, value: u.value })));
+        uwSeries.priceScale().applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } });
+        chart.priceScale("right").applyOptions({ scaleMargins: { top: 0.05, bottom: 0.26 } });
+      }
+    }
+
     // apply the selected range (MAX → fit all)
     const days = RANGES.find(([k]) => k === range)?.[1] ?? 0;
     if (days && lastTime) {
@@ -354,12 +400,16 @@ export function TradeChart(
     }
 
     chartRef.current = chart;
-    const ro = new ResizeObserver(() => chart.applyOptions({
-      width: el.clientWidth, ...(fillHeight ? { height: el.clientHeight || 220 } : {}),
-    }));
+    // never apply a 0 width — a temporarily hidden container (view/tab switch, sheet transition)
+    // reports clientWidth 0 and a 0-width chart renders blank ("차트가 꺼짐").
+    const ro = new ResizeObserver(() => {
+      const w = el.clientWidth;
+      if (w > 0) chart.applyOptions({ width: w, ...(fillHeight ? { height: el.clientHeight || 220 } : {}) });
+    });
     ro.observe(el);
-    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
-  }, [a, bars, series, currency, range, logScale, rebase, isCandle, userAnn, drawMode, onDraw, fillHeight]);
+    return () => { ro.disconnect(); detachZones?.(); chart.remove(); chartRef.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataSig, currency, range, logScale, rebase, isCandle, drawMode, onDraw, fillHeight, underwater]);
 
   const hasDrawings = (userAnn?.lines?.length || 0) + (userAnn?.hlines?.length || 0) > 0;
 
@@ -407,6 +457,9 @@ export function TradeChart(
           {!isCandle && lineCount >= 1 && (
             <button type="button" className={rebase ? "on" : ""} onClick={() => setRebase((v) => !v)} title="시작점=100 기준 % 변화">% 기준</button>
           )}
+          {/* HL-8(a): drawdown (underwater) sub-pane */}
+          <button type="button" className={underwater ? "on" : ""} onClick={() => setUnderwater((v) => !v)}
+            title="고점 대비 낙폭(%) 하단 패널">낙폭</button>
           {/* PH-VIZ-5: drawing tools (only when the parent persists them via onDraw) */}
           {onDraw && (
             <>
@@ -430,6 +483,29 @@ export function TradeChart(
       </div>
       )}
       <div ref={box} className={`tc-canvas${fillHeight ? " tc-canvas-fill" : ""}${drawMode ? " drawing" : ""}`} />
+      {/* HL-8c: vol-context ribbon — realized vol + self-history percentile (+ VIX level) */}
+      {a.vol_context?.windows && Object.keys(a.vol_context.windows).length > 0 && (() => {
+        const vc = a.vol_context!;
+        const ws = Object.entries(vc.windows!).sort((x, y) => Number(x[0]) - Number(y[0]));
+        const pctLabel = (p?: number | null) => p == null ? "—"
+          : `${Math.round(p)}p${p >= 80 ? " · 상위권" : p <= 20 ? " · 하위권" : ""}`;
+        return (
+          <div className="tc-vol mono" title="실현변동성(연율)과 자체 히스토리 퍼센타일 · 과거 기록">
+            <span className="tc-vol-h">변동성</span>
+            {ws.map(([w, v]) => (
+              <span key={w} className="tc-vol-item">
+                {w}일 <b>{v.realized_vol_pct != null ? `${v.realized_vol_pct.toFixed(1)}%` : "—"}</b>
+                <span className="tc-vol-pct">{pctLabel(v.percentile)}</span>
+              </span>
+            ))}
+            {vc.level && (
+              <span className="tc-vol-item">VIX <b>{vc.level.current ?? "—"}</b>
+                <span className="tc-vol-pct">{pctLabel(vc.level.percentile)}</span></span>
+            )}
+            <span className="tc-vol-src">{vc.source || "출처"}{vc.as_of ? ` · ${vc.as_of}` : ""}</span>
+          </div>
+        );
+      })()}
       {drawMode && (
         <div className="tc-note">
           {drawMode === "trend" ? "추세선: 시작점과 끝점을 차례로 클릭하세요." : "수평선: 차트에서 원하는 가격대를 클릭하세요."}

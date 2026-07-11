@@ -4,17 +4,21 @@
 > **The legacy ValueGraph engine (`services/`, `apps/`, CVE, Deep-Research acquisition) has been removed**
 > — not a dependency.
 >
-> **⚠️ Roadmap & UX docs are being rewritten (2026-06-23).** The old roadmap and UX-design docs
-> (`ROADMAP.md`, `UX_SPEC.md`, `DESIGN_SYSTEM.md`, `wireframes/`) have moved to
-> [`docs/deprecate/`](./docs/deprecate/) — reference only, **not** the source of truth. A **new roadmap**
-> (full UX overhaul + MVP) will land in `docs/`; pull tasks from it once it exists.
+> **The new roadmap landed (2026-07-03).** The old roadmap and UX-design docs
+> (`ROADMAP.md`, `UX_SPEC.md`, `DESIGN_SYSTEM.md`, `wireframes/`) live in
+> [`docs/deprecate/`](./docs/deprecate/) — reference only, **not** the source of truth.
+> **Chat-first:** the 대시보드(board) and 알림봇(alert bot) surfaces are feature-flagged off by
+> default (`FEATURE_BOARD`/`FEATURE_ALERTS`, ROADMAP FLAG-1) — don't extend them.
 >
 > **Docs map (read before building):**
+> - **The plan — pull tasks here:** [`docs/ROADMAP.md`](./docs/ROADMAP.md) (milestones FLAG-1,
+>   OPS-1, M0–M6, M-DESK, M-QUANT; one task per PR)
+> - **History Lab implementation contract:** [`docs/HISTORY_LAB_SPEC.md`](./docs/HISTORY_LAB_SPEC.md)
+> - **Publish layer (공유 카드·팩트체크·노트):** [`docs/PUBLISH_SPEC.md`](./docs/PUBLISH_SPEC.md)
+> - **UX spec (chat-first, all new screens):** [`docs/UX_SPEC.md`](./docs/UX_SPEC.md)
 > - **How the services fit together (current state):** [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
 > - **Product idea / vision:** [`docs/IDEA.md`](./docs/IDEA.md)
 > - **Data expansion plans:** [`docs/DATA_EXPANSION.md`](./docs/DATA_EXPANSION.md)
-> - **The plan (new):** *being authored — full UX overhaul + MVP. Until it lands, the deprecated
->   `docs/deprecate/ROADMAP.md` is history only, not a task source.*
 >
 > One task at a time, **one task per PR**; tag the task id in branch/commits/PR. Don't mark done until
 > every acceptance criterion + the Definition of Done (§7) passes.
@@ -72,8 +76,8 @@ These hold across every service; breaking one fails review.
 | `control-plane` | 8010→8001 | `controlplane` | the **gateway** + tenants/keys/activations admin |
 | `rag` | 8002 | `rag` | provenance-first chunk→embed→retrieve→rerank |
 | `agent-engine` | 8003 | `agentengine` | guardrail→plan (Gemini)→tool loop→citations; `/agent/chat` SSE |
-| `studio-api` | 8004 | `studioapi` | Google user→tenant provisioning; conversations; **holds tenant key**; agents/prompts/(watchlists/briefs) |
-| `web` | 3000 | Next.js | chat UI + builder + prompt library; `/api/*` BFF (Auth.js session only) |
+| `studio-api` | 8004 | `studioapi` | Google user→tenant provisioning; conversations; **holds tenant key**; agents/(watchlists/briefs) |
+| `web` | 3000 | Next.js | chat UI + builder; `/api/*` BFF (Auth.js session only) |
 | `admin` | 8005 | — | out-of-band CRUD/ops console over service DBs (not in the request path) |
 | `mcp` | stdio | `mcpserver` | one tool per catalog resource, routed through the gateway |
 
@@ -85,10 +89,11 @@ Request flow (one chat turn): browser → web BFF (session) → studio-api (tena
   connector + manifest entry (an integrity test asserts every manifest path is a real route).
 - **Tenancy/entitlement/metering:** `control-plane/` (`controlplane`). Gateway is the enforcement point.
 - **Agent loop / planner / guardrails:** `agent-engine/` (`agentengine`). Planner via `AGENT_LLM_BACKEND`.
-- **Product data model** (users, conversations, agents, prompts, and the new **watchlists / standing
+- **Product data model** (users, conversations, agents, and the new **watchlists / standing
   analysts / briefs / pinned artifacts**): `studio-api/studioapi/models.py`. Extend here; mirror the
-  existing **prompt-import pattern** (`community` + `source_id` + idempotent clone) for analyst cloning.
-- **UI:** `web/` — chat, builder modal, prompt modal, BFF routes under `web/app/api/`. Read
+  **idempotent-clone pattern** (`orm_helpers.idempotent_clone` — `community` + `source_id`) for
+  analyst cloning. (The prompt library that originated it was removed 2026-07-06.)
+- **UI:** `web/` — chat, builder modal, BFF routes under `web/app/api/`. Read
   `/mnt/skills/public/frontend-design/SKILL.md` before UI work; **never render the graph with DOM nodes**
   (WebGL/R3F + instanced meshes); **no `localStorage`/`sessionStorage`** in preview/artifact contexts.
 
@@ -131,8 +136,9 @@ Model IDs are env-overridable and Gemini-only; verify exact IDs/SDK details agai
 not memory.
 
 ## 7. Working style
-- **Pull the next task from the new roadmap** (being authored — full UX overhaul + MVP); read the UX
-  spec section it implements. The old roadmap/UX docs in `docs/deprecate/` are history, not a task source.
+- **Pull the next task from [`docs/ROADMAP.md`](./docs/ROADMAP.md)** (follow its recommended
+  build order); read the `HISTORY_LAB_SPEC.md`/`UX_SPEC.md` section the task cites before
+  building. The old roadmap/UX docs in `docs/deprecate/` are history, not a task source.
 - **One task per PR.** Prefer iterative refinement over rewrites; preserve working code and tests.
 - **Keep docs in sync in the same PR:** if architecture drifts, update `docs/ARCHITECTURE.md`; if you
   finish/advance a task, update its status + test totals in the new roadmap.
