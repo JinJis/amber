@@ -273,8 +273,11 @@ async def run_stream(run_id: str, user: User = Depends(current_actor), from_inde
 
 
 app.include_router(authcodes_router)   # AUTH-2: 이메일 OTP 로그인
-from studioapi.billing_api import router as billing_router  # noqa: E402
-app.include_router(billing_router)     # BILL: 토스 빌링 + REF: 레퍼럴
+from studioapi.identity import router as identity_router  # noqa: E402
+app.include_router(identity_router)    # AUTH-4: 소셜 매핑 + 이메일 연결 승격
+from studioapi.billing_api import admin_router as billing_admin_router, router as billing_router  # noqa: E402
+app.include_router(billing_router)        # BILL: 토스 빌링 + REF: 레퍼럴
+app.include_router(billing_admin_router)  # BILL-5: 운영 액션 (X-Admin-Token)
 app.include_router(agents_router)
 app.include_router(connectors_router)
 app.include_router(alerts_router)

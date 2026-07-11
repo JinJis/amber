@@ -142,6 +142,20 @@ class ShareLink(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class UserIdentity(Base):
+    """AUTH-4: 소셜 계정 ↔ 유저 매핑 — (provider, provider_account_id)가 캐노니컬 이메일을
+    가리킨다. 프로바이더가 이메일을 바꾸거나 안 줘도(카카오 비즈앱 전) 계정이 갈라지지 않고,
+    이메일 연결 승격 시 이 행만 다시 가리키면 다음 로그인부터 새 이메일로 착지한다."""
+
+    __tablename__ = "user_identities"
+    __table_args__ = (UniqueConstraint("provider", "provider_account_id", name="uq_identity"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(String(24))
+    provider_account_id: Mapped[str] = mapped_column(String(128))
+    user_email: Mapped[str] = mapped_column(String(256), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class EmailOtp(Base):
     """AUTH-2: 이메일 로그인 6자리 코드 — sha256만 저장, 10분 만료, 시도 5회, 1회 소비.
     발송 스로틀(이메일/IP 시간당)은 created_at·ip_hash 카운트로 판정한다."""

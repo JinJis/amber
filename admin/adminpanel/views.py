@@ -30,6 +30,7 @@ NAV = [
     ("/queue", "Queue", "⚙"),
     ("/upstream", "Upstream", "📡"),
     ("/costs", "Costs", "💸"),
+    ("/billing", "Billing", "💳"),
     ("/shares", "Shares", "🔗"),
     ("/data", "Data", "▤"),
     ("/users", "Users", "⚇"),

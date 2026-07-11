@@ -184,3 +184,55 @@ def test_webhook_refund_claws_back_kickback(_fake_gateway, monkeypatch):
     assert r2.json().get("duplicate") is True
     # 시크릿 불일치 → 404
     assert client.post("/billing/webhook/wrong", headers=hdr, json={}).status_code == 404
+
+
+def test_same_card_referral_kickback_blocked(_fake_gateway):
+    """REF-4: 추천인과 피추천이 같은 카드(마스킹 라벨 동일)면 킥백을 건너뛴다 — 자기추천 어뷰즈.
+    FakeGateway는 항상 같은 카드 라벨을 반환하므로 '둘 다 카드 등록' = 같은 카드 시나리오."""
+    referrer = _user("samecard_host@u.com")
+    asyncio.run(billing.register_and_subscribe(referrer, "authkeyH"))     # 추천인도 카드 등록
+    referee = _user("samecard_guest@u.com", referred_by=referrer.email)
+    before = billing.credit_balance(referrer.email)
+    asyncio.run(billing.register_and_subscribe(referee, "authkeyG"))
+    # 할인·구독은 정상, 킥백만 차단
+    with SessionLocal() as db:
+        inv = db.execute(select(Invoice).where(Invoice.user_email == referee.email)).scalars().one()
+        assert inv.status == "paid" and inv.discount > 0
+    assert billing.credit_balance(referrer.email) == before               # 적립 없음
+
+
+def test_admin_billing_ops(_fake_gateway):
+    """BILL-5: admin 재시도·환불·플랜 오버라이드 — X-Admin-Token 게이트."""
+    ADMIN = {"X-Admin-Token": "dev-admin-token"}
+    u = _user("adminops@u.com")
+    _fake_gateway.fail_next = 1
+    with pytest.raises(RuntimeError):
+        asyncio.run(billing.register_and_subscribe(u, "authkeyA"))        # 첫 결제 실패 → past_due
+    with SessionLocal() as db:
+        inv = db.execute(select(Invoice).where(Invoice.user_email == u.email)).scalars().one()
+        iid = inv.id
+    # 토큰 없으면 401
+    assert client.post(f"/admin/billing/invoices/{iid}/retry").status_code == 401
+    # 수동 재시도 → 결제 성공 + 구독 정상화 + pro
+    r = client.post(f"/admin/billing/invoices/{iid}/retry", headers=ADMIN)
+    assert r.status_code == 200 and r.json()["ok"] is True
+    with SessionLocal() as db:
+        assert db.get(Invoice, iid).status == "paid"
+        sub = db.execute(select(Subscription).where(Subscription.user_email == u.email)).scalars().one()
+        assert sub.status == "active"
+        assert db.get(User, u.email).plan == "pro"
+    # 환불 → refunded (없는 인보이스 404)
+    assert client.post("/admin/billing/invoices/inv_nope/refund", headers=ADMIN).status_code in (404, 502)
+    r2 = client.post(f"/admin/billing/invoices/{iid}/refund", headers=ADMIN)
+    assert r2.status_code == 200
+    with SessionLocal() as db:
+        assert db.get(Invoice, iid).status == "refunded"
+    # 플랜 오버라이드 (apply_plan 단일 경로 — 픽스처가 users.plan만 갱신)
+    r3 = client.post(f"/admin/users/{u.email}/plan", headers=ADMIN, json={"plan": "free"})
+    assert r3.status_code == 200
+    with SessionLocal() as db:
+        assert db.get(User, u.email).plan == "free"
+    assert client.post("/admin/users/ghost@u.com/plan", headers=ADMIN,
+                       json={"plan": "pro"}).status_code == 404
+    assert client.post(f"/admin/users/{u.email}/plan", headers=ADMIN,
+                       json={"plan": "vip"}).status_code == 422

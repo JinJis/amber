@@ -745,7 +745,7 @@ QT-1(compute 엔진)과 정합: compute의 스펙-as-계산근거는 이 카드�
 | AUTH-1 | 네이버 제거 · dev-login production 차단 · SERVICE/ADMIN 토큰 dev 폴백 기동 거부 | ✅ 2026-07-10 |
 | AUTH-2 | 이메일 6자리 OTP 로그인 (Resend, dev 모드 폴백; 매직링크 아님 — 인앱 브라우저 보존) | ✅ 2026-07-10 |
 | AUTH-3 | `/?q=` 딥링크 로그인 왕복 보존 (callbackUrl) — V-5 바이럴 루프 봉합 | ✅ 2026-07-10 |
-| AUTH-4 | 카카오 무이메일 센티널(`@noemail.local`, email_verified=false 메일 게이트) — 이메일 연결 승격 UI는 잔여 | 🔶 부분 |
+| AUTH-4 | user_identities 매핑(로그인마다 캐노니컬 이메일 해석) · 카카오 무이메일 센티널 · 이메일 연결 승격(OTP→전 테이블 리네임, Settings UI) | ✅ 2026-07-11 |
 | GUEST-1 | 공유 게스트 테넌트·GuestSession·current_actor·평생/IP 캡 | ✅ 2026-07-10 |
 | GUEST-2 | 비로그인 게스트 챗 착지 + 게스트 필 + GuestWall(대화 승계 안내) | ✅ 2026-07-10 |
 | GUEST-3 | `POST /users/claim-guest` — 가입 시 게스트 대화 이어붙이기 (멱등·409) | ✅ 2026-07-10 |
@@ -755,13 +755,13 @@ QT-1(compute 엔진)과 정합: compute의 스펙-as-계산근거는 이 카드�
 | PLAN-4 | apply_plan 단일 경로(활성화→rate→plan 순서 고정) · DEFAULT_CONNECTORS 무료 셋 축소 · PLAN_ENFORCE_CONNECTORS 스위치 | ✅ 2026-07-10 |
 | PLAN-5 | 내 사용량 UI(턴 프로그레스) | ✅ 2026-07-10 |
 | METER-1 | LlmUsage.project_id — X-Project-Id → contextvar → 유저별 LLM 원가 귀속 | ✅ 2026-07-10 |
-| METER-2 | `/admin/llm-usage/by-project` 롤업 (admin 패널 화면은 잔여) | 🔶 부분 |
+| METER-2 | `/admin/llm-usage/by-project` 롤업 + admin /costs '유저별 LLM 원가' 섹션 | ✅ 2026-07-11 |
 | METER-3 | Vertex 리랭커 콜 계측 | ✅ 2026-07-10 |
 | BILL-1~4 | 토스 빌링키 스키마·상태기계·등록/첫결제·시간별 갱신·던닝 D+1/3/5·웹훅(멱등·재조회 검증)·해지 예약 — FakeGateway 전수 테스트 | ✅ 2026-07-10 |
-| BILL-5 | admin 결제 운영 화면 | ⬜ |
+| BILL-5 | admin /billing 화면(구독·인보이스·원장·웹훅) + 재시도/환불/플랜 오버라이드(studio admin API, apply_plan 단일 경유) | ✅ 2026-07-11 |
 | REF-1 | 추천 코드 발급·가입 귀속·14일 소급 입력 | ✅ 2026-07-10 |
 | REF-2/3 | credit_ledger(멱등 UNIQUE) · 피추천 첫 달 30% 할인 · 결제 확정 시 추천인 20% 킥백(월 상한) · 환불 clawback | ✅ 2026-07-10 |
-| REF-4 | 어뷰즈 가드(자기추천·일회용 이메일·월 상한) + 친구 초대 화면 — 카드 지문 가드는 잔여 | 🔶 부분 |
+| REF-4 | 어뷰즈 가드(자기추천·일회용 이메일·월 상한·같은 카드 킥백 차단) + 친구 초대 화면 | ✅ 2026-07-11 |
 
 **유저 액션(코드 밖):** 구글 OAuth 동의화면 · 카카오 개발자 앱(+비즈앱 심사) · Resend 도메인
 인증 · 토스페이먼츠 가맹 계약 + 웹훅 URL 등록 · production env(ENV/SERVICE_TOKEN/ADMIN_TOKEN/
@@ -777,7 +777,7 @@ Every task adds tests; keep this table updated in the same PR (Definition of Don
 |---|---|---|---|
 | datasets | 148 | 239 (measured) | ✅ OPS-1 (+2 grouping/runner); then ≥32 HL-1/2/3, ≥12 HL-4, ≥9 HL-5, ≥22 QT-1/4, ≥7 EC-1, ≥14 FI-1/2/3, ≥8 HL-8/EC-2 |
 | agent-engine | 111 | 169 (measured — RC-6 펄스 +3, METER-1 +1 등) | ✅ DK-1 (+5); then ≥10 HL-6/7, ≥8 QT-2 (number audit), ≥8 EC-3, ≥6 HL-9 |
-| studio-api | 40 | 104 (measured — M-PROD +34: plans/quotas/guest/otp/billing/referral) | ✅ FLAG-1 scheduler gate (+1), ✅ DK-3 (+4); then ≥7 HL-12/14 BFF |
+| studio-api | 40 | 109 (measured — M-PROD +39: plans/quotas/guest/otp/billing/referral) | ✅ FLAG-1 scheduler gate (+1), ✅ DK-3 (+4); then ≥7 HL-12/14 BFF |
 | control-plane | 13 | 19 (measured — M-PROD +6: 플랜 rate·PATCH project·llm-usage 귀속) | ≥1 QT-1 (activated-connectors header forwarding); rest manifest-derived (coverage.sh guards) |
 | mcp | 9 | 9 | ≥3 HL-4/QT-1 (new tools listed, unentitled 403) |
 | rag | 20 | 20 | ≥4 HL-5 (era_news/dossier doc types), ≥2 FI-1 (section filter) |

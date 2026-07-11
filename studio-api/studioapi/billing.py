@@ -235,7 +235,18 @@ async def _charge_invoice(inv_id: str) -> bool:
         row.toss_payment_key = payment_key
         db.commit()
         # REF-3: 결제 확정 시 추천인 킥백(20%, 월 상한) — 멱등(원장 UNIQUE)
-        if user.referred_by and inv.total > 0:
+        # REF-4: 같은 카드(마스킹 라벨 일치)로 결제하는 추천인↔피추천은 자기추천으로 보고
+        # 킥백을 건너뛴다 (할인·구독 자체는 정상 — 어뷰즈 이득만 제거).
+        same_card = False
+        if user.referred_by:
+            ref_cust = db.get(BillingCustomer, user.referred_by)
+            me_cust = db.get(BillingCustomer, user.email)
+            same_card = bool(ref_cust and me_cust and ref_cust.card_label
+                             and ref_cust.card_label == me_cust.card_label)
+            if same_card:
+                logger.warning("billing: same-card referral kickback blocked (%s ← %s)",
+                               user.referred_by, user.email)
+        if user.referred_by and inv.total > 0 and not same_card:
             kick = math.floor(inv.total * KICKBACK_RATE)
             month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             earned = int(db.execute(select(func.coalesce(func.sum(CreditLedger.amount_krw), 0)).where(
@@ -291,6 +302,39 @@ async def register_and_subscribe(user: User, auth_key: str) -> dict:
         raise RuntimeError("첫 결제에 실패했어요. 카드 정보를 확인해 주세요.")
     return {"subscribed": True, "card": label,
             "message": "Pro가 시작됐어요. 이제 더 깊은 분석과 실시간 데이터를 쓸 수 있어요."}
+
+
+async def refund_invoice(invoice_id: str, reason: str = "운영 환불",
+                         already_canceled: bool = False) -> bool:
+    """BILL-4/5: 환불 확정 — 토스 취소(결제 존재 시) → refunded → 킥백 clawback.
+    clawback은 그 인보이스로 **실제 적립된 금액만** 회수한다(같은 카드 차단으로 적립이
+    없었으면 회수도 없음). 웹훅·admin 환불 버튼이 공용하는 단일 경로. 멱등."""
+    with SessionLocal() as db:
+        inv = db.get(Invoice, invoice_id)
+    if inv is None:
+        return False
+    if inv.status == "refunded":
+        return True
+    if inv.toss_payment_key and not already_canceled:   # 웹훅 경로는 이미 취소된 결제 — 재취소 금지
+        try:
+            await gateway().cancel(inv.toss_payment_key, reason)
+        except Exception as exc:  # noqa: BLE001 — 이미 취소된 결제 등은 재조회로 확인될 것
+            logger.error("billing: refund cancel failed inv=%s: %s", invoice_id, exc)
+            return False
+    with SessionLocal() as db:
+        inv = db.get(Invoice, invoice_id)
+        inv.status = "refunded"
+        db.commit()
+        u = db.get(User, inv.user_email)
+        if u is not None and u.referred_by:
+            kick_row = db.execute(select(CreditLedger).where(
+                CreditLedger.kind == "referral_kickback",
+                CreditLedger.related_invoice_id == inv.id,
+                CreditLedger.user_email == u.referred_by)).scalars().first()
+            if kick_row:
+                _ledger_add(db, u.referred_by, -int(kick_row.amount_krw), "clawback", inv.id,
+                            related_user=inv.user_email, note="환불 회수")
+    return True
 
 
 async def cancel_at_period_end(user: User) -> dict:

@@ -17,6 +17,12 @@ async def require_service(x_service_token: Annotated[str | None, Header(alias="X
         raise HTTPException(401, "Invalid service token.")
 
 
+async def require_admin(x_admin_token: Annotated[str | None, Header(alias="X-Admin-Token")] = None) -> None:
+    """BILL-5: 운영(admin 패널) 전용 액션 — control-plane과 같은 ADMIN_TOKEN을 공유한다."""
+    if not x_admin_token or x_admin_token != settings.admin_token:
+        raise HTTPException(401, "Invalid admin token.")
+
+
 async def current_user(
     x_user_email: Annotated[str | None, Header(alias="X-User-Email")] = None,
     x_user_name: Annotated[str | None, Header(alias="X-User-Name")] = None,

@@ -59,12 +59,35 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   providers,
   trustHost: true,
   callbacks: {
-    // AUTH-4: 카카오는 비즈앱 심사 전까지 이메일을 안 줄 수 있다 — 로그인 자체가 깨지지 않게
-    // 결정적 센티널(kakao_{id}@noemail.local)로 계정을 만든다. studio가 이 도메인을
-    // email_verified=false로 마킹해 메일 발송을 차단하고, 이후 이메일 연결(OTP)로 승격한다.
-    jwt({ token, account }) {
-      if (account?.provider === "kakao" && !token.email && account.providerAccountId) {
-        token.email = `kakao_${account.providerAccountId}@noemail.local`;
+    // AUTH-4: 소셜 로그인마다 studio의 identity 매핑으로 캐노니컬 이메일을 해석한다 —
+    // 카카오가 이메일을 안 줘도(비즈앱 심사 전) 센티널로 로그인이 되고, 이메일 연결 승격
+    // 후에는 같은 카카오 계정이 새 이메일로 착지한다. studio 불통 시 폴백: 프로바이더
+    // 이메일 또는 로컬 센티널 (로그인이 절대 죽지 않게).
+    async jwt({ token, account, profile }) {
+      if (account && (account.provider === "google" || account.provider === "kakao")) {
+        const fallback = token.email ||
+          (account.providerAccountId ? `${account.provider}_${account.providerAccountId}@noemail.local` : null);
+        try {
+          const base = process.env.STUDIO_API_URL ?? "http://127.0.0.1:8004";
+          const r = await fetch(`${base}/auth/identity`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Service-Token": process.env.SERVICE_TOKEN ??
+                (process.env.NODE_ENV === "production" ? "" : "dev-service-token"),
+            },
+            body: JSON.stringify({
+              provider: account.provider,
+              provider_account_id: String(account.providerAccountId ?? ""),
+              email: token.email ?? null,
+              name: (profile as { name?: string } | null)?.name ?? token.name ?? null,
+              image: token.picture ?? null,
+            }),
+          });
+          token.email = r.ok ? (await r.json()).email ?? fallback : fallback;
+        } catch {
+          token.email = fallback;
+        }
       }
       return token;
     },

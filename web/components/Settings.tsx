@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 
 import BillingPanel from "./BillingPanel";
+import EmailLink from "./EmailLink";
 import InvitePanel from "./InvitePanel";
 
 type Me = { email: string; name: string; image?: string | null; plan: string };
@@ -128,6 +129,7 @@ export function Settings({ name, email, image }: { name: string; email: string; 
             </div>
             <p className="st-note mono">자동은 기기 설정(라이트/다크)을 따라가요.</p>
           </div>
+          {email.endsWith("@noemail.local") && <EmailLink />}{/* AUTH-4: 센티널 → 이메일 연결 */}
           <div className="st-account">
             <a className="btn ghost" href="/api/auth/signout">로그아웃</a>
           </div>

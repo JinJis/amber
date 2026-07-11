@@ -624,8 +624,165 @@ async def costs_view(request: Request):
         + "<h2>고정 구독</h2>" + fixed_table
         + "<h2>요율표 (per 1M tokens · USD)</h2>"
           "<table class=t><tr><th>모델 매칭</th><th>입력</th><th>출력</th></tr>" + rules_tr + "</table>"
+        + _per_project_costs_section(cost_usd)
     )
     return HTMLResponse(page("/costs", "Costs", body, refresh=True))
+
+
+def _per_project_costs_section(cost_usd) -> str:
+    """METER-2: 유저(프로젝트)별 LLM 원가 롤업 — 플랜 가격·캡을 실측으로 조정하는 근거.
+    project_id NULL(피드·인제스트 등 공용 작업)은 '공용/백그라운드' 한 줄로 접는다."""
+    try:
+        eng = ENGINES.get("controlplane")
+        if eng is None:
+            return ""
+        from datetime import datetime as _dt, timedelta as _td
+        d30 = _dt.utcnow() - _td(days=30)
+        with eng.connect() as conn:  # type: ignore[union-attr]
+            rows = conn.execute(sa_text(
+                "SELECT lu.project_id, t.name tenant, lu.model, "
+                "SUM(lu.input_tokens) i, SUM(lu.output_tokens) o, SUM(lu.calls) c "
+                "FROM llm_usage lu "
+                "LEFT JOIN projects p ON p.id = lu.project_id "
+                "LEFT JOIN tenants t ON t.id = p.tenant_id "
+                "WHERE lu.ts >= :since GROUP BY lu.project_id, t.name, lu.model"
+            ), {"since": d30}).all()
+    except Exception:  # noqa: BLE001 — 컬럼 미생성(구버전 DB) 등: 섹션만 생략
+        return ""
+    per_user: dict[str, dict] = {}
+    for pid, tenant, model, i, o, c in rows:
+        key = tenant or ("공용/백그라운드" if pid is None else pid)
+        agg = per_user.setdefault(key, {"usd": 0.0, "in": 0, "out": 0, "calls": 0, "unknown": False})
+        usd = cost_usd(model, int(i or 0), int(o or 0))
+        if usd is None:
+            agg["unknown"] = True
+        else:
+            agg["usd"] += usd
+        agg["in"] += int(i or 0)
+        agg["out"] += int(o or 0)
+        agg["calls"] += int(c or 0)
+    if not per_user:
+        return ("<h2>유저별 LLM 원가 (30일)</h2><div class=empty>귀속 기록이 아직 없어요 — "
+                "METER-1 배포 후 첫 채팅부터 쌓여요.</div>")
+    tr = "".join(
+        f"<tr><td class=mono>{_esc(k)}</td>"
+        f"<td class=mono style='text-align:right'>{v['in']:,}</td>"
+        f"<td class=mono style='text-align:right'>{v['out']:,}</td>"
+        f"<td class=mono style='text-align:right'>{v['calls']:,}</td>"
+        f"<td class=mono style='text-align:right'>${v['usd']:,.4f}{'+?' if v['unknown'] else ''}</td></tr>"
+        for k, v in sorted(per_user.items(), key=lambda kv: -kv[1]["usd"]))
+    return ("<h2>유저별 LLM 원가 (30일)</h2>"
+            "<div class=sub>METER-1/2 — 플랜 가격·캡 조정의 실측 근거. '+?'=요율 미설정 모델 포함.</div>"
+            "<table class=t><tr><th>유저(테넌트)</th><th>입력 토큰</th><th>출력 토큰</th>"
+            "<th>호출</th><th>비용(USD)</th></tr>" + tr + "</table>")
+
+
+# --- Billing (BILL-5) ------------------------------------------------------
+@app.get("/billing", response_class=HTMLResponse)
+async def billing_view(request: Request, msg: str = ""):
+    """BILL-5: 결제 운영 — 구독·인보이스·크레딧 원장·웹훅을 studio DB에서 읽고, 재시도/환불/
+    플랜 오버라이드는 studio의 admin 엔드포인트(X-Admin-Token)로 실행한다 (apply_plan 단일 경유)."""
+    eng = ENGINES.get("studio")
+    if eng is None:
+        return HTMLResponse(page("/billing", "Billing", "<div class=warn>studio DB not mounted.</div>"))
+
+    subs: list = []
+    invoices: list = []
+    err = ""
+    try:
+        with eng.connect() as conn:  # type: ignore[union-attr]
+            subs = conn.execute(sa_text(
+                "SELECT id, user_email, plan, status, current_period_end, cancel_at_period_end "
+                "FROM subscriptions ORDER BY created_at DESC LIMIT 50")).all()
+            invoices = conn.execute(sa_text(
+                "SELECT id, user_email, total, status, attempts, period_start, paid_at "
+                "FROM invoices ORDER BY created_at DESC LIMIT 50")).all()
+    except Exception as exc:  # noqa: BLE001 — 첫 부팅: 테이블 미생성
+        err = f"{type(exc).__name__}: {exc}"
+
+    sub_tr = "".join(
+        f"<tr><td class=mono>{_esc(sid)}</td><td class=mono>{_esc(em)}</td><td>{_esc(pl)}</td>"
+        f"<td>{_esc(st)}</td><td class=mono>{_esc(str(pe)[:10])}</td>"
+        f"<td>{'예약됨' if cape else '-'}</td></tr>"
+        for sid, em, pl, st, pe, cape in subs)
+    inv_tr = "".join(
+        f"<tr><td class=mono>{_esc(iid)}</td><td class=mono>{_esc(em)}</td>"
+        f"<td class=mono style='text-align:right'>₩{int(tot):,}</td><td>{_esc(st)}</td>"
+        f"<td class=mono>{int(att)}</td><td class=mono>{_esc(str(ps)[:10])}</td>"
+        f"<td>"
+        + (f"<form method=post action=/ops/billing/retry style='display:inline'>"
+           f"<input type=hidden name=invoice_id value='{_esc(iid)}'><button>재시도</button></form> "
+           if st == "failed" else "")
+        + (f"<form method=post action=/ops/billing/refund style='display:inline' "
+           f"onsubmit=\"return confirm('환불할까요? 킥백도 회수돼요.')\">"
+           f"<input type=hidden name=invoice_id value='{_esc(iid)}'><button>환불</button></form>"
+           if st == "paid" else "")
+        + "</td></tr>"
+        for iid, em, tot, st, att, ps, _paid in invoices)
+
+    body = (
+        (f"<div class=flash>{_esc(msg)}</div>" if msg else "")
+        + (f"<div class=warn>{_esc(err)} — studio 재빌드 후 결제 테이블이 생겨요.</div>" if err else "")
+        + "<p class=hint>구독·인보이스·크레딧 — 액션(재시도/환불/플랜)은 studio admin API를 경유해요 "
+          "(플랜 전환은 항상 apply_plan 단일 경로).</p>"
+        + "<h2>플랜 오버라이드</h2>"
+          "<form method=post action=/ops/billing/plan class=row>"
+          "<input name=email placeholder='user@example.com' required> "
+          "<select name=plan><option>free</option><option>pro</option></select> "
+          "<button>적용</button></form>"
+        + "<h2>구독 (최근 50)</h2>"
+          "<table class=t><tr><th>id</th><th>유저</th><th>플랜</th><th>상태</th><th>기간 종료</th><th>해지</th></tr>"
+        + sub_tr + "</table>"
+        + "<h2>인보이스 (최근 50)</h2>"
+          "<table class=t><tr><th>id</th><th>유저</th><th>청구액</th><th>상태</th><th>시도</th><th>기간</th><th>액션</th></tr>"
+        + inv_tr + "</table>"
+        + "<h2>크레딧 원장 (최근 50)</h2>" + _simple_table("studio", "credit_ledger",
+            ["user_email", "amount_krw", "kind", "related_user", "created_at"], limit=50)
+        + "<h2>웹훅 이벤트 (최근 20)</h2>" + _simple_table("studio", "webhook_events",
+            ["event_id", "provider", "processed_at"], limit=20)
+    )
+    return HTMLResponse(page("/billing", "Billing", body))
+
+
+async def _studio_admin_post(path: str) -> tuple[bool, str]:
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.post(f"{settings.studio_url}{path}",
+                             headers={"X-Admin-Token": settings.admin_token}, timeout=30)
+        return r.status_code == 200, ("" if r.status_code == 200 else f"HTTP {r.status_code}")
+    except Exception as exc:  # noqa: BLE001
+        return False, type(exc).__name__
+
+
+@app.post("/ops/billing/retry")
+async def ops_billing_retry(request: Request):
+    form = await request.form()
+    ok, why = await _studio_admin_post(f"/admin/billing/invoices/{form.get('invoice_id')}/retry")
+    msg = "재시도 완료" if ok else f"재시도 실패 ({why})"
+    return RedirectResponse(f"/billing?msg={msg.replace(' ', '+')}", status_code=303)
+
+
+@app.post("/ops/billing/refund")
+async def ops_billing_refund(request: Request):
+    form = await request.form()
+    ok, why = await _studio_admin_post(f"/admin/billing/invoices/{form.get('invoice_id')}/refund")
+    msg = "환불 완료 (킥백 회수 포함)" if ok else f"환불 실패 ({why})"
+    return RedirectResponse(f"/billing?msg={msg.replace(' ', '+')}", status_code=303)
+
+
+@app.post("/ops/billing/plan")
+async def ops_billing_plan(request: Request):
+    form = await request.form()
+    email, plan = str(form.get("email") or ""), str(form.get("plan") or "free")
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.post(f"{settings.studio_url}/admin/users/{email}/plan",
+                             headers={"X-Admin-Token": settings.admin_token},
+                             json={"plan": plan}, timeout=60)
+        msg = f"{email} → {plan} 적용" if r.status_code == 200 else f"플랜 적용 실패 (HTTP {r.status_code})"
+    except Exception as exc:  # noqa: BLE001
+        msg = f"플랜 적용 실패: {type(exc).__name__}"
+    return RedirectResponse(f"/billing?msg={msg.replace(' ', '+')}", status_code=303)
 
 
 # --- Data -----------------------------------------------------------------

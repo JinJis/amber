@@ -14,13 +14,15 @@ from sqlalchemy.exc import IntegrityError
 from studioapi import billing
 from studioapi.config import settings
 from studioapi.db import SessionLocal
-from studioapi.deps import current_user, require_service
+from studioapi.deps import current_user, require_admin, require_service
 from studioapi.models import (
     BillingCustomer, CreditLedger, Invoice, Subscription, User,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(require_service)])
+# BILL-5: 운영 액션 — admin 패널이 X-Admin-Token으로 호출 (요청 경로 밖의 ops)
+admin_router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 
 
 class RegisterIn(BaseModel):
@@ -105,19 +107,62 @@ async def billing_webhook(secret: str, body: WebhookIn) -> dict:
     order_id, status = payment.get("orderId"), payment.get("status")
     with SessionLocal() as db:
         inv = db.execute(select(Invoice).where(Invoice.order_id == order_id)).scalars().first()
-        if inv is None:
-            return {"ok": True, "unknown_order": True}
-        if status == "CANCELED" and inv.status != "refunded":
-            inv.status = "refunded"
-            db.commit()
-            # REF-3: 환불 clawback — 킥백 받은 추천인에게서 회수 (멱등)
-            u = db.get(User, inv.user_email)
-            if u is not None and u.referred_by:
-                import math
-                billing._ledger_add(db, u.referred_by, -math.floor(inv.total * billing.KICKBACK_RATE),
-                                    "clawback", inv.id, related_user=inv.user_email,
-                                    note="환불 회수")
+        inv_id = inv.id if inv else None
+    if inv_id is None:
+        return {"ok": True, "unknown_order": True}
+    if status == "CANCELED":
+        await billing.refund_invoice(inv_id, reason="토스 웹훅 취소 반영", already_canceled=True)
     return {"ok": True}
+
+
+# --- BILL-5: 운영(admin) 액션 -------------------------------------------------------------------
+@admin_router.post("/billing/invoices/{invoice_id}/retry", tags=["Billing"],
+                   summary="BILL-5: 실패 인보이스 수동 재시도")
+async def admin_retry_invoice(invoice_id: str) -> dict:
+    with SessionLocal() as db:
+        inv = db.get(Invoice, invoice_id)
+        if inv is None:
+            raise HTTPException(404, "invoice not found")
+        if inv.status == "paid":
+            return {"ok": True, "already_paid": True}
+    ok = await billing._charge_invoice(invoice_id)
+    if ok:
+        with SessionLocal() as db:   # 수동 회수 성공 → 구독 정상화 + 기간 반영
+            inv = db.get(Invoice, invoice_id)
+            sub = db.get(Subscription, inv.subscription_id)
+            if sub is not None:
+                sub.status = "active"
+                sub.current_period_start, sub.current_period_end = inv.period_start, inv.period_end
+                inv.next_retry_at = None
+                db.commit()
+    return {"ok": ok}
+
+
+@admin_router.post("/billing/invoices/{invoice_id}/refund", tags=["Billing"],
+                   summary="BILL-5: 환불 (토스 취소 + 킥백 회수)")
+async def admin_refund_invoice(invoice_id: str) -> dict:
+    ok = await billing.refund_invoice(invoice_id)
+    if not ok:
+        raise HTTPException(502, "환불 처리에 실패했어요 — 로그를 확인해 주세요.")
+    return {"ok": True}
+
+
+class AdminPlanIn(BaseModel):
+    plan: str
+
+
+@admin_router.post("/users/{email}/plan", tags=["Billing"],
+                   summary="BILL-5: 플랜 수동 오버라이드 (apply_plan 단일 경로)")
+async def admin_set_plan(email: str, body: AdminPlanIn) -> dict:
+    from studioapi.plans import apply_plan
+
+    if body.plan.lower() not in ("free", "pro", "guest"):
+        raise HTTPException(422, "plan must be free|pro|guest")
+    with SessionLocal() as db:
+        if db.get(User, email) is None:
+            raise HTTPException(404, "user not found")
+    ok = await apply_plan(email, body.plan.lower())
+    return {"ok": ok, "email": email, "plan": body.plan.lower()}
 
 
 # --- REF-4: 친구 초대 화면 데이터 ---------------------------------------------------------------
