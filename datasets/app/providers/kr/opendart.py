@@ -12,6 +12,7 @@ is the 6-digit ``stock_code``. The resolver below bridges the two and is cached.
 from __future__ import annotations
 
 import io
+import logging
 import time
 import zipfile
 from datetime import date
@@ -52,19 +53,34 @@ from app.providers.kr.opendart_parse import (  # noqa: F401
     _periods,
 )
 
+log = logging.getLogger(__name__)
+
 _BASE = "https://opendart.fss.or.kr/api"
 _CORP_CLS = {"Y": "KOSPI", "K": "KOSDAQ", "N": "KONEX", "E": "ETC"}
 
 
 def _key() -> str:
-    if not settings.opendart_api_key:
+    """The first currently-available key (rotation-aware). Raises when none configured, or an
+    honest quota error when every key is spent for the day."""
+    if not _keys():
         raise bad_request("OPENDART_API_KEY is not configured.")
-    return settings.opendart_api_key
+    avail = available_keys()
+    if not avail:
+        raise upstream_error("opendart", "020: 사용한도를 초과하였습니다 (all keys quota-blocked)")
+    return avail[0]
 
 
 _CORP_MAP_TTL = 24 * 3600     # the registry changes ~daily; the bulk zip is meant to be fetched ~once/day
-_QUOTA_BLOCK_TTL = 600.0      # after a quota error, fail fast for a while instead of re-downloading
-_quota_blocked_until = 0.0    # monotonic deadline while the key is known 사용한도-초과
+
+# Read-API response caches — the daily quota is shared by ingestion, the feeds AND the evidence
+# viewer, so every repeat download is quota stolen from the product. Filed statements are
+# immutable (long TTL); the filings list moves with new disclosures (short TTL).
+_DART_CACHE_TTLS = {
+    "fnlttSinglAcntAll.json": 6 * 3600,   # statements — /financials used to re-fetch the SAME
+                                          # payload for income/balance/cashflow (3× waste)
+    "company.json": 24 * 3600,            # company profile — effectively static
+    "list.json": 1800,                    # filings list — refresh every 30 min is plenty
+}
 
 
 def _parse_error_envelope(content: bytes) -> tuple[str | None, str | None]:
@@ -78,15 +94,49 @@ def _parse_error_envelope(content: bytes) -> tuple[str | None, str | None]:
     return root.findtext("status"), root.findtext("message")
 
 
-def mark_quota_blocked() -> None:
-    """Remember that the key is over its daily 사용한도 so every OpenDART consumer fails fast
-    (honest 503) instead of burning further calls against a blocked key."""
-    global _quota_blocked_until
-    _quota_blocked_until = time.monotonic() + _QUOTA_BLOCK_TTL
+# --- key pool: N keys (comma-separated), rotate on daily-quota exhaustion ------------------
+# OPENDART_API_KEYS="key1,key2,…" (falls back to the single OPENDART_API_KEY). A key that
+# returns status 020 is blocked until the next KST midnight (the daily 사용한도 window) and
+# requests transparently continue on the next available key.
+_blocked_keys: dict[str, float] = {}   # key → monotonic deadline while 사용한도-초과
+
+
+def _keys() -> list[str]:
+    raw = getattr(settings, "opendart_api_keys", "") or settings.opendart_api_key
+    return [k.strip() for k in str(raw or "").split(",") if k.strip()]
+
+
+def _seconds_to_kst_midnight() -> float:
+    """OpenDART's daily quota resets at 00:00 KST — block a spent key exactly until then."""
+    from datetime import datetime, timedelta, timezone
+
+    kst_now = datetime.now(timezone(timedelta(hours=9)))
+    nxt = (kst_now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return (nxt - kst_now).total_seconds() + 60.0   # +60s safety past the reset
+
+
+def available_keys() -> list[str]:
+    now = time.monotonic()
+    return [k for k in _keys() if _blocked_keys.get(k, 0.0) <= now]
+
+
+def mark_quota_blocked(key: str | None = None) -> None:
+    """Block ``key`` (or, with no argument, every configured key) until the KST-midnight quota
+    reset, so consumers fail fast / rotate instead of burning calls against a spent key."""
+    until = time.monotonic() + _seconds_to_kst_midnight()
+    for k in ([key] if key else _keys()) or ["_unconfigured_"]:
+        _blocked_keys[k] = until
 
 
 def quota_blocked() -> bool:
-    return time.monotonic() < _quota_blocked_until
+    """True iff keys are configured and ALL of them are quota-blocked."""
+    ks = _keys()
+    return bool(ks) and not available_keys()
+
+
+def reset_quota_blocks() -> None:
+    """Test hook — clear the per-key block state."""
+    _blocked_keys.clear()
 
 
 async def _corp_map() -> dict[str, dict]:
@@ -99,32 +149,38 @@ async def _corp_map() -> dict[str, dict]:
     message instead of hammering the endpoint on every request."""
 
     async def _load() -> dict[str, dict]:
-        content = await fetch_bytes(
-            "opendart", f"{_BASE}/corpCode.xml", params={"crtfc_key": _key()}
-        )
-        try:
-            zf = zipfile.ZipFile(io.BytesIO(content))
-            xml = zf.read(zf.namelist()[0])
-        except (zipfile.BadZipFile, IndexError) as exc:
-            status, message = _parse_error_envelope(content)
-            if status in ("020", "021"):
-                mark_quota_blocked()
-            raise upstream_error(
-                "opendart",
-                f"{status}: {message}" if status else f"corpCode.xml not a zip: {exc}")
-        root = ElementTree.fromstring(xml)
-        out: dict[str, dict] = {}
-        for node in root.iter("list"):
-            stock = (node.findtext("stock_code") or "").strip()
-            if stock:
-                out[stock.zfill(6)] = {
-                    "corp_code": (node.findtext("corp_code") or "").strip(),
-                    "corp_name": (node.findtext("corp_name") or "").strip(),
-                }
-        return out
+        last_exc: Exception | None = None
+        for _ in range(max(1, len(_keys()))):
+            key = _key()   # first available — raises honestly when all are spent
+            content = await fetch_bytes(
+                "opendart", f"{_BASE}/corpCode.xml", params={"crtfc_key": key}
+            )
+            try:
+                zf = zipfile.ZipFile(io.BytesIO(content))
+                xml = zf.read(zf.namelist()[0])
+            except (zipfile.BadZipFile, IndexError) as exc:
+                status, message = _parse_error_envelope(content)
+                if status == "020":   # this key's daily quota is spent → rotate to the next
+                    mark_quota_blocked(key)
+                    last_exc = upstream_error("opendart", f"{status}: {message}")
+                    continue
+                raise upstream_error(
+                    "opendart",
+                    f"{status}: {message}" if status else f"corpCode.xml not a zip: {exc}")
+            root = ElementTree.fromstring(xml)
+            out: dict[str, dict] = {}
+            for node in root.iter("list"):
+                stock = (node.findtext("stock_code") or "").strip()
+                if stock:
+                    out[stock.zfill(6)] = {
+                        "corp_code": (node.findtext("corp_code") or "").strip(),
+                        "corp_name": (node.findtext("corp_name") or "").strip(),
+                    }
+            return out
+        raise last_exc or upstream_error("opendart", "020: 사용한도를 초과하였습니다 (all keys quota-blocked)")
 
     if quota_blocked():
-        raise upstream_error("opendart", "020: 사용한도를 초과하였습니다 (quota blocked — cached)")
+        raise upstream_error("opendart", "020: 사용한도를 초과하였습니다 (all keys quota-blocked)")
     return await cache.get_or_set("dart:corp_map", _load, ttl_seconds=_CORP_MAP_TTL)
 
 
@@ -138,19 +194,38 @@ async def _corp_code(ref: SecurityRef) -> str:
     return row["corp_code"]
 
 
+async def _dart_json_uncached(path: str, params: dict) -> dict:
+    """One OpenDART JSON call with quota-aware key rotation: a key answering 020 (daily
+    사용한도 초과) is blocked until KST midnight and the request retries on the next key."""
+    last_exc: Exception | None = None
+    for _ in range(max(1, len(_keys()))):
+        key = _key()   # raises honestly when no key is configured / all are spent
+        data = await fetch_json("opendart", f"{_BASE}/{path}", params={"crtfc_key": key, **params})
+        status = data.get("status")  # type: ignore[union-attr]
+        if status == "013":  # no data
+            return {"status": status, "list": []}
+        if status == "020":   # this key's daily quota is spent → rotate to the next
+            mark_quota_blocked(key)
+            log.warning("opendart key …%s quota-blocked (020) — %d key(s) still available",
+                        key[-4:], len(available_keys()))
+            last_exc = upstream_error("opendart", f"{status}: {data.get('message')}")
+            continue
+        if status and status != "000":
+            raise upstream_error("opendart", f"{status}: {data.get('message')}")
+        return data  # type: ignore[return-value]
+    raise last_exc or upstream_error("opendart", "020: 사용한도를 초과하였습니다 (all keys quota-blocked)")
+
+
 async def _dart_json(path: str, params: dict) -> dict:
-    if quota_blocked():
-        raise upstream_error("opendart", "020: 사용한도를 초과하였습니다 (quota blocked — cached)")
-    params = {"crtfc_key": _key(), **params}
-    data = await fetch_json("opendart", f"{_BASE}/{path}", params=params)
-    status = data.get("status")  # type: ignore[union-attr]
-    if status == "013":  # no data
-        return {"status": status, "list": []}
-    if status and status != "000":
-        if status in ("020", "021"):
-            mark_quota_blocked()
-        raise upstream_error("opendart", f"{status}: {data.get('message')}")
-    return data  # type: ignore[return-value]
+    """Cache-aware OpenDART JSON: read endpoints are cached per exact params (see
+    ``_DART_CACHE_TTLS``) so ingestion, the feeds and chat don't re-spend quota on the same
+    payload — e.g. /financials used to download the identical fnlttSinglAcntAll response three
+    times (income/balance/cashflow extract different rows from ONE payload)."""
+    ttl = _DART_CACHE_TTLS.get(path)
+    if not ttl:
+        return await _dart_json_uncached(path, params)
+    ck = f"dart:{path}:" + "&".join(f"{k}={params[k]}" for k in sorted(params))
+    return await cache.get_or_set(ck, lambda: _dart_json_uncached(path, params), ttl_seconds=ttl)
 
 
 # Report-name → rank (lower = more substantive, surfaced first). DART lists newest-first;

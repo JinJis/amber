@@ -52,10 +52,10 @@
 ---
 
 ## 1-9. 근거 뷰어 관련 (2026-07-11 evidence-pipeline fix에서 확인됨)
-- [ ] **OpenDART 사용한도**: 전체 유니버스 파이프라인이 일일 한도(무료 키 2만 건)를 소진하면
-  그날의 KR 공시 뷰어(문서 fetch)가 전부 죽어요(지금은 캐시 공유로 대부분 흡수되지만, 새 공시는
-  여전히 라이브 fetch). [opendart.fss.or.kr](https://opendart.fss.or.kr) → 사용현황 확인,
-  한도 상향 신청 또는 인제스트용/서빙용 키 분리 검토
+- [ ] **OpenDART 키 여러 개 등록**: `OPENDART_API_KEYS=key1,key2,key3` (쉼표 구분, `.env`) —
+  하루 사용한도(020)가 소진된 키는 KST 자정 리셋까지 자동으로 쉬고 다음 키로 로테이션돼요.
+  계정별로 키를 발급받아 넣어주시면 돼요 ([opendart.fss.or.kr](https://opendart.fss.or.kr) →
+  인증키 신청). 사용현황도 같은 포털에서 확인 가능
 - [ ] **재빌드 + 재기동 필요**: 이번 픽스는 `docker-compose.yml`(worker에 `datasets_data:/data`
   볼륨 추가)을 바꿨어요 — worker 컨테이너를 **recreate**해야 인제스트 시 공시 HTML 캐시가
   datasets와 공유돼요 (`docker compose up -d --build datasets worker agent-engine rag studio-api web`)

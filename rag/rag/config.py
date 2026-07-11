@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     multi_query: bool = True
     multi_query_model: str = "gemini-flash-lite-latest"
     rerank_top_n: int = 5     # (legacy — the funnel now reranks candidates down to top_k)
+    # Budget on the query-embedding call (an external model API). Past it the dense leg is
+    # skipped and the LEXICAL leg still answers — search never blows the gateway timeout.
+    embed_query_timeout_seconds: float = 10.0
+    # RQ-10: cap on rows the lexical OR-pass ranks (ts_rank re-parses each row's text; an OR of
+    # common tokens can match ~10% of the corpus → seconds/leg). AND-pass runs first unbounded.
+    lexical_candidate_limit: int = 4000
     http_timeout_seconds: float = 60.0
 
 

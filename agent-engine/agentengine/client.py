@@ -56,6 +56,8 @@ class PlatformClient:
         return tools
 
     async def call_tool(self, tool: dict, args: dict) -> dict:
+        import asyncio
+
         args = dict(args or {})
         # The gateway routes by the `market` query param, so a single-market tool
         # (e.g. ECOS=KR, FRED=US) must carry its market or it can misroute to the
@@ -65,11 +67,27 @@ class PlatformClient:
             args["market"] = markets[0]
         headers = {"X-API-KEY": self.api_key} if self.api_key else {}
         url = f"{settings.gateway_url}{tool['path']}"
+        # One retry on a TRANSIENT failure (502/503/504 or a transport error): our tools are
+        # read-only data pulls, so a retry is safe — and a single gateway/upstream blip must
+        # not cost the turn its evidence. Anything else returns as-is (honest status).
+        resp = None
         async with httpx.AsyncClient(timeout=settings.http_timeout_seconds) as client:
-            if tool["method"] == "GET":
-                resp = await client.get(url, params=args, headers=headers)
-            else:
-                resp = await client.request(tool["method"], url, json=args, headers=headers)
+            for attempt in range(2):
+                try:
+                    if tool["method"] == "GET":
+                        resp = await client.get(url, params=args, headers=headers)
+                    else:
+                        resp = await client.request(tool["method"], url, json=args, headers=headers)
+                except httpx.HTTPError:
+                    if attempt == 1:
+                        raise
+                    await asyncio.sleep(1.0)
+                    continue
+                if resp.status_code in (502, 503, 504) and attempt == 0:
+                    await asyncio.sleep(1.0)
+                    continue
+                break
+        assert resp is not None  # loop always sets or raises
         try:
             data = resp.json()
         except ValueError:

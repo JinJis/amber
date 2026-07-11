@@ -248,25 +248,43 @@ class PgVectorStore:
         toks = lexical_tokens(query)
         if not toks:
             return []
-        # OR of prefix tokens + ts_rank: graded keyword overlap (BM25-lite). Prefix (`:*`)
-        # makes bare stems match Korean particle-suffixed tokens. The expression matches the
+        # Prefix tokens + ts_rank: graded keyword overlap (BM25-lite). Prefix (`:*`) makes bare
+        # stems match Korean particle-suffixed tokens; the WHERE expression matches the
         # functional GIN index (to_tsvector('simple', text)) so the planner uses it.
-        tsquery = " | ".join(f"{t}:*" for t in toks)
+        #
+        # RQ-10 (latency): ranking is the cost — ts_rank re-parses each matching row's text, and
+        # an OR of common tokens matches ~10% of a 1M-chunk corpus (measured 7.6s/leg). So:
+        #   1) AND of all tokens first — precise, few rows, ~15ms;
+        #   2) if that under-fills top_k, the OR pass ranks a BOUNDED candidate set
+        #      (index-scan LIMIT) — recall backstop at a fixed cost (~0.8s), while the dense
+        #      leg carries the semantic recall anyway.
         where, filter_params = self._where(filters)
-        sql = (
-            "SELECT id, text, meta, ts_rank(to_tsvector('simple', coalesce(text,'')), q) AS score "
-            "FROM rag_chunks, to_tsquery('simple', %s) q "
-            f"WHERE to_tsvector('simple', coalesce(text,'')) @@ q "
-            f"{('AND ' + where[len('WHERE '):]) if where else ''} "
-            "ORDER BY score DESC LIMIT %s"
-        )
-        args = [tsquery, *filter_params, top_k]
+        and_clause = ('AND ' + where[len('WHERE '):]) if where else ''
 
-        def _run():
-            with self._connect() as conn:
-                return conn.execute(sql, args).fetchall()
+        def _ranked_sql() -> str:
+            return (
+                "SELECT id, text, meta, ts_rank(to_tsvector('simple', coalesce(text,'')), q) AS score "
+                "FROM (SELECT id, text, meta FROM rag_chunks "
+                "      WHERE to_tsvector('simple', coalesce(text,'')) @@ to_tsquery('simple', %s) "
+                f"      {and_clause} LIMIT %s) c, "
+                "     to_tsquery('simple', %s) q "
+                "ORDER BY score DESC LIMIT %s"
+            )
 
-        rows = await asyncio.to_thread(_run)
+        def _run(tsquery: str, bound: int):
+            def _q():
+                with self._connect() as conn:
+                    return conn.execute(_ranked_sql(),
+                                        [tsquery, *filter_params, bound, tsquery, top_k]).fetchall()
+            return _q
+
+        from rag.config import settings as _settings
+        bound = getattr(_settings, "lexical_candidate_limit", 4000)
+        and_query = " & ".join(f"{t}:*" for t in toks)
+        rows = await asyncio.to_thread(_run(and_query, bound))
+        if len(rows) < top_k and len(toks) > 1:   # AND under-filled → bounded-OR recall pass
+            or_query = " | ".join(f"{t}:*" for t in toks)
+            rows = await asyncio.to_thread(_run(or_query, bound))
         hits = self._rows_to_hits(rows)
 
         # RQ-5: 이름형 짧은 쿼리(≤3토큰)는 트라이그램 유사도 레그 병행 — '삼전'·'하이닉스'류

@@ -55,6 +55,10 @@ class Settings(BaseSettings):
 
     # --- KR upstream credentials -------------------------------------------
     opendart_api_key: str = ""
+    # Multiple OpenDART keys (comma-separated), rotated when a key's daily 사용한도 is spent
+    # (status 020 → that key is parked until the KST-midnight reset and requests continue on
+    # the next key). Falls back to the single OPENDART_API_KEY when unset.
+    opendart_api_keys: str = ""
     ecos_api_key: str = ""
     # CE-12: Korea Investment & Securities (KIS) — KR realtime rankings + investor flows.
     kis_app_key: str = ""

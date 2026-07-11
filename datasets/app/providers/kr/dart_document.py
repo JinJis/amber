@@ -13,7 +13,6 @@ import logging
 import re
 import zipfile
 
-from app.config import settings
 from app.http import fetch_bytes
 
 log = logging.getLogger(__name__)
@@ -35,43 +34,47 @@ def _decode_doc(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def _log_error_body(rcept_no: str, blob: bytes) -> None:
+def _error_status(rcept_no: str, blob: bytes) -> str | None:
     """A non-ZIP body is OpenDART's error envelope — name the real cause in the log
-    (quota 020, no-data 013, bad key 010/011 …) instead of a silent 'not a zip'."""
+    (quota 020, no-data 013, bad key 010/011 …) instead of a silent 'not a zip'; returns
+    the parsed status code so the caller can rotate keys on quota exhaustion."""
     head = blob[:300].decode("utf-8", errors="replace")
     status = _ERR_STATUS.search(head)
     message = _ERR_MESSAGE.search(head)
-    if status and status.group(1) in ("020", "021"):
-        from app.providers.kr.opendart import mark_quota_blocked  # local import — no cycle at module load
-
-        mark_quota_blocked()
     if status or message:
         log.warning("opendart document.xml error for rcept %s — status %s: %s", rcept_no,
                     status.group(1) if status else "?", message.group(1) if message else head[:120])
     else:
         log.warning("opendart document.xml returned non-zip body for rcept %s (%d bytes)",
                     rcept_no, len(blob))
+    return status.group(1) if status else None
 
 
 async def fetch_document_markup(rcept_no: str) -> str | None:
     """Download the DART disclosure document (``document.xml`` API → ZIP of markup) for a
-    receipt number and return its combined markup. None on any failure (no key, network, bad
-    zip) → the viewer degrades to the external source link."""
-    if not settings.opendart_api_key or not rcept_no:
-        return None
-    from app.providers.kr.opendart import quota_blocked  # local import — no cycle at module load
+    receipt number and return its combined markup. Quota-aware: a key answering 020 is blocked
+    until the KST-midnight reset and the fetch rotates to the next configured key. None on any
+    failure (no key / all keys spent / network / bad zip) → the viewer degrades to the link."""
+    from app.providers.kr.opendart import available_keys, mark_quota_blocked
 
-    if quota_blocked():   # known 사용한도-초과 → don't burn another call; viewer falls back honestly
+    if not rcept_no:
         return None
-    url = f"https://opendart.fss.or.kr/api/document.xml?crtfc_key={settings.opendart_api_key}&rcept_no={rcept_no}"
-    try:
-        blob = await fetch_bytes("opendart", url)
-    except Exception:  # noqa: BLE001 — upstream/network → graceful (None)
-        return None
-    try:
-        zf = zipfile.ZipFile(io.BytesIO(blob))
-    except (zipfile.BadZipFile, OSError):
-        _log_error_body(rcept_no, blob)
+    zf = None
+    for key in list(available_keys()) or []:
+        url = f"https://opendart.fss.or.kr/api/document.xml?crtfc_key={key}&rcept_no={rcept_no}"
+        try:
+            blob = await fetch_bytes("opendart", url)
+        except Exception:  # noqa: BLE001 — upstream/network → graceful (None)
+            return None
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(blob))
+            break
+        except (zipfile.BadZipFile, OSError):
+            if _error_status(rcept_no, blob) == "020":   # this key is spent → try the next
+                mark_quota_blocked(key)
+                continue
+            return None
+    if zf is None:
         return None
     parts: list[str] = []
     with zf:

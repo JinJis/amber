@@ -71,23 +71,49 @@ def _rrf_fuse(*rankings: list[tuple[Chunk, float]]) -> list[tuple[Chunk, float]]
     return [(chunk_by_id[cid], s) for cid, s in ordered]
 
 
+async def _query_legs(store, q: str, candidate_k: int, filters: dict | None) -> list[list]:
+    """One query's dense + lexical rankings, gathered CONCURRENTLY and each fail-safe:
+    the dense leg is budgeted (the query embedding is an external model API — under load it
+    used to push the whole search past the gateway timeout, 502-ing the turn's RAG evidence),
+    and on embed timeout/failure the LEXICAL leg still answers. Search can therefore always
+    return real results within budget; only a store outage remains fatal."""
+    import asyncio
+
+    async def _dense() -> list | None:
+        try:
+            qvec = await asyncio.wait_for(get_embedder().embed_query(q),
+                                          timeout=settings.embed_query_timeout_seconds)
+            return await store.search(qvec, candidate_k, filters)
+        except Exception as exc:  # noqa: BLE001 — degrade to lexical, never fail the search
+            logger.warning("dense leg unavailable [%s] — lexical-only for %r: %s",
+                           type(exc).__name__, q[:40], exc)
+            return None
+
+    async def _lexical() -> list | None:
+        try:
+            return await store.lexical(q, candidate_k, filters)
+        except Exception as exc:  # noqa: BLE001 — the lexical leg is an upgrade, never an outage
+            logger.warning("lexical leg failed [%s]: %s", type(exc).__name__, exc)
+            return None
+
+    dense, lex = await asyncio.gather(_dense(), _lexical())
+    return [leg for leg in (dense, lex) if leg]
+
+
 async def search(query: str, top_k: int | None = None, filters: dict | None = None) -> list[SearchHit]:
+    import asyncio
+
     top_k = top_k or settings.top_k
     candidate_k = max(settings.candidate_k, top_k)
     store = get_store()
 
     # RQ-3: 원쿼리 + 변형(한↔영·키워드형)마다 dense+렉시컬 레그를 만들어 전부 RRF 융합.
+    # 쿼리들은 서로 독립 → 전부 동시에 (기존 순차 실행은 확장 2개 × 임베드 API 지연이
+    # 가산되어 게이트웨이 타임아웃을 넘겼다).
     queries = [query] + await expand_queries(query)
-    rankings: list[list] = []
-    for q in queries:
-        qvec = await get_embedder().embed_query(q)   # asymmetric query embedding (RETRIEVAL_QUERY)
-        rankings.append(await store.search(qvec, candidate_k, filters or None))
-        try:
-            lex = await store.lexical(q, candidate_k, filters or None)
-            if lex:
-                rankings.append(lex)
-        except Exception as exc:  # noqa: BLE001 — the lexical leg is an upgrade, never an outage
-            logger.warning("lexical leg failed [%s], dense-only: %s", type(exc).__name__, exc)
+    per_query = await asyncio.gather(*(_query_legs(store, q, candidate_k, filters or None)
+                                       for q in queries))
+    rankings: list[list] = [leg for legs in per_query for leg in legs]
     hits = _rrf_fuse(*rankings) if len(rankings) > 1 else (rankings[0] if rankings else [])
     if not hits:
         return []
@@ -120,7 +146,11 @@ async def search(query: str, top_k: int | None = None, filters: dict | None = No
                 head = "·".join(b for b in bits if b)
                 return f"[{head}] " if head else ""
             docs = [_hdr(c) + c.text for c, _ in hits]
-            ranked = await get_reranker().rerank(query, docs, min(top_k, len(docs)))
+            # budgeted: a slow reranker (upstream retries) must degrade to the fused order,
+            # not push the whole search past the gateway timeout.
+            ranked = await asyncio.wait_for(
+                get_reranker().rerank(query, docs, min(top_k, len(docs))),
+                timeout=settings.embed_query_timeout_seconds)
             hits = [(hits[i][0], score) for i, score in ranked]
         except Exception as exc:  # noqa: BLE001 — degrade gracefully, don\'t fail the query
             # name the exception TYPE so ops can tell a config/auth error (always fails) from a
