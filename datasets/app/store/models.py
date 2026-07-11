@@ -87,6 +87,36 @@ class PipelineActivity(Base):
     at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 
+class IngestState(Base):
+    """Delta-ingest cursor — which ITEMS (filing accessions / transcript quarters / deck
+    accessions) a RAG pipeline has already ingested per (kind, market, ticker). A delta run
+    consults this to skip unchanged tickers/items instead of re-downloading + re-embedding the
+    whole universe (the OpenDART-quota + embedding-cost waste of a full re-run). Items are a
+    JSON array; full runs also record it so a later delta knows the baseline."""
+
+    __tablename__ = "ingest_state"
+
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)    # filing_text | kr_earnings | …
+    market: Mapped[str] = mapped_column(String(2), primary_key=True)
+    ticker: Mapped[str] = mapped_column(String(20), primary_key=True)
+    items: Mapped[str] = mapped_column(Text, default="[]")             # JSON array of ingested item ids
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class UpstreamUsage(Base):
+    """Per-key daily call counter for quota-bound upstreams (OpenDART today). Incremented on
+    every real upstream call (datasets AND worker share this DB), so the admin can show each
+    key's spend against its daily limit instead of discovering exhaustion via 020 errors."""
+
+    __tablename__ = "upstream_usage"
+
+    provider: Mapped[str] = mapped_column(String(16), primary_key=True)   # e.g. "opendart"
+    key_label: Mapped[str] = mapped_column(String(12), primary_key=True)  # "…abcd" (never the key)
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)        # KST YYYY-MM-DD (quota window)
+    calls: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class PriceBar(Base):
     """One end-of-day OHLCV bar (PH-PIPE). Collected periodically by the prices pipeline so
     market data accumulates in the store (served on-demand today; cached/offline serving later)."""

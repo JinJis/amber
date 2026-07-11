@@ -55,7 +55,7 @@ async def fetch_document_markup(rcept_no: str) -> str | None:
     receipt number and return its combined markup. Quota-aware: a key answering 020 is blocked
     until the KST-midnight reset and the fetch rotates to the next configured key. None on any
     failure (no key / all keys spent / network / bad zip) → the viewer degrades to the link."""
-    from app.providers.kr.opendart import available_keys, mark_quota_blocked
+    from app.providers.kr.opendart import _record_call, available_keys, mark_quota_blocked
 
     if not rcept_no:
         return None
@@ -66,6 +66,7 @@ async def fetch_document_markup(rcept_no: str) -> str | None:
             blob = await fetch_bytes("opendart", url)
         except Exception:  # noqa: BLE001 — upstream/network → graceful (None)
             return None
+        await _record_call(key)
         try:
             zf = zipfile.ZipFile(io.BytesIO(blob))
             break

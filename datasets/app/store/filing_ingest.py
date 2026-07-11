@@ -134,16 +134,28 @@ def _html_to_docs(html: str, market: str, ticker: str, accession: str, source: s
 
 
 async def ingest_filing_text_for_ticker(market: str, ticker: str, limit: int = 4,
-                                        rag_url: str | None = None) -> int:
+                                        rag_url: str | None = None, mode: str = "full") -> int:
     """Fetch one ticker's recent filings as HTML (shared with the viewer, cached) and index their
     text into RAG; return the chunk count. The unit of both the batch pipeline AND on-demand
-    ingest, so a ticker the corpus has never seen becomes searchable live. Best-effort (0 on fail)."""
+    ingest, so a ticker the corpus has never seen becomes searchable live. Best-effort (0 on fail).
+
+    ``mode="delta"`` skips accessions this pipeline already ingested (the IngestState cursor) —
+    a universe re-run then only downloads + embeds NEW filings instead of re-spending the
+    OpenDART quota and embedding cost on unchanged ones. Both modes record the cursor."""
+    from app.store.ingest_state import done_items, mark_items
+
     market = (market or "").upper()
     source = "SEC EDGAR" if market == "US" else "OpenDART (FSS)"
     refs = await filing_refs(market, ticker, limit)
+    if mode == "delta":
+        seen = await asyncio.to_thread(done_items, "filing_text", market, ticker)
+        refs = {a: i for a, i in refs.items() if a not in seen}
+        if not refs:
+            return 0   # nothing new — the caller logs the skip
     # Ingest per accession with replace-by-accession, so re-chunking a filing swaps its old
     # sections for the fresh structure-aware set instead of leaving orphaned stale chunks (RQ-2).
     total_sections, chunks = 0, 0
+    ingested: set[str] = set()
     rag = rag_url or settings.rag_url
     for accn, info in refs.items():
         html = await get_filing_html(market, accn, info.get("cik"), info.get("fetch_url"))
@@ -155,15 +167,18 @@ async def ingest_filing_text_for_ticker(market: str, ticker: str, limit: int = 4
             continue
         total_sections += len(docs)
         chunks += await _ingest_to_rag(rag, docs, replace={"accession": accn})
+        ingested.add(accn)
+    if ingested:
+        await asyncio.to_thread(mark_items, "filing_text", market, ticker, ingested)
     if not total_sections:
         return 0
     log.info("filing-text: %s %s → %d sections, %d chunks indexed", market, ticker.upper(), total_sections, chunks)
     return chunks
 
 
-async def run_filing_text_ingest(market: str, tickers: list[str]) -> None:
+async def run_filing_text_ingest(market: str, tickers: list[str], mode: str = "full") -> None:
     """Index each ticker's recent filings' text into RAG, tracked as an IngestionJob
-    (kind `filing_text`); best-effort per ticker.
+    (kind `filing_text`); best-effort per ticker. ``mode="delta"`` = new filings only.
 
     Per-ticker outcomes are summarised into the job's ``error`` note (which the admin shows) so a
     run that indexed little/nothing reveals WHY — e.g. `RAG ingest timeout` (the RAG embed POST
@@ -172,9 +187,13 @@ async def run_filing_text_ingest(market: str, tickers: list[str]) -> None:
     tickers = tickers or []
     # a short, readable spec — NOT the full ticker join (which overflowed the varchar(256) spec
     # column for 200-500 tickers and made the INSERT fail before the job row even existed).
-    job = start_job("filing_text", market, f"filing_text · {len(tickers)} tickers", len(tickers))
+    delta = mode == "delta"
+    job = start_job("filing_text", market,
+                    f"filing_text · {len(tickers)} tickers" + (" · delta" if delta else ""), len(tickers))
     src = "SEC EDGAR" if market == "US" else "OpenDART"
-    log_activity("filing_text", market, f"▶ 시작 · {len(tickers)}종목 · 원천 {src} → RAG", job_id=job)
+    log_activity("filing_text", market,
+                 f"▶ 시작 · {len(tickers)}종목 · 원천 {src} → RAG" + (" · 델타(새 공시만)" if delta else ""),
+                 job_id=job)
     total = 0
     failed: dict[str, str] = {}   # ticker → short failure reason (deduped in the note)
     empty: list[str] = []         # tickers that ran clean but produced no chunks
@@ -185,12 +204,13 @@ async def run_filing_text_ingest(market: str, tickers: list[str]) -> None:
                 log_activity, "filing_text", market,
                 f"[{tk}] {src} 공시 본문 수집·인덱싱 중… ({i}/{len(tickers)})", job)
             try:
-                got = await ingest_filing_text_for_ticker(market, tk)
+                got = await ingest_filing_text_for_ticker(market, tk, mode=mode)
                 total += got
                 if got == 0:
                     empty.append(tk)
                     await asyncio.to_thread(log_activity, "filing_text", market,
-                                            f"[{tk}] 공시 본문 없음 (0 chunks)", job, "warn")
+                                            f"[{tk}] " + ("변경 없음 (델타 스킵)" if delta else "공시 본문 없음 (0 chunks)"),
+                                            job, "info" if delta else "warn")
                 else:
                     await asyncio.to_thread(log_activity, "filing_text", market,
                                             f"[{tk}] {src} → RAG {got} chunks 인덱싱 ✓", job)
@@ -213,7 +233,8 @@ async def run_filing_text_ingest(market: str, tickers: list[str]) -> None:
                 f"{r} ×{len(tks)} ({', '.join(tks[:8])}{'…' if len(tks) > 8 else ''})"
                 for r, tks in by_reason.items()))
         if empty:
-            note_parts.append(f"no filing text ×{len(empty)} ({', '.join(empty[:8])}{'…' if len(empty) > 8 else ''})")
+            label = "unchanged (delta)" if delta else "no filing text"
+            note_parts.append(f"{label} ×{len(empty)} ({', '.join(empty[:8])}{'…' if len(empty) > 8 else ''})")
         note = " · ".join(note_parts)
         # a run where EVERY ticker failed is an error, not a quiet success — surface it as such.
         status = "error" if failed and ok == 0 and total == 0 else "success"

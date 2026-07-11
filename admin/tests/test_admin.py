@@ -348,3 +348,232 @@ def test_db_unknown_table_404():
     _login()
     assert client.get("/db/controlplane/nope").status_code == 404
     assert client.get("/db/controlplane/tenants/row/9999").status_code == 404
+
+
+# --- OPS-2: 델타 수집 방식 · OpenDART 쿼터 카드 · Runs(수집 이력) ----------------
+class _JsonResp:
+    def __init__(self, data, status=200):
+        self._d, self.status_code = data, status
+        self.headers = {"content-type": "application/json"}
+
+    def json(self):
+        return self._d
+
+
+def _fake_get_client(routes: dict, seen: list | None = None):
+    """AsyncClient stand-in — GET dispatches on the first matching URL fragment (canned JSON);
+    anything unmatched returns {} (a reachable-but-empty service)."""
+
+    class _Client:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): ...
+
+        async def get(self, url, timeout=None):
+            if seen is not None:
+                seen.append(url)
+            for frag, data in routes.items():
+                if frag in url:
+                    return _JsonResp(data)
+            return _JsonResp({})
+
+    return _Client
+
+
+_QUOTA = {"provider": "opendart", "day_kst": "2026-07-11", "limit_per_key": 20000,
+          "keys": [{"key": "…abcd", "used_today": 1200, "limit": 20000, "remaining": 18800, "blocked": False},
+                   {"key": "…wxyz", "used_today": 20000, "limit": 20000, "remaining": 0, "blocked": True}],
+          "history": [{"day": "2026-07-11", "key": "…abcd", "calls": 1200},
+                      {"day": "2026-07-10", "key": "…abcd", "calls": 900}]}
+
+_REGISTRY = {"pipelines": [
+    {"id": "financials", "kind": "backfill", "label": "재무제표", "markets": ["US", "KR"],
+     "default": True, "desc": "3대 재무제표", "source": "SEC EDGAR · OpenDART",
+     "store": "financial_facts", "min_interval_seconds": 604800,
+     "delta": "저장된 최신 분기가 신선한 종목은 건너뛰어요", "latest": None},
+    {"id": "news", "kind": "news", "label": "뉴스 → RAG", "markets": ["US", "KR"],
+     "default": True, "desc": "헤드라인 색인", "source": "Google News", "store": "RAG corpus",
+     "min_interval_seconds": 3600, "delta": "항상 최신 N건만", "latest": None},
+], "queue": {"totals": {"todo": 0, "doing": 0, "succeeded": 3, "failed": 0},
+             "periodic": [{"task": "sweep_financials", "pipeline_id": "financials",
+                           "cron": "0 3 * * 1", "label": "재무제표", "source": "SEC EDGAR · OpenDART"}],
+             "tasks": ["run_pipeline"], "universe": "us_sp500"}}
+
+
+def test_pipelines_page_mode_radio_quota_card_and_tools_section(monkeypatch):
+    import httpx as _httpx
+    _login()
+    monkeypatch.setattr(_httpx, "AsyncClient", _fake_get_client({
+        "/admin/pipelines": _REGISTRY, "/admin/quota": _QUOTA,
+        "/admin/jobs": {"jobs": [], "total": 0}, "/admin/universes": {"universes": []},
+    }))
+    r = client.get("/pipelines")
+    assert r.status_code == 200
+    # 수집 방식 radio — 델타가 기본으로 선택, 전체는 옵트인
+    assert "수집 방식" in r.text
+    assert "name=mode value=delta checked" in r.text and "name=mode value=full" in r.text
+    # OpenDART 쿼터 카드 — 키별 사용량/남은 호출 + 소진 배지 + 이력
+    assert "OpenDART 쿼터" in r.text and "오늘 21,200/40,000" in r.text
+    assert "남음 18,800" in r.text and "일일 한도 소진 · KST 자정 리셋" in r.text
+    assert "최근 14일 사용 이력" in r.text
+    # 파이프라인 카드는 레지스트리의 델타 설명을 그대로 보여주고, 크론 스윕 버튼은 델타를 명시
+    assert "델타: 저장된 최신 분기가 신선한 종목은 건너뛰어요" in r.text
+    assert "지금 수집(델타) ▶" in r.text
+    # 부가 도구(Macro Trends·로고·RAG 프로브)는 하나의 '도구' 섹션으로 페이지 맨 아래에
+    tools_at = r.text.index("<h2>도구</h2>")
+    assert tools_at > r.text.index("백필")
+    assert r.text.index("Macro Trends") > tools_at and r.text.index("RAG ingest") > tools_at
+    # 전체 이력은 /runs로 안내
+    assert "/runs" in r.text
+
+
+def test_pipelines_quota_card_degrades_without_keys(monkeypatch):
+    import httpx as _httpx
+    _login()
+    monkeypatch.setattr(_httpx, "AsyncClient", _fake_get_client({
+        "/admin/quota": {"provider": "opendart", "day_kst": "2026-07-11",
+                         "limit_per_key": 20000, "keys": [], "history": []},
+    }))
+    r = client.get("/pipelines")
+    assert r.status_code == 200 and "OPENDART_API_KEYS" in r.text   # 키 없음 → 설정 안내 (무 날조)
+
+
+def test_overview_quota_tile_and_runs_jump(monkeypatch):
+    import httpx as _httpx
+    _login()
+    quota = {"keys": [{"key": "…a", "remaining": 1234, "blocked": False},
+                      {"key": "…b", "remaining": 18800, "blocked": False},
+                      {"key": "…c", "remaining": 0, "blocked": True}], "history": []}
+    monkeypatch.setattr(_httpx, "AsyncClient", _fake_get_client({"/admin/quota": quota}))
+    r = client.get("/")
+    assert r.status_code == 200
+    # 살아있는 키들의 최소 남은 호출 수(보수적)를 타일로
+    assert "OpenDART 남은 쿼터" in r.text and "1,234" in r.text
+    assert "수집 이력 →" in r.text                     # jump pill → /runs
+    assert "href='/runs'" in r.text                    # nav의 Runs 항목
+
+
+_RUN_JOBS = [
+    {"id": 7, "kind": "news", "market": "US", "spec": "news · 3 tickers", "status": "success",
+     "rows": 12, "total": 3, "done": 3, "error": None, "error_details": [],
+     "started_at": "2026-07-10T04:00:00", "ended_at": "2026-07-10T04:02:30"},
+    {"id": 6, "kind": "backfill", "market": "KR", "spec": "universe:kr_kospi200 · delta", "status": "error",
+     "rows": 0, "total": 10, "done": 4, "error": "실패 2 · 원인 1종",
+     "error_details": [{"error": "ReadTimeout: DART", "tickers": ["005930", "000660"], "count": 2}],
+     "started_at": "2026-07-10T03:00:00", "ended_at": "2026-07-10T03:01:00"},
+]
+
+
+def test_runs_page_renders_filter_bar_pager_and_rows(monkeypatch):
+    import httpx as _httpx
+    _login()
+    monkeypatch.setattr(_httpx, "AsyncClient", _fake_get_client({
+        "/admin/jobs": {"jobs": _RUN_JOBS, "total": 120, "offset": 0, "limit": 50},
+        "/admin/pipelines": _REGISTRY,
+    }))
+    r = client.get("/runs")
+    assert r.status_code == 200
+    # 필터 바 — 파이프라인(레지스트리 라벨)·시장·상태
+    assert "전체 파이프라인" in r.text and "전체 시장" in r.text and "전체 상태" in r.text
+    assert "뉴스 → RAG · news" in r.text
+    # 페이저 — 총 건수 + 다음 페이지 (offset 0 → 이전 없음)
+    assert "총 120건" in r.text and "1–2 표시" in r.text
+    assert "/runs?offset=50" in r.text and "← 이전" not in r.text
+    # 행 — 상세 링크·파이프라인 라벨·진행률·소요 시간·원인별 오류 펼침
+    assert "/runs/7" in r.text and "뉴스 → RAG" in r.text and "3/3" in r.text
+    assert "2분 30초" in r.text
+    assert "실패 2 · 원인 1종" in r.text and "ReadTimeout: DART — 2종목: 005930, 000660" in r.text
+
+
+def test_runs_filters_forward_to_datasets_and_stay_selected(monkeypatch):
+    import httpx as _httpx
+    _login()
+    seen: list[str] = []
+    monkeypatch.setattr(_httpx, "AsyncClient", _fake_get_client({
+        "/admin/jobs": {"jobs": [_RUN_JOBS[1]], "total": 1, "offset": 0, "limit": 50},
+        "/admin/pipelines": _REGISTRY,
+    }, seen))
+    r = client.get("/runs?kind=backfill&market=KR&status=error")
+    assert r.status_code == 200
+    jobs_url = next(u for u in seen if "/admin/jobs" in u)
+    assert "limit=50&offset=0" in jobs_url
+    assert "kind=backfill" in jobs_url and "market=KR" in jobs_url and "status=error" in jobs_url
+    # 선택값이 폼에 유지된다 (새로고침·북마크 안전)
+    assert "value='backfill' selected" in r.text and "value=KR selected" in r.text
+
+
+def test_run_detail_renders_header_errors_and_activity_log(monkeypatch):
+    import httpx as _httpx
+    _login()
+    activity = {"activity": [   # datasets는 최신순으로 반환한다
+        {"id": 3, "job_id": 6, "kind": "backfill", "market": "KR", "level": "error",
+         "message": "[000660] 실패 — ReadTimeout", "at": "2026-07-10T03:00:50"},
+        {"id": 2, "job_id": 6, "kind": "backfill", "market": "KR", "level": "info",
+         "message": "[005930] 10 rows ✓", "at": "2026-07-10T03:00:20"},
+        {"id": 1, "job_id": 6, "kind": "backfill", "market": "KR", "level": "info",
+         "message": "▶ 시작 · 2종목", "at": "2026-07-10T03:00:00"},
+    ]}
+    monkeypatch.setattr(_httpx, "AsyncClient", _fake_get_client({
+        "/admin/jobs": {"jobs": _RUN_JOBS, "total": 2},
+        "/admin/queue/activity": activity,
+    }))
+    r = client.get("/runs/6")
+    assert r.status_code == 200
+    # 헤더 — 실행 번호·spec·소요 시간·빵부스러기
+    assert "수집 실행 #6" in r.text and "← 수집 이력" in r.text
+    assert "universe:kr_kospi200 · delta" in r.text and "1분 0초" in r.text
+    # 원인별(그룹) 오류 + 실패 종목만 재시도 (backfill → financials 파이프라인으로 매핑)
+    assert "오류 상세" in r.text and "ReadTimeout: DART" in r.text
+    assert "실패 종목만 재시도" in r.text and "value='financials'" in r.text
+    # 활동 로그는 시간순(오래된 순)으로 — 읽는 방향 그대로
+    assert "활동 로그" in r.text
+    i1, i2, i3 = (r.text.index("▶ 시작 · 2종목"), r.text.index("[005930] 10 rows"),
+                  r.text.index("[000660] 실패"))
+    assert i1 < i2 < i3
+
+
+def test_run_detail_not_found_is_honest(monkeypatch):
+    import httpx as _httpx
+    _login()
+    monkeypatch.setattr(_httpx, "AsyncClient", _fake_get_client({
+        "/admin/jobs": {"jobs": [], "total": 0},
+    }))
+    r = client.get("/runs/9999")
+    assert r.status_code == 200 and "찾지 못했어요" in r.text   # 없는 실행 → 정직한 안내 (500 아님)
+
+
+def test_ops_pipelines_run_forwards_mode(monkeypatch):
+    import httpx as _httpx
+    _login()
+    captured: list[dict] = []
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"started": True}
+
+    class _Client:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): ...
+
+        async def post(self, url, json=None, timeout=None):
+            captured.append({"url": url, "json": json})
+            return _Resp()
+
+    monkeypatch.setattr(_httpx, "AsyncClient", _Client)
+    # 폼의 radio 값이 datasets payload의 mode로 그대로 전달된다
+    r = client.post("/ops/pipelines/run",
+                    data={"preset": "us_mega", "pipelines": ["prices"], "mode": "full"},
+                    follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/pipelines")
+    assert captured[-1]["url"].endswith("/admin/pipelines/run")
+    assert captured[-1]["json"]["mode"] == "full" and captured[-1]["json"]["preset"] == "us_mega"
+    # mode를 안 보내면(레거시 폼·재시도 버튼) 기본은 델타
+    client.post("/ops/pipelines/run", data={"market": "US", "tickers": "AAPL", "pipelines": ["news"]},
+                follow_redirects=False)
+    assert captured[-1]["json"]["mode"] == "delta" and captured[-1]["json"]["tickers"] == ["AAPL"]
+    # 이상한 값은 델타로 강제 (datasets에 쓰레기 값을 넘기지 않는다)
+    client.post("/ops/pipelines/run", data={"preset": "us_mega", "mode": "bogus"}, follow_redirects=False)
+    assert captured[-1]["json"]["mode"] == "delta"

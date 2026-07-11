@@ -139,6 +139,18 @@ def reset_quota_blocks() -> None:
     _blocked_keys.clear()
 
 
+async def _record_call(key: str, n: int = 1) -> None:
+    """Best-effort per-key daily usage tick (admin quota panel) — off the event loop."""
+    import asyncio
+
+    from app.store.ingest_state import record_upstream_call
+
+    try:
+        await asyncio.to_thread(record_upstream_call, "opendart", key, n)
+    except Exception:  # noqa: BLE001 — accounting never blocks a data call
+        pass
+
+
 async def _corp_map() -> dict[str, dict]:
     """stock_code(6) -> {corp_code, corp_name}.
 
@@ -155,6 +167,7 @@ async def _corp_map() -> dict[str, dict]:
             content = await fetch_bytes(
                 "opendart", f"{_BASE}/corpCode.xml", params={"crtfc_key": key}
             )
+            await _record_call(key)
             try:
                 zf = zipfile.ZipFile(io.BytesIO(content))
                 xml = zf.read(zf.namelist()[0])
@@ -201,6 +214,7 @@ async def _dart_json_uncached(path: str, params: dict) -> dict:
     for _ in range(max(1, len(_keys()))):
         key = _key()   # raises honestly when no key is configured / all are spent
         data = await fetch_json("opendart", f"{_BASE}/{path}", params={"crtfc_key": key, **params})
+        await _record_call(key)
         status = data.get("status")  # type: ignore[union-attr]
         if status == "013":  # no data
             return {"status": status, "list": []}

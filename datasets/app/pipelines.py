@@ -15,12 +15,16 @@ logger = logging.getLogger(__name__)
 
 
 # --- runners (thin adapters over the existing/new ingest functions) -------
-async def _run_financials(market: str, tickers: list[str]) -> None:
+# Every runner takes ``mode`` ("full" | "delta"). Pipelines that are inherently incremental
+# (prices/corp_actions fetch since the last stored bar; news is latest-N) ignore it; the
+# item-based RAG pipelines and the financials backfill use it to skip unchanged work.
+async def _run_financials(market: str, tickers: list[str], mode: str = "full") -> None:
     from app.store.jobs import run_backfill
-    await run_backfill(market=market, tickers=tickers, deep=True)
+    await run_backfill(market=market, tickers=tickers, deep=True, mode=mode)
 
 
-async def _run_prices(market: str, tickers: list[str]) -> None:
+async def _run_prices(market: str, tickers: list[str], mode: str = "full") -> None:
+    # inherently incremental: run_prices_ingest fetches since the last stored bar per ticker
     from app.config import settings
     from app.store.prices_ingest import history_universe_symbols, run_prices_ingest
 
@@ -46,44 +50,44 @@ async def _run_prices(market: str, tickers: list[str]) -> None:
             logger.warning("regime seeding failed: %s", exc)
 
 
-async def _run_corp_actions(market: str, tickers: list[str]) -> None:
+async def _run_corp_actions(market: str, tickers: list[str], mode: str = "full") -> None:
     from app.store.corp_actions_ingest import run_corp_actions_ingest
-    await run_corp_actions_ingest(market, tickers)
+    await run_corp_actions_ingest(market, tickers)   # inherently incremental
 
 
-async def _run_news(market: str, tickers: list[str]) -> None:
+async def _run_news(market: str, tickers: list[str], mode: str = "full") -> None:
     from app.store.news_ingest import run_news_ingest
-    await run_news_ingest(market=market, tickers=tickers)
+    await run_news_ingest(market=market, tickers=tickers)   # latest-N — inherently incremental
 
 
-async def _run_filing_text(market: str, tickers: list[str]) -> None:
+async def _run_filing_text(market: str, tickers: list[str], mode: str = "full") -> None:
     from app.store.filing_ingest import run_filing_text_ingest
-    await run_filing_text_ingest(market, tickers)
+    await run_filing_text_ingest(market, tickers, mode=mode)
 
 
-async def _run_transcript_text(market: str, tickers: list[str]) -> None:
+async def _run_transcript_text(market: str, tickers: list[str], mode: str = "full") -> None:
     from app.store.transcript_ingest import run_transcript_text_ingest
-    await run_transcript_text_ingest(market, tickers)
+    await run_transcript_text_ingest(market, tickers, mode=mode)
 
 
-async def _run_presentation_text(market: str, tickers: list[str]) -> None:
+async def _run_presentation_text(market: str, tickers: list[str], mode: str = "full") -> None:
     from app.store.deck_ingest import run_presentation_text_ingest
-    await run_presentation_text_ingest(market, tickers)
+    await run_presentation_text_ingest(market, tickers, mode=mode)
 
 
-async def _run_kr_earnings(market: str, tickers: list[str]) -> None:
+async def _run_kr_earnings(market: str, tickers: list[str], mode: str = "full") -> None:
     from app.store.kr_earnings_ingest import run_kr_earnings_ingest
-    await run_kr_earnings_ingest(market, tickers)
+    await run_kr_earnings_ingest(market, tickers, mode=mode)
 
 
-async def _run_era_news(market: str, tickers: list[str]) -> None:
+async def _run_era_news(market: str, tickers: list[str], mode: str = "full") -> None:
     from app.store.era_news_ingest import run_era_news_ingest
     await run_era_news_ingest(market, tickers)   # tickers = regime slugs (empty = all)
 
 
-async def _run_logos(market: str, tickers: list[str]) -> None:
+async def _run_logos(market: str, tickers: list[str], mode: str = "full") -> None:
     from app.routers.logos import run_logo_ingest
-    await run_logo_ingest(market, tickers)
+    await run_logo_ingest(market, tickers)   # cache-first by design (misses only)
 
 
 # pipeline cadence tiers — the scheduler skips a pipeline that ran within `min_interval_seconds`,
@@ -98,6 +102,7 @@ _HOUR, _DAY, _WEEK = 3600, 86400, 604800
 # `min_interval_seconds` = cadence tier (how often the scheduler re-runs this pipeline).
 PIPELINES: list[dict] = [
     {"id": "financials", "label": "재무제표", "source": "SEC EDGAR · OpenDART", "store": "financial_facts",
+     "delta": "저장된 최신 분기가 아직 신선한 종목은 건너뛰고, 새 보고서가 나왔을 종목만 재수집",
      "kind": "backfill", "markets": ["US", "KR"], "default": True, "runner": _run_financials,
      "min_interval_seconds": _WEEK,
      "desc": "3대 재무제표 + 회사 정보(딥 백필)",
@@ -108,8 +113,9 @@ PIPELINES: list[dict] = [
          "?corp_code={corp}&bsns_year={YYYY}&reprt_code={11011|11012|11013|11014}&fs_div=CFS",
      ],
      "fetch": "US: 전 기간 연·분기 XBRL 재무사실 / KR: 최근 15개 보고서(연·분기). UPSERT 키 "
-              "(market,ticker,statement,line_item,period,report_period,accession). ⚠️ 매 실행 전체 재수집(증분 없음)."},
+              "(market,ticker,statement,line_item,period,report_period,accession). 전체 모드는 매 실행 전체 재수집; 델타 모드는 저장분이 신선한 종목을 스킵."},
     {"id": "prices", "label": "가격(OHLCV)", "source": "Yahoo Finance", "store": "price_bars",
+     "delta": "항상 증분 — 마지막 저장 봉 이후만 fetch (모드 무관)",
      "kind": "prices", "markets": ["US", "KR"], "default": True, "runner": _run_prices,
      "min_interval_seconds": _DAY,
      "desc": "일별 시·고·저·종가 + 거래량",
@@ -120,6 +126,7 @@ PIPELINES: list[dict] = [
      "fetch": "일봉 OHLCV+거래량. UPSERT 키 (market,ticker,interval,bar_date). "
               "✅ 증분: 종목별 마지막 저장일 이후만 fetch(최초 1회만 PRICES_BACKFILL_YEARS년 전체)."},
     {"id": "corp_actions", "label": "배당·분할", "source": "Yahoo Finance", "store": "corporate_actions",
+     "delta": "항상 증분 — 마지막 이벤트 이후만 fetch (모드 무관)",
      "kind": "corp_actions", "markets": ["US", "KR"], "default": True, "runner": _run_corp_actions,
      "min_interval_seconds": _WEEK,
      "desc": "배당락일·금액 + 액면분할(10년)",
@@ -130,6 +137,7 @@ PIPELINES: list[dict] = [
      "fetch": "배당락일·금액 + 액면분할 비율. UPSERT 키 (market,ticker,kind,event_date). "
               "✅ 증분: 종목별 마지막 이벤트일 이후만 fetch(최초 1회만 10년 전체)."},
     {"id": "news", "label": "뉴스 → RAG", "source": "Google News", "store": "RAG corpus",
+     "delta": "항상 최신 N건만 — 본질적으로 증분 (모드 무관)",
      "kind": "news", "markets": ["US", "KR"], "default": True, "runner": _run_news,
      "min_interval_seconds": _HOUR,
      "desc": "종목별 최신 헤드라인을 RAG 색인",
@@ -140,6 +148,7 @@ PIPELINES: list[dict] = [
      "fetch": "종목별 최신 헤드라인 NEWS_INGEST_LIMIT건(기본 8) → RAG 색인(doc_id=url). "
               "과거 이력 없음 — 최신 N건만 반환(본질적으로 증분)."},
     {"id": "filing_text", "label": "공시 본문 → RAG", "source": "SEC iXBRL · OpenDART", "store": "RAG corpus",
+     "delta": "이미 색인한 접수번호는 건너뛰고 새 공시만 다운로드·임베딩 (쿼터 절약)",
      "kind": "filing_text", "markets": ["US", "KR"], "default": True, "runner": _run_filing_text,
      "min_interval_seconds": _WEEK,
      "desc": "공시 본문 HTML을 텍스트 추출해 RAG 색인(인앱 뷰어와 동일 원천)",
@@ -150,6 +159,7 @@ PIPELINES: list[dict] = [
      "fetch": "재무제표에 등장한 최근 4개 공시 본문 HTML을 텍스트 추출→RAG 색인(doc_id={accession}:s.{n}). "
               "HTML은 인앱 뷰어와 동일 원천을 공유·캐시(증분)."},
     {"id": "transcript_text", "label": "어닝콜 트랜스크립트 → RAG", "source": "API Ninjas / Alpha Vantage", "store": "RAG corpus",
+     "delta": "이미 색인한 분기는 건너뛰고 새 분기만",
      "kind": "transcript", "markets": ["US", "KR"], "default": False, "runner": _run_transcript_text,
      "min_interval_seconds": _WEEK,
      "desc": "분기 어닝콜 전문(화자별)을 RAG 색인 — 인앱 트랜스크립트 프리뷰와 동일 원천 (US+KR, API_NINJAS_KEY)",
@@ -162,6 +172,7 @@ PIPELINES: list[dict] = [
      "fetch": "최근 TRANSCRIPT_INGEST_LIMIT개 분기(기본 8) 어닝콜 전문을 화자별 텍스트로 RAG 색인 "
               "(doc_id=TR:{ticker}:{quarter}:s.{n}). KR 코드는 .KS→.KQ로 시도(API Ninjas 전용)."},
     {"id": "presentation_text", "label": "어닝 발표자료(8-K 덱) → RAG", "source": "SEC EDGAR · Document AI",
+     "delta": "이미 파싱한 덱은 건너뛰고 새 덱만 (Document AI 비용 절약)",
      "kind": "presentation", "markets": ["US"], "default": False, "runner": _run_presentation_text,
      "min_interval_seconds": _WEEK,
      "desc": "8-K EX-99 투자자/실적 발표 슬라이드(PDF)를 Document AI로 파싱→RAG 색인 + 인앱 pdf.js 프리뷰 (US, GCP 필요)",
@@ -173,6 +184,7 @@ PIPELINES: list[dict] = [
      "fetch": "최근 DECK_INGEST_LIMIT개 8-K EX-99 발표자료(PDF)를 Document AI Layout Parser로 충실 파싱 "
               "(페이지·좌표 포함)→RAG 색인(doc_id=DECK:{ticker}:{accession}:c{n}). PDF는 캐시→pdf.js 뷰어가 동일 원천 서빙."},
     {"id": "kr_earnings", "label": "실적공시(잠정실적 공정공시) → RAG", "source": "OpenDART", "store": "RAG corpus",
+     "delta": "이미 색인한 공시는 건너뛰고 새 잠정실적만 (쿼터 절약)",
      "kind": "kr_earnings", "markets": ["KR"], "default": False, "runner": _run_kr_earnings,
      "min_interval_seconds": _WEEK,
      "desc": "KR 어닝 등가물 — '영업(잠정)실적(공정공시)' 본문을 RAG 색인 + 인앱 DART 뷰어 동일 원천 (KR, 무료 API 없는 트랜스크립트/덱 대신)",
@@ -185,6 +197,7 @@ PIPELINES: list[dict] = [
               "(doc_id={rcept_no}:s.{n}, doc_type=earnings). HTML은 인앱 DART 뷰어와 동일 원천 공유·캐시. "
               "US는 no-op(어닝콜 트랜스크립트 파이프라인 사용)."},
     {"id": "era_news", "label": "시대 뉴스 → RAG", "source": "GDELT · NYT Archive", "store": "RAG corpus",
+     "delta": "국면 단위 재색인 — 델타 구분 없음",
      "kind": "era_news", "markets": ["US"], "default": False, "runner": _run_era_news,
      "min_interval_seconds": _WEEK,
      "desc": "큐레이션된 역사적 국면(닷컴버블·GFC·코로나·IMF 등)의 구간 뉴스를 RAG 색인(doc_type=era_news) — "
@@ -199,6 +212,7 @@ PIPELINES: list[dict] = [
 
 PIPELINES.append(
     {"id": "logos", "label": "회사 로고", "source": "Logo.dev / FMP / favicon", "store": "logos(volume)",
+     "delta": "항상 캐시 미스만 재시도 (모드 무관)",
      "kind": "logo", "markets": ["US", "KR"], "default": False, "runner": _run_logos,
      "min_interval_seconds": _WEEK,
      "desc": "종목 로고 이미지(하이브리드 해석·캐시). 없으면 UI가 모노그램 표시(무 날조).",
@@ -231,10 +245,12 @@ def resolve_pipeline_ids(ids: list[str] | None) -> list[str]:
     return valid or default_pipeline_ids()
 
 
-async def run_pipelines(market: str, tickers: list[str], pipeline_ids: list[str] | None = None) -> dict:
+async def run_pipelines(market: str, tickers: list[str], pipeline_ids: list[str] | None = None,
+                        mode: str = "full") -> dict:
     """Run the selected pipelines over one (market, tickers) set. Each runner self-records its
     IngestionJob and is best-effort; we only catch a hard runner crash so one pipeline never
-    sinks the rest. Returns {pipeline_id: 'ok' | 'skipped' | 'error: …'}."""
+    sinks the rest. ``mode="delta"`` = only new/changed items (see each pipeline's `delta` note).
+    Returns {pipeline_id: 'ok' | 'skipped' | 'error: …'}."""
     ids = resolve_pipeline_ids(pipeline_ids)
     summary: dict[str, str] = {}
     for p in PIPELINES:
@@ -244,7 +260,7 @@ async def run_pipelines(market: str, tickers: list[str], pipeline_ids: list[str]
             summary[p["id"]] = "skipped"
             continue
         try:
-            await p["runner"](market, tickers)
+            await p["runner"](market, tickers, mode=mode)
             summary[p["id"]] = "ok"
         except Exception as exc:  # noqa: BLE001 — one pipeline failing never sinks the others
             logger.warning("pipeline %s failed for %s: %s", p["id"], market, exc)

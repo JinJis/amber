@@ -58,7 +58,10 @@
   인증키 신청). 사용현황도 같은 포털에서 확인 가능
 - [ ] **재빌드 + 재기동 필요**: 이번 픽스는 `docker-compose.yml`(worker에 `datasets_data:/data`
   볼륨 추가)을 바꿨어요 — worker 컨테이너를 **recreate**해야 인제스트 시 공시 HTML 캐시가
-  datasets와 공유돼요 (`docker compose up -d --build datasets worker agent-engine rag studio-api web`)
+  datasets와 공유돼요 (`docker compose up -d --build datasets worker agent-engine rag studio-api web admin`)
+- [x] ~~전체 유니버스 재실행 시 전량 재수집~~ → **델타 인제스트 랜딩(OPS-2)**: 어드민 백필 폼의
+  '수집 방식'에서 델타(기본)/전체를 고를 수 있고, 크론 스윕은 델타로 돌아요. 쿼터 잔여량은
+  어드민 Pipelines의 OpenDART 카드에서 키별로 보여요
 - [ ] (로컬 스택만) **Vertex 리랭커 프로젝트 설정**: rag 로그에 `RESOURCE_PROJECT_INVALID`가 찍히면
   GCP 프로젝트/SA env가 memory의 구성(chungjin-456905, value-graph@ SA)과 다른 것 — `.env`의
   RAG_GCP_* 값을 확인하세요 (검색은 fail-safe로 동작하지만 리랭킹 품질이 빠져요)

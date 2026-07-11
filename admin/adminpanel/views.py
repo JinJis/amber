@@ -27,6 +27,7 @@ NAV = [
     ("/", "Overview", "▦"),
     ("/catalog", "Catalog", "◈"),
     ("/pipelines", "Pipelines", "⏣"),
+    ("/runs", "Runs", "🗂"),
     ("/queue", "Queue", "⚙"),
     ("/upstream", "Upstream", "📡"),
     ("/costs", "Costs", "💸"),
@@ -106,10 +107,11 @@ def page(active: str, title: str, body: str, refresh: bool = False) -> str:
         "<option value=10>10초</option><option value=60>1분</option>"
         "</select></div>"
     )
+    default_auto = "10" if refresh else "0"   # live work on the page → default 10s until the operator picks
     script = (
         "<script>(function(){"
         "var u=new URL(location.href);"
-        "var a=parseInt(u.searchParams.get('auto')||'0',10);"  # default OFF (manual)
+        "var a=parseInt(u.searchParams.get('auto')||'" + default_auto + "',10);"
         "var s=document.getElementById('rauto');"
         "if(s){s.value=String([0,5,10,60].indexOf(a)>=0?a:0);"
         "s.onchange=function(){u.searchParams.set('auto',s.value);location.replace(u.toString());};}"

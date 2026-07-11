@@ -117,6 +117,12 @@ form.ops2 input,form.ops2 select{background:var(--panel-2);border:1px solid var(
 form.ops2 .checks{display:flex;gap:12px;flex-wrap:wrap}
 form.ops2 .chk{display:flex;align-items:center;gap:5px;color:var(--text);font-size:13px}
 form.ops2 button.p{align-self:flex-start}
+/* OpenDART 쿼터 카드 — 키별 사용량 바 한 줄 */
+.qrow{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.qrow:last-of-type{border-bottom:none}
+.qrow .prog{flex:1;min-width:110px}
+.qrow code{flex:none}
+.qrow .qnum{color:var(--muted);font-size:12px;white-space:nowrap}
 /* misc */
 .crumb{font-size:12px;color:var(--muted);margin-bottom:12px}
 .nav-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}

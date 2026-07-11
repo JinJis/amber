@@ -65,9 +65,12 @@ def _transcript_to_docs(t: dict) -> list[dict]:
 
 
 async def ingest_transcript_for_ticker(market: str, ticker: str, limit: int | None = None,
-                                       rag_url: str | None = None) -> int:
+                                       rag_url: str | None = None, mode: str = "full") -> int:
     """Index a ticker's recent earnings-call transcripts into RAG + warm the preview cache; return
-    the chunk count. US + KR (API Ninjas; AV fallback US). Best-effort (0 on no key / no data)."""
+    the chunk count. US + KR (API Ninjas; AV fallback US). Best-effort (0 on no key / no data).
+    ``mode="delta"`` skips quarters already ingested (IngestState cursor)."""
+    from app.store.ingest_state import done_items, mark_items
+
     market = (market or "").upper()
     if market == "KR" and not transcripts_cover_kr():
         return 0
@@ -78,8 +81,14 @@ async def ingest_transcript_for_ticker(market: str, ticker: str, limit: int | No
     transcripts = await recent_transcripts(sym, limit)
     if not transcripts and market == "KR" and sym.endswith(".KS"):
         transcripts = await recent_transcripts(f"{ticker}.KQ", limit)
+    if mode == "delta":
+        seen = await asyncio.to_thread(done_items, "transcript", market, ticker)
+        transcripts = [t for t in transcripts if str(t.get("quarter")) not in seen]
+        if not transcripts:
+            return 0   # nothing new — the caller logs the skip
     rag = rag_url or settings.rag_url
     total_docs, chunks = 0, 0
+    ingested: set[str] = set()
     for t in transcripts:
         await store_transcript_html(t)   # render + cache so the in-app preview is ready
         docs = _transcript_to_docs(t)
@@ -88,18 +97,23 @@ async def ingest_transcript_for_ticker(market: str, ticker: str, limit: int | No
         total_docs += len(docs)
         # replace by TR:{ticker}:{quarter} so a re-chunk (turn-preserving) swaps sections cleanly (RQ-2)
         chunks += await _ingest_to_rag(rag, docs, replace={"accession": docs[0]["accession"]})
+        ingested.add(str(t.get("quarter")))
+    if ingested:
+        await asyncio.to_thread(mark_items, "transcript", market, ticker, ingested)
     if not total_docs:
         return 0
     log.info("transcript: %s → %d quarters, %d chunks indexed", ticker.upper(), len(transcripts), chunks)
     return chunks
 
 
-async def run_transcript_text_ingest(market: str, tickers: list[str]) -> None:
+async def run_transcript_text_ingest(market: str, tickers: list[str], mode: str = "full") -> None:
     """Index each ticker's recent earnings-call transcripts into RAG, tracked as an IngestionJob
-    (kind `transcript`); best-effort per ticker, with a live activity feed."""
+    (kind `transcript`); best-effort per ticker, with a live activity feed. delta = new quarters only."""
     market = (market or "").upper()
     tickers = tickers or []
-    job = start_job("transcript", market, f"transcript · {len(tickers)} tickers", len(tickers))
+    delta = mode == "delta"
+    job = start_job("transcript", market,
+                    f"transcript · {len(tickers)} tickers" + (" · delta" if delta else ""), len(tickers))
     if market == "KR" and not transcripts_cover_kr():
         await asyncio.to_thread(finish_job, job, "success", 0,
                                 "KR 어닝콜은 API_NINJAS_KEY(프리미엄)가 필요해요 — US는 AV 폴백으로 가능")
@@ -117,12 +131,13 @@ async def run_transcript_text_ingest(market: str, tickers: list[str]) -> None:
             await asyncio.to_thread(log_activity, "transcript", market,
                                     f"[{tk}] 어닝콜 트랜스크립트 수집·인덱싱 중… ({i}/{len(tickers)})", job)
             try:
-                got = await ingest_transcript_for_ticker(market, tk)
+                got = await ingest_transcript_for_ticker(market, tk, mode=mode)
                 total += got
                 if got == 0:
                     empty.append(tk)
                     await asyncio.to_thread(log_activity, "transcript", market,
-                                            f"[{tk}] 트랜스크립트 없음/제한 (0 chunks)", job, "warn")
+                                            f"[{tk}] " + ("변경 없음 (델타 스킵)" if delta else "트랜스크립트 없음/제한 (0 chunks)"),
+                                            job, "info" if delta else "warn")
                 else:
                     await asyncio.to_thread(log_activity, "transcript", market,
                                             f"[{tk}] → RAG {got} chunks ✓", job)

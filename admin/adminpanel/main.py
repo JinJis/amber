@@ -1,11 +1,14 @@
 """ValueGraph admin — operations console.
 
 A left-nav mission-control over the whole platform, organized by operator
-job-to-be-done (Overview · Catalog · Pipelines · Data · Users · DB browser):
+job-to-be-done (Overview · Catalog · Pipelines · Runs · Queue · Data · Users · DB browser):
 
 * **Catalog** — what the service offers, live from the manifest: every data
   source/connector, each resource → REST path → MCP tool, RAG + agent backends.
-* **Pipelines** — every ingest/precompute job as a live progress card + controls.
+* **Pipelines** — every ingest/precompute job as a live progress card + controls
+  (델타/전체 수집 방식 + OpenDART 쿼터 카드 포함).
+* **Runs (수집 이력)** — the FULL run history, filterable + paged; each run opens a
+  verbose detail view (원인별 실패 + 활동 로그 전체).
 * **Data / Users** — ingestion-store + RAG health; tenants/projects/keys/activations.
 * **DB browser** — our own styled CRUD over every reflected service table (no
   sqladmin → no unstyled raw-HTML fallback).
@@ -116,6 +119,7 @@ async def overview(request: Request, msg: str = ""):
         raginfo = await _safe_get(c, f"{settings.rag_url}/rag/info")
         catalog = await _safe_get(c, f"{settings.gateway_url}/catalog")
         agentinfo = await _safe_get(c, f"{settings.agent_engine_url}/agent/info")
+        quota = await _safe_get(c, f"{settings.datasets_url}/admin/quota")
 
     conns = catalog.get("connectors") or []
     tool_count = sum(len(cn.get("resources") or []) for cn in conns) if conns else catalog.get("count", "?")
@@ -125,6 +129,16 @@ async def overview(request: Request, msg: str = ""):
     q_totals = queue.get("totals") or {}
     q_pending, q_doing = q_totals.get("todo", 0), q_totals.get("doing", 0)
 
+    # OpenDART 남은 쿼터 — 살아 있는 키들의 최소 남은 호출 수(보수적), 전부 막혔으면 '소진'.
+    qkeys = (quota.get("keys") or []) if _ok(quota) else []
+    alive = [int(k.get("remaining") or 0) for k in qkeys if not k.get("blocked")]
+    if not qkeys:
+        q_left, q_small = "—", False
+    elif not alive or max(alive) <= 0:
+        q_left, q_small = "소진", True
+    else:
+        q_left, q_small = f"{min(alive):,}", False
+
     tiles = "".join([
         tile("data sources", len(conns) if conns else "?", "◈", "/catalog"),
         tile("catalog tools", tool_count, "⚙", "/catalog"),
@@ -132,6 +146,7 @@ async def overview(request: Request, msg: str = ""):
         tile("queue pending", q_pending if _ok(queue) else "—", "⚙", "/queue"),
         tile("store facts", stats.get("total_facts", "—"), "▦", "/data"),
         tile("queue running", q_doing if _ok(queue) else len(running), "●", "/queue"),
+        tile("OpenDART 남은 쿼터", q_left, "🔑", "/pipelines", small=q_small),
     ])
 
     # the queue is healthy if the overview came back AND its job DB was reachable (no 'error' field)
@@ -168,8 +183,8 @@ async def overview(request: Request, msg: str = ""):
         + "<h2>Jump to</h2><div>"
         + "".join(f"<span class=pill><a href='{h}'>{_esc(l)}</a></span>"
                   for h, l in [("/catalog", "Catalog →"), ("/pipelines", "Pipelines →"),
-                               ("/queue", "Queue →"), ("/data", "Data →"), ("/users", "Users →"),
-                               ("/db", "DB browser →")])
+                               ("/runs", "수집 이력 →"), ("/queue", "Queue →"), ("/data", "Data →"),
+                               ("/users", "Users →"), ("/db", "DB browser →")])
         + "</div>"
     )
     return HTMLResponse(page("/", "Overview", body, refresh=bool(running)))
@@ -245,6 +260,72 @@ async def catalog_view(request: Request):
 
 
 # --- Pipelines ------------------------------------------------------------
+def _fmt_duration(started: str | None, ended: str | None) -> str:
+    """ISO 시각 두 개 → '1시간 5분' / '2분 30초' / '12초' — 사람이 읽는 실행 소요 시간."""
+    if not started or not ended:
+        return ""
+    from datetime import datetime
+    try:
+        s = datetime.fromisoformat(started.replace("Z", ""))
+        e = datetime.fromisoformat(ended.replace("Z", ""))
+        secs = max(0, int((e - s).total_seconds()))
+    except ValueError:
+        return ""
+    if secs >= 3600:
+        return f"{secs // 3600}시간 {secs % 3600 // 60}분"
+    if secs >= 60:
+        return f"{secs // 60}분 {secs % 60}초"
+    return f"{secs}초"
+
+
+def _quota_card(quota: dict) -> str:
+    """OpenDART 일일 쿼터 카드 — 키별 오늘 사용량 바 + 남은 호출 + 소진 배지.
+
+    수치는 우리가 계측한 호출 수(datasets·worker 공용 스토어) 기준이라 포털 실측과 오차가
+    있을 수 있다 — 그래서 카드에도 그대로 적어 준다(무 날조)."""
+    if not _ok(quota):
+        return ("<div class=card><h3>🔑 OpenDART 쿼터</h3>"
+                "<div class=sub>쿼터 정보를 불러오지 못했어요 — datasets 연결을 확인하세요.</div></div>")
+    keys = quota.get("keys") or []
+    if not keys:
+        return ("<div class=card><h3>🔑 OpenDART 쿼터 " + badge("키 없음", "warn") + "</h3>"
+                "<div class=sub>등록된 OpenDART 키가 없어요. <code>OPENDART_API_KEYS</code>에 키를 여러 개 "
+                "넣으면 자동 로테이션으로 일일 한도를 나눠 써요 (키 하나면 <code>OPENDART_API_KEY</code>도 돼요).</div>"
+                "</div>")
+    rows, total_used, total_limit = "", 0, 0
+    for k in keys:
+        used, lim = int(k.get("used_today") or 0), int(k.get("limit") or 0)
+        remaining = int(k.get("remaining") or 0)
+        total_used, total_limit = total_used + used, total_limit + lim
+        blocked = bool(k.get("blocked"))
+        kind = "err" if blocked else ("warn" if lim and used >= lim * 0.8 else "ok")
+        state = (badge("일일 한도 소진 · KST 자정 리셋", "err") if blocked
+                 else f"<span class=qnum>남음 {remaining:,}</span>")
+        rows += (f"<div class=qrow><code>{_esc(k.get('key'))}</code>{progress(used, lim, kind)}"
+                 f"<span class=qnum>{used:,}/{lim:,}</span>{state}</div>")
+    # 최근 14일 이력 — 날짜별 합계로 접어서 (verbose는 클릭해서)
+    by_day: dict[str, int] = {}
+    for h in (quota.get("history") or []):
+        d = str(h.get("day") or "")
+        by_day[d] = by_day.get(d, 0) + int(h.get("calls") or 0)
+    hist_html = ""
+    if by_day:
+        lines = "".join(
+            f"<tr><td class=mono>{_esc(d)}</td><td class=mono style='text-align:right'>{n:,}</td></tr>"
+            for d, n in sorted(by_day.items(), reverse=True))
+        hist_html = ("<details class=errlog style='margin-top:8px'>"
+                     "<summary style='color:var(--muted)'>최근 14일 사용 이력</summary>"
+                     "<div class=tablewrap style='margin-top:6px'><table><thead><tr><th>날짜 (KST)</th>"
+                     f"<th>호출</th></tr></thead><tbody>{lines}</tbody></table></div></details>")
+    day = quota.get("day_kst") or ""
+    total_kind = "err" if total_limit and total_used >= total_limit else "ok"
+    return ("<div class=card><h3>🔑 OpenDART 쿼터 " + badge(f"오늘 {total_used:,}/{total_limit:,}", total_kind)
+            + (f" <span class=muted>{_esc(day)} KST</span>" if day else "") + "</h3>"
+            "<div class=sub>키별 오늘 호출량이에요 — 한도가 다 찬 키는 자동으로 쉬고 KST 자정에 다시 살아나요. "
+            "수치는 우리가 계측한 호출 수 기준이라 포털 실측과는 오차가 있을 수 있어요.</div>"
+            + rows + hist_html + "</div>")
+
+
 def _interval_label(seconds: int) -> str:
     if not seconds:
         return "—"
@@ -281,6 +362,8 @@ def _pipeline_card(p: dict, cron_by_pid: dict[str, str]) -> str:
     else:
         last = "<div class=sub muted>아직 실행 기록 없음</div>"
     markets = " ".join(badge(m) for m in p.get("markets", []))
+    # 델타 설명 — 이 파이프라인의 델타 모드가 무엇을 건너뛰는지 (레지스트리의 `delta` 필드 그대로).
+    delta_line = (f"<div class='sub muted'>델타: {_esc(p['delta'])}</div>" if p.get("delta") else "")
     # 원천 API · 쿼리 — operators can see EXACTLY which upstream endpoint + request each pipeline issues.
     api_lines = p.get("upstream") or []
     fetch = p.get("fetch") or ""
@@ -292,9 +375,10 @@ def _pipeline_card(p: dict, cron_by_pid: dict[str, str]) -> str:
         detail = (f"<details class=errlog><summary>원천 API · 쿼리</summary>"
                   f"<pre>{_esc(body)}</pre></details>")
     if cron:
-        # cron-scheduled pipeline → one-click sweep over the configured universe.
+        # cron-scheduled pipeline → one-click sweep over the configured universe (기본 델타 —
+        # datasets의 sweep 엔드포인트가 mode=delta 기본이라 새로 나온 것만 수집해요).
         run_now = (f"<form class=ops method=post action='/ops/queue/sweep/{_esc(pid)}'>"
-                   f"<button class=p>지금 수집 ▶</button></form>")
+                   f"<button class=p>지금 수집(델타) ▶</button></form>")
     else:
         # manual-only pipeline (no auto-cron — these are rate-limited/metered: e.g. Alpha Vantage
         # 25 calls/day, Document AI per-page). Run is TICKER-SCOPED on purpose: a full-universe run
@@ -309,6 +393,7 @@ def _pipeline_card(p: dict, cron_by_pid: dict[str, str]) -> str:
     return (
         f"<div class=card><h3>{_esc(p['label'])} {badge(sched_txt, sched_cls)}{cron_txt}</h3>"
         f"<div class=sub>{_esc(p.get('desc') or '')}</div>"
+        f"{delta_line}"
         f"<div class=flow><span class=pill>{_esc(p.get('source'))}</span> <span class=arrow>→</span> "
         f"<span class=pill><code>{_esc(p.get('store'))}</code></span> {markets}</div>"
         f"{detail}{last}<div class=opsrow>{run_now}</div></div>"
@@ -319,8 +404,9 @@ def _pipeline_card(p: dict, cron_by_pid: dict[str, str]) -> str:
 async def pipelines(request: Request, msg: str = ""):
     async with httpx.AsyncClient() as c:
         pdata = await _safe_get(c, f"{settings.datasets_url}/admin/pipelines")
-        jobs = await _safe_get(c, f"{settings.datasets_url}/admin/jobs")
+        jobs = await _safe_get(c, f"{settings.datasets_url}/admin/jobs?limit=8")   # 최근 몇 건만 — 전체는 /runs
         universes = await _safe_get(c, f"{settings.datasets_url}/admin/universes")
+        quota = await _safe_get(c, f"{settings.datasets_url}/admin/quota")
 
     registry = pdata.get("pipelines") or []
     queue = pdata.get("queue") or {}
@@ -403,7 +489,6 @@ async def pipelines(request: Request, msg: str = ""):
         "<input type=file name=logo accept='image/*' required> "
         "<button class=p>업로드 ▶</button></form></div></div>"
     )
-    macro_card = macro_card + logo_card
 
     # --- per-pipeline visualization cards ---
     cards = "".join(_pipeline_card(p, cron_by_pid) for p in registry) or "<div class=empty>파이프라인 레지스트리를 불러오지 못했어요.</div>"
@@ -432,6 +517,10 @@ S&amp;P·코스피·코스닥 전체는 직접 입력란에 티커를 붙여넣�
     <div class=row><label>직접 입력</label><select name=market><option>US</option><option>KR</option></select>
       <input name=tickers placeholder="AAPL MSFT / 005930 … (입력 시 프리셋 무시)" size=40></div>
     <div class=row><label>파이프라인</label><div class=checks>{pipe_checks}</div></div>
+    <div class=row><label>수집 방식</label><div class=checks>
+      <label class=chk><input type=radio name=mode value=delta checked> 델타 — 새로 나온 것만 (권장)</label>
+      <label class=chk><input type=radio name=mode value=full> 전체 — 모두 다시 수집</label></div></div>
+    <div class=row><label></label><span class=hint>델타는 이미 수집한 공시·분기·덱을 건너뛰고, 재무는 신선한 종목을 스킵해요 — 쿼터·임베딩을 아껴요.</span></div>
     <button class=p>수집 시작</button>
   </form></div>"""
 
@@ -462,28 +551,199 @@ S&amp;P·코스피·코스닥 전체는 직접 입력란에 티커를 붙여넣�
     else:
         jobs_html = "<div class=empty>아직 수집 작업이 없어요 — 아래에서 백필을 실행하세요.</div>"
 
-    # --- secondary triggers (RAG probes) ---
-    extra = """
-<h2>기타</h2>
-<div class=grid>
+    # --- 도구 (부가 기능) — 위쪽은 수집 흐름에 집중하고, 단발성 도구는 맨 아래로 모아요 ---
+    rag_tools = """
   <div class=card><h3>RAG ingest</h3><div class=sub>코퍼스에 문서 추가</div>
     <form class=ops method=post action=/ops/rag/ingest>
       <input name=text placeholder="document text" size=22 required>
       <input name=source placeholder=source value=admin size=10><button class=p>Ingest</button></form></div>
   <div class=card><h3>RAG search</h3><div class=sub>시맨틱 프로브</div>
     <form class=ops method=post action=/ops/rag/search>
-      <input name=query placeholder="semantic query" size=22 required><button class=p>Search</button></form></div>
-</div>"""
+      <input name=query placeholder="semantic query" size=22 required><button class=p>Search</button></form></div>"""
+    tools = "<h2>도구</h2><div class=grid>" + macro_card + logo_card + rag_tools + "</div>"
 
     body = (_flash(msg)
             + "<p class=hint>모든 데이터 파이프라인을 한곳에서 — 무엇을 어떤 경로로 수집해 어디에 쌓는지, "
-              "주기·상태·에러를 시각화합니다. 작업이 도는 동안 자동 새로고침됩니다.</p>"
-            + "<h2>큐 스케줄러</h2><div class=grid>" + queue_banner + macro_card + "</div>"
+              "주기·상태·에러를 시각화합니다. 작업이 도는 동안 자동 새로고침됩니다. "
+              "과거 실행의 전체 이력·상세 로그는 <a href=/runs>Runs(수집 이력)</a>에 있어요.</p>"
+            + "<h2>큐 스케줄러 · 쿼터</h2><div class=grid>" + queue_banner + _quota_card(quota) + "</div>"
             + "<h2>파이프라인</h2><div class=grid>" + cards + "</div>"
             + backfill
-            + f"<h2>수집 작업 {'· ⟳ live' if running else ''}</h2>" + jobs_html
-            + extra)
+            + f"<h2>수집 작업 · 최근 {len(job_list or [])}건 {'· ⟳ live' if running else ''}</h2>" + jobs_html
+            + "<div class=hint style='margin-top:8px'><a href=/runs>전체 이력 → Runs(수집 이력)</a></div>"
+            + tools)
     return HTMLResponse(page("/pipelines", "Pipelines", body, refresh=running))
+
+
+# --- Runs (수집 이력) --------------------------------------------------------
+_RUN_STATUS_LABEL = {"running": "실행중", "success": "성공", "error": "실패"}
+
+
+def _runs_error_cell(j: dict) -> str:
+    """이력 테이블의 오류 셀 — 클릭하면 전체 메시지 + 원인별(그룹) 실패 종목까지 펼쳐 보여줘요."""
+    err = j.get("error") or ""
+    details = j.get("error_details") or []
+    if not err and not details:
+        return ""
+    full = err
+    if details:
+        lines = []
+        for g in details:
+            tickers = g.get("tickers") or []
+            preview = ", ".join(str(t) for t in tickers[:20]) + ("…" if len(tickers) > 20 else "")
+            lines.append(f"{g.get('error')} — {g.get('count')}종목: {preview}")
+        full = (err + "\n\n" if err else "") + "\n".join(lines)
+    summary = err or f"원인 {len(details)}종"
+    return (f"<details class=errlog><summary>{_cell(summary, 60)}</summary>"
+            f"<pre>{_esc(full)}</pre></details>")
+
+
+@app.get("/runs", response_class=HTMLResponse)
+async def runs_view(request: Request, kind: str = "", market: str = "", status: str = "", offset: int = 0):
+    """수집 이력 — 모든 파이프라인 실행(IngestionJob)을 필터·페이지로 훑어봐요.
+    파이프라인 페이지는 최근 몇 건만 보여주고, 전체 과거 런은 여기서 찾아요."""
+    limit = 50
+    offset = max(0, offset)
+    filt_qs = "".join(f"&{k}={v}" for k, v in (("kind", kind), ("market", market), ("status", status)) if v)
+    async with httpx.AsyncClient() as c:
+        jobs = await _safe_get(c, f"{settings.datasets_url}/admin/jobs?limit={limit}&offset={offset}{filt_qs}")
+        pdata = await _safe_get(c, f"{settings.datasets_url}/admin/pipelines")
+
+    registry = pdata.get("pipelines") or []
+    kind_label = {p.get("kind"): p.get("label") for p in registry}
+
+    # --- 필터 바 (GET폼 — 새로고침·북마크에 안전) ---
+    kind_opts = "<option value=''>전체 파이프라인</option>"
+    known_kinds = set()
+    for p in registry:
+        k = p.get("kind") or ""
+        known_kinds.add(k)
+        sel = " selected" if kind == k else ""
+        kind_opts += f"<option value='{_esc(k)}'{sel}>{_esc(p.get('label'))} · {_esc(k)}</option>"
+    if kind and kind not in known_kinds:   # 레지스트리를 못 불러와도 선택값은 유지
+        kind_opts += f"<option value='{_esc(kind)}' selected>{_esc(kind)}</option>"
+    market_opts = "<option value=''>전체 시장</option>" + "".join(
+        f"<option value={m}{' selected' if market == m else ''}>{m}</option>" for m in ("US", "KR"))
+    status_opts = "<option value=''>전체 상태</option>" + "".join(
+        f"<option value={s}{' selected' if status == s else ''}>{lbl}</option>"
+        for s, lbl in _RUN_STATUS_LABEL.items())
+    filter_bar = ("<form class=ops method=get action=/runs>"
+                  f"<select name=kind>{kind_opts}</select>"
+                  f"<select name=market>{market_opts}</select>"
+                  f"<select name=status>{status_opts}</select>"
+                  "<button class=p>필터 적용</button>"
+                  + (" <a href=/runs>초기화</a>" if (kind or market or status) else "")
+                  + "</form>")
+
+    # --- 이력 테이블 + 페이저 ---
+    job_list = (jobs.get("jobs") or []) if _ok(jobs) else []
+    total = int(jobs.get("total") or 0) if _ok(jobs) else 0
+    if not _ok(jobs):
+        table = "<div class=warn>수집 이력을 불러오지 못했어요 — datasets 연결을 확인하세요.</div>"
+    elif not job_list:
+        table = "<div class=empty>조건에 맞는 수집 기록이 없어요.</div>"
+    else:
+        rows = ""
+        for j in job_list:
+            st = j.get("status")
+            cls = JOB_STATUS_CLASS.get(st, "")
+            tot, dn = j.get("total") or 0, j.get("done") or 0
+            dur = _fmt_duration(j.get("started_at"), j.get("ended_at"))
+            plabel = kind_label.get(j.get("kind")) or j.get("kind")
+            rows += (
+                f"<tr><td><a href='/runs/{_esc(j['id'])}'>#{_esc(j['id'])}</a></td>"
+                f"<td>{badge(_esc(plabel))}</td><td>{_esc(j.get('market') or '')}</td>"
+                f"<td class=wrap>{_cell(j.get('spec'), 60)}</td>"
+                f"<td>{badge(_esc(st), cls)}</td>"
+                f"<td><div style='display:flex;align-items:center;gap:8px'>{progress(dn, tot, cls)}"
+                f"<span class=muted>{f'{dn}/{tot}' if tot else '—'}</span></div></td>"
+                f"<td>{_esc(j.get('rows') if j.get('rows') is not None else '')}</td>"
+                f"<td class=muted>{_esc((j.get('started_at') or '')[:19])}{f' · {dur}' if dur else ''}</td>"
+                f"<td>{_runs_error_cell(j)}</td></tr>")
+        table = ("<div class=tablewrap><table><thead><tr><th>#</th><th>pipeline</th><th>mkt</th><th>spec</th>"
+                 "<th>status</th><th>progress</th><th>rows</th><th>started</th><th>error</th></tr></thead>"
+                 f"<tbody>{rows}</tbody></table></div>")
+
+    lo = offset + 1 if job_list else 0
+    hi = offset + len(job_list)
+    pager = f"<div class=pgbar><span class=pg>총 {total:,}건 · {lo}–{hi} 표시</span>"
+    if offset > 0:
+        pager += f"<a class=pg href='/runs?offset={max(0, offset - limit)}{_esc(filt_qs)}'>← 이전</a>"
+    if offset + limit < total:
+        pager += f"<a class=pg href='/runs?offset={offset + limit}{_esc(filt_qs)}'>다음 →</a>"
+    pager += "</div>"
+
+    running = any(j.get("status") == "running" for j in job_list)
+    body = ("<p class=hint>모든 파이프라인 실행의 과거 이력이에요 — 파이프라인·시장·상태로 거르고, "
+            "각 실행을 누르면 원인별 실패와 전체 활동 로그까지 자세히 볼 수 있어요.</p>"
+            + filter_bar + pager + table + pager)
+    return HTMLResponse(page("/runs", "Runs", body, refresh=running))
+
+
+@app.get("/runs/{job_id}", response_class=HTMLResponse)
+async def run_detail(request: Request, job_id: int):
+    """한 실행의 VERBOSE 뷰 — 전체 필드 헤더(소요 시간 포함), 원인별(그룹) 실패 종목,
+    이 런이 남긴 활동 로그 전체(오래된 순 — 읽는 순서 그대로). 실행 중이면 자동 새로고침해요."""
+    job, reachable = None, True
+    async with httpx.AsyncClient() as c:
+        # datasets에 단건 조회가 없어 이력 페이지를 최신부터 훑어요 (최근 4,000건까지 — 그 밖이면 정직하게 못 찾음).
+        offset = 0
+        while job is None and offset < 4000:
+            d = await _safe_get(c, f"{settings.datasets_url}/admin/jobs?limit=500&offset={offset}")
+            if not _ok(d):
+                reachable = False
+                break
+            batch = d.get("jobs") or []
+            job = next((x for x in batch if x.get("id") == job_id), None)
+            offset += 500
+            if not batch or offset >= int(d.get("total") or 0):
+                break
+        act = await _safe_get(c, f"{settings.datasets_url}/admin/queue/activity?job_id={job_id}&limit=500")
+
+    crumb = "<div class=crumb><a href=/runs>← 수집 이력</a></div>"
+    if job is None:
+        why = ("datasets에 연결하지 못했어요 — 스택이 떠 있는지 확인하세요." if not reachable
+               else "이 실행 기록을 찾지 못했어요 — 너무 오래돼 이력에서 밀려났을 수 있어요.")
+        return HTMLResponse(page("/runs", f"Run {job_id}",
+                                 crumb + f"<div class=empty>실행 #{_esc(job_id)} — {_esc(why)}</div>"))
+
+    st = job.get("status")
+    cls = JOB_STATUS_CLASS.get(st, "")
+    tot, dn = job.get("total") or 0, job.get("done") or 0
+    dur = _fmt_duration(job.get("started_at"), job.get("ended_at"))
+    started = (job.get("started_at") or "")[:19]
+    ended = (job.get("ended_at") or "")[:19]
+    head = (
+        "<div class=tablewrap><table><tbody>"
+        f"<tr><td class=kvk>실행</td><td>#{_esc(job.get('id'))} · {badge(_esc(job.get('kind')))} "
+        f"· {_esc(job.get('market') or '')}</td></tr>"
+        f"<tr><td class=kvk>spec</td><td class=wrap><code>{_esc(job.get('spec') or '')}</code></td></tr>"
+        f"<tr><td class=kvk>상태</td><td>{badge(_esc(st), cls)} · 진행 {_esc(dn)}/{_esc(tot)} "
+        f"· 수집 {_esc(job.get('rows') if job.get('rows') is not None else '—')}행</td></tr>"
+        f"<tr><td class=kvk>시간</td><td class=muted>{_esc(started)} → {_esc(ended or '진행중')}"
+        + (f" · <b>{_esc(dur)}</b>" if dur else "") + "</td></tr>"
+        "</tbody></table></div>")
+
+    err_html = ""
+    if job.get("error") or job.get("error_details"):
+        err_html = ("<h2>오류 상세 (원인 → 종목)</h2>"
+                    + _error_detail_html(job, job.get("error_details") or [], job.get("error")))
+
+    # 활동 로그 — API는 최신순이라 뒤집어 시간순(오래된 순)으로 (로그는 위→아래로 읽혀야 하니까)
+    acts = list(reversed((act.get("activity") or []) if _ok(act) else []))
+    running = st == "running"
+    act_html = ("<h2>활동 로그 · 전체" + (" · ⟳ live" if running else "") + "</h2>"
+                "<p class=hint>이 실행이 무엇을 어디서 가져와 어떤 결과를 냈는지 시간순으로 보여줘요 — "
+                "warn은 노란색, error는 빨간색이에요.</p>"
+                + _activity_feed(acts))
+
+    links = (f"<div style='margin-top:14px'>"
+             f"<span class=pill><a href='/runs?kind={_esc(job.get('kind') or '')}'>이 파이프라인 이력 보기 →</a></span>"
+             f"<span class=pill><a href=/runs>전체 이력 →</a></span></div>")
+
+    body = (crumb + f"<h1 style='margin:0 0 4px'>수집 실행 #{_esc(job_id)}</h1>"
+            + head + err_html + act_html + links)
+    return HTMLResponse(page("/runs", f"Run {job_id}", body, refresh=running))
 
 
 # --- Shares (V-4) -----------------------------------------------------------
@@ -922,7 +1182,7 @@ async def queue_view(request: Request, msg: str = "", status: str = ""):
         sweeps += (f"<tr><td>{_esc(s['label'])}</td><td><code>{_esc(s['cron'])}</code></td>"
                    f"<td class=muted>{_esc(s.get('source') or '')}</td>"
                    f"<td><form class=ops method=post action='/ops/queue/sweep/{_esc(s['pipeline_id'])}'>"
-                   f"<button class=p>지금 수집 ▶</button></form></td></tr>")
+                   f"<button class=p>지금 수집(델타) ▶</button></form></td></tr>")
     sweeps_html = ("<div class=tablewrap><table><thead><tr><th>파이프라인</th><th>크론</th><th>원천</th>"
                    f"<th></th></tr></thead><tbody>{sweeps}</tbody></table></div>")
 
@@ -1153,18 +1413,22 @@ async def ops_backfill(request: Request, preset: str = Form(""), market: str = F
 
 @app.post("/ops/pipelines/run")
 async def ops_pipelines_run(request: Request, preset: str = Form(""), market: str = Form("US"),
-                           tickers: str = Form(""), pipelines: list[str] = Form(default=[])):
-    """PH-PIPE unified backfill: run the selected pipelines over a preset (or custom tickers)."""
+                           tickers: str = Form(""), pipelines: list[str] = Form(default=[]),
+                           mode: str = Form("delta")):
+    """PH-PIPE unified backfill: run the selected pipelines over a preset (or custom tickers).
+    `mode`: delta(기본 — 새로 나온 것만) | full(전체 재수집); 그대로 datasets에 전달해요."""
+    mode = mode if mode in ("delta", "full") else "delta"
     tick = [t.strip() for t in tickers.replace(",", " ").split() if t.strip()]
     if tick:
         payload, label = {"market": market, "tickers": tick, "pipelines": pipelines}, f"{market}:{len(tick)}t"
     else:
         payload, label = {"preset": preset, "pipelines": pipelines}, preset
+    payload["mode"] = mode
     async with httpx.AsyncClient() as c:
         r = await c.post(f"{settings.datasets_url}/admin/pipelines/run", json=payload, timeout=20)
         ok = r.status_code == 200 and r.json().get("started")
     pl = "+".join(pipelines) if pipelines else "default"
-    return RedirectResponse(f"/pipelines?msg=수집+{'시작' if ok else '실패'}+{label}+[{pl}]", status_code=303)
+    return RedirectResponse(f"/pipelines?msg=수집+{'시작' if ok else '실패'}+{label}+[{pl}]+·+{mode}", status_code=303)
 
 
 @app.post("/ops/news")

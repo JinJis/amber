@@ -109,15 +109,25 @@ def _chunks_to_docs(deck: dict, chunks: list[dict]) -> list[dict]:
 
 
 async def ingest_deck_for_ticker(market: str, ticker: str, limit: int | None = None,
-                                 rag_url: str | None = None) -> int:
+                                 rag_url: str | None = None, mode: str = "full") -> int:
     """Index a ticker's recent 8-K presentation decks into RAG + cache each PDF for preview; return
-    the chunk count. US only; needs Document AI. Best-effort (0 on no config / no decks)."""
+    the chunk count. US only; needs Document AI. Best-effort (0 on no config / no decks).
+    ``mode="delta"`` skips decks already ingested (IngestState cursor) — Document AI parsing is
+    the expensive step, so a universe re-run only parses NEW decks."""
+    from app.store.ingest_state import done_items, mark_items
+
     if (market or "").upper() != "US" or not docai_configured():
         return 0
     limit = limit or settings.deck_ingest_limit
     decks = await recent_decks(ticker, limit)
+    if mode == "delta":
+        seen = await asyncio.to_thread(done_items, "presentation", "US", ticker)
+        decks = [d for d in decks if str(d.get("accession")) not in seen]
+        if not decks:
+            return 0   # nothing new — the caller logs the skip
     rag = rag_url or settings.rag_url
     total_docs, chunks = 0, 0
+    ingested: set[str] = set()
     for d in decks:
         pdf = await _fetch_pdf(d["pdf_url"])
         if not pdf:
@@ -134,18 +144,23 @@ async def ingest_deck_for_ticker(market: str, ticker: str, limit: int | None = N
         total_docs += len(docs)
         # replace by the deck's synthetic accession so a re-parse swaps its chunks cleanly (RQ-2)
         chunks += await _ingest_to_rag(rag, docs, replace={"accession": docs[0]["accession"]})
+        ingested.add(str(d.get("accession")))
+    if ingested:
+        await asyncio.to_thread(mark_items, "presentation", "US", ticker, ingested)
     if not total_docs:
         return 0
     log.info("deck: %s → %d decks, %d chunks indexed", ticker.upper(), len(decks), chunks)
     return chunks
 
 
-async def run_presentation_text_ingest(market: str, tickers: list[str]) -> None:
+async def run_presentation_text_ingest(market: str, tickers: list[str], mode: str = "full") -> None:
     """Index each ticker's recent 8-K presentation decks into RAG, tracked as an IngestionJob
-    (kind `presentation`); best-effort per ticker, with a live activity feed."""
+    (kind `presentation`); best-effort per ticker, with a live activity feed. delta = new decks only."""
     market = (market or "").upper()
     tickers = tickers or []
-    job = start_job("presentation", market, f"presentation · {len(tickers)} tickers", len(tickers))
+    delta = mode == "delta"
+    job = start_job("presentation", market,
+                    f"presentation · {len(tickers)} tickers" + (" · delta" if delta else ""), len(tickers))
     if market != "US":
         await asyncio.to_thread(finish_job, job, "success", 0, "8-K 발표자료는 US 전용 (KR은 DART IR 참고)")
         return
@@ -162,12 +177,13 @@ async def run_presentation_text_ingest(market: str, tickers: list[str]) -> None:
             await asyncio.to_thread(log_activity, "presentation", market,
                                     f"[{tk}] 8-K 발표자료(PDF) 수집·파싱·인덱싱 중… ({i}/{len(tickers)})", job)
             try:
-                got = await ingest_deck_for_ticker(market, tk)
+                got = await ingest_deck_for_ticker(market, tk, mode=mode)
                 total += got
                 if got == 0:
                     empty.append(tk)
                     await asyncio.to_thread(log_activity, "presentation", market,
-                                            f"[{tk}] 발표자료 없음 (0 chunks)", job, "warn")
+                                            f"[{tk}] " + ("변경 없음 (델타 스킵)" if delta else "발표자료 없음 (0 chunks)"),
+                                            job, "info" if delta else "warn")
                 else:
                     await asyncio.to_thread(log_activity, "presentation", market,
                                             f"[{tk}] → RAG {got} chunks ✓", job)

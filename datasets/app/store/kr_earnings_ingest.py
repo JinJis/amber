@@ -31,9 +31,12 @@ _SOURCE = "OpenDART (잠정실적 공정공시)"
 
 
 async def ingest_kr_earnings_for_ticker(market: str, ticker: str, limit: int | None = None,
-                                        rag_url: str | None = None) -> int:
+                                        rag_url: str | None = None, mode: str = "full") -> int:
     """Index one KR ticker's recent 잠정실적 공정공시 into RAG + warm the viewer cache; return the
-    chunk count. KR only. Best-effort (0 on no key / no disclosure / provider w/o the resolver)."""
+    chunk count. KR only. Best-effort (0 on no key / no disclosure / provider w/o the resolver).
+    ``mode="delta"`` skips disclosures already ingested (IngestState cursor) — quota-friendly."""
+    from app.store.ingest_state import done_items, mark_items
+
     if (market or "").upper() != "KR":
         return 0
     limit = limit or settings.kr_earnings_ingest_limit
@@ -43,8 +46,14 @@ async def ingest_kr_earnings_for_ticker(market: str, ticker: str, limit: int | N
         return 0
     ref = build_ref(Market.KR, ticker)
     discs = await getter(ref, limit)
+    if mode == "delta":
+        seen = await asyncio.to_thread(done_items, "kr_earnings", "KR", ticker)
+        discs = [d for d in discs if d.get("rcept_no") and d["rcept_no"] not in seen]
+        if not discs:
+            return 0   # nothing new — the caller logs the skip
     rag = rag_url or settings.rag_url
     total_docs, chunks = 0, 0
+    ingested: set[str] = set()
     for d in discs:
         rcp = d.get("rcept_no")
         if not rcp:
@@ -59,18 +68,24 @@ async def ingest_kr_earnings_for_ticker(market: str, ticker: str, limit: int | N
             continue
         total_docs += len(docs)
         chunks += await _ingest_to_rag(rag, docs, replace={"accession": rcp})  # RQ-2 re-chunk swap
+        ingested.add(rcp)
+    if ingested:
+        await asyncio.to_thread(mark_items, "kr_earnings", "KR", ticker, ingested)
     if not total_docs:
         return 0
     log.info("kr-earnings: %s → %d disclosures, %d chunks indexed", ticker.upper(), len(discs), chunks)
     return chunks
 
 
-async def run_kr_earnings_ingest(market: str, tickers: list[str]) -> None:
+async def run_kr_earnings_ingest(market: str, tickers: list[str], mode: str = "full") -> None:
     """Index each KR ticker's recent 잠정실적 공정공시 into RAG, tracked as an IngestionJob
-    (kind ``kr_earnings``); best-effort per ticker. US no-ops (use the transcript pipeline)."""
+    (kind ``kr_earnings``); best-effort per ticker. US no-ops (use the transcript pipeline).
+    ``mode="delta"`` = new disclosures only."""
     market = (market or "").upper()
     tickers = tickers or []
-    job = start_job("kr_earnings", market, f"kr_earnings · {len(tickers)} tickers", len(tickers))
+    delta = mode == "delta"
+    job = start_job("kr_earnings", market,
+                    f"kr_earnings · {len(tickers)} tickers" + (" · delta" if delta else ""), len(tickers))
     if market != "KR":
         await asyncio.to_thread(
             finish_job, job, "success", 0,
@@ -90,12 +105,13 @@ async def run_kr_earnings_ingest(market: str, tickers: list[str]) -> None:
                 log_activity, "kr_earnings", market,
                 f"[{tk}] 잠정실적 공정공시 수집·인덱싱 중… ({i}/{len(tickers)})", job)
             try:
-                got = await ingest_kr_earnings_for_ticker(market, tk)
+                got = await ingest_kr_earnings_for_ticker(market, tk, mode=mode)
                 total += got
                 if got == 0:
                     empty.append(tk)
                     await asyncio.to_thread(log_activity, "kr_earnings", market,
-                                            f"[{tk}] 잠정실적 공시 없음 (0 chunks)", job, "warn")
+                                            f"[{tk}] " + ("변경 없음 (델타 스킵)" if delta else "잠정실적 공시 없음 (0 chunks)"),
+                                            job, "info" if delta else "warn")
                 else:
                     await asyncio.to_thread(log_activity, "kr_earnings", market,
                                             f"[{tk}] OpenDART → RAG {got} chunks 인덱싱 ✓", job)
@@ -112,7 +128,8 @@ async def run_kr_earnings_ingest(market: str, tickers: list[str]) -> None:
             note_parts.append("FAILED " + "; ".join(
                 f"{tk}:{r}" for tk, r in list(failed.items())[:8]))
         if empty:
-            note_parts.append(f"no disclosure ×{len(empty)} ({', '.join(empty[:8])}{'…' if len(empty) > 8 else ''})")
+            label = "unchanged (delta)" if delta else "no disclosure"
+            note_parts.append(f"{label} ×{len(empty)} ({', '.join(empty[:8])}{'…' if len(empty) > 8 else ''})")
         note = " · ".join(note_parts)
         status = "error" if failed and ok == 0 and total == 0 else "success"
         await asyncio.to_thread(finish_job, job, status, total, note)

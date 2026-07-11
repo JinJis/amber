@@ -505,6 +505,9 @@ def test_pipeline_activity_feed_logs_and_lists():
     # scoping by kind works; an unknown kind returns nothing
     assert len(J.list_activity(10, kind="acttest")) >= 3
     assert J.list_activity(10, kind="nope-kind") == []
+    # OPS-2: level filter — errors-only view for the admin
+    errs = J.list_activity(10, job_id=777, level="error")
+    assert len(errs) == 1 and errs[0]["message"].startswith("[000660]")
 
 
 @respx.mock
@@ -798,14 +801,15 @@ def test_admin_news_ingest_endpoint(monkeypatch):
 
     seen = {}
 
-    async def fake_defer(market, tickers, pipeline_id):
-        seen["call"] = (market, tuple(tickers), pipeline_id)
+    async def fake_defer(market, tickers, pipeline_id, mode="full"):
+        seen["call"] = (market, tuple(tickers), pipeline_id, mode)
         return 1
 
     monkeypatch.setattr(A.Q, "defer_pipeline", fake_defer)
     r = client.post("/admin/news/ingest", json={"market": "US", "tickers": ["AAPL"]})
     assert r.status_code == 200 and r.json()["started"] is True and r.json()["deferred"] == 1
-    assert seen["call"] == ("US", ("AAPL",), "news")
+    # explicit on-demand ingest defers full (news is inherently incremental — mode is ignored)
+    assert seen["call"] == ("US", ("AAPL",), "news", "full")
 
 
 # --- PH-5: cheap universe-enumeration endpoints ---------------------------
@@ -1781,15 +1785,16 @@ async def test_queue_sweep_defers_per_market(monkeypatch):
 
     calls = []
 
-    async def fake_defer(market, tickers, pipeline_id):
-        calls.append((market, tuple(tickers), pipeline_id))
+    async def fake_defer(market, tickers, pipeline_id, mode="full"):
+        calls.append((market, tuple(tickers), pipeline_id, mode))
         return len(calls)
 
     monkeypatch.setattr(U, "resolve_universe", fake_resolve)
     monkeypatch.setattr(Q, "defer_pipeline", fake_defer)
     await Q._sweep("news")
-    assert ("US", ("AAPL",), "news") in calls
-    assert ("KR", ("005930",), "news") in calls
+    # cron sweeps run in DELTA mode — a periodic sweep only picks up what's new (quota-friendly)
+    assert ("US", ("AAPL",), "news", "delta") in calls
+    assert ("KR", ("005930",), "news", "delta") in calls
 
 
 async def test_prices_pipeline_uses_configured_backfill_years(monkeypatch):
@@ -1892,10 +1897,10 @@ async def test_run_pipelines_dispatches_and_isolates_failures(monkeypatch):
 
     ran = []
 
-    async def ok_runner(market, tickers):
-        ran.append(("ok", market))
+    async def ok_runner(market, tickers, mode="full"):
+        ran.append(("ok", market, mode))
 
-    async def boom_runner(market, tickers):
+    async def boom_runner(market, tickers, mode="full"):
         raise RuntimeError("upstream down")
 
     monkeypatch.setitem(P.PIPELINE_BY_ID["prices"], "runner", ok_runner)
@@ -1903,7 +1908,10 @@ async def test_run_pipelines_dispatches_and_isolates_failures(monkeypatch):
     summary = await P.run_pipelines("US", ["AAPL"], ["financials", "prices"])
     assert summary["financials"].startswith("error")   # one failing pipeline…
     assert summary["prices"] == "ok"                     # …never sinks the others
-    assert ("ok", "US") in ran
+    assert ("ok", "US", "full") in ran                   # default mode is full
+    # and the requested mode is handed through to every runner
+    await P.run_pipelines("US", ["AAPL"], ["prices"], mode="delta")
+    assert ("ok", "US", "delta") in ran
 
 
 # --- selftest classifier --------------------------------------------------
@@ -1947,17 +1955,22 @@ def test_admin_pipelines_run_dispatches(monkeypatch):
 
     seen = {}
 
-    async def fake_defer(market, tickers, pipeline_id):
-        seen["call"] = (market, tuple(tickers), pipeline_id)
+    async def fake_defer(market, tickers, pipeline_id, mode="full"):
+        seen["call"] = (market, tuple(tickers), pipeline_id, mode)
         return 1
 
     monkeypatch.setattr(A.Q, "defer_pipeline", fake_defer)
-    # explicit market+tickers → enqueues on the queue immediately (no dynamic fetch needed)
+    # explicit market+tickers → enqueues on the queue immediately (no dynamic fetch needed);
+    # an admin run defaults to DELTA (only new/changed items — quota- and embedding-friendly)
     r = client.post("/admin/pipelines/run", json={"market": "US", "tickers": ["AAPL", "MSFT"], "pipelines": ["prices"]})
     body = r.json()
     assert r.status_code == 200 and body["started"] is True and body["pipelines"] == ["prices"]
-    assert body["universe"][0]["market"] == "US" and body["universe"][0]["count"] == 2
-    assert body["deferred"] == 1 and seen["call"] == ("US", ("AAPL", "MSFT"), "prices")
+    assert body["universe"][0]["market"] == "US" and body["universe"][0]["count"] == 2 and body["mode"] == "delta"
+    assert body["deferred"] == 1 and seen["call"] == ("US", ("AAPL", "MSFT"), "prices", "delta")
+    # mode=full is an explicit opt-in (a complete re-collect)
+    r2 = client.post("/admin/pipelines/run",
+                     json={"market": "US", "tickers": ["AAPL"], "pipelines": ["prices"], "mode": "full"})
+    assert r2.json()["mode"] == "full" and seen["call"] == ("US", ("AAPL",), "prices", "full")
 
 
 async def test_prices_ingest_shapes_and_upserts(monkeypatch):
@@ -2263,14 +2276,14 @@ def test_ph_prov3e_admin_filings_ingest_endpoint(monkeypatch):
 
     fired: dict = {}
 
-    async def fake_defer(market, tickers, pipeline_id):
-        fired["call"] = (market, tuple(tickers), pipeline_id)
+    async def fake_defer(market, tickers, pipeline_id, mode="full"):
+        fired["call"] = (market, tuple(tickers), pipeline_id, mode)
         return 1
 
     monkeypatch.setattr(A.Q, "defer_pipeline", fake_defer)
-    # US → enqueues the filing_text pipeline on the queue
+    # US → enqueues the filing_text pipeline on the queue (explicit on-demand ingest = full)
     assert client.post("/admin/filings/ingest", json={"market": "US", "tickers": ["AAPL"]}).json()["started"] is True
-    assert fired["call"] == ("US", ("AAPL",), "filing_text")
+    assert fired["call"] == ("US", ("AAPL",), "filing_text", "full")
     # an unsupported market is rejected, never queued
     assert client.post("/admin/filings/ingest", json={"market": "JP", "tickers": ["7203"]}).json()["started"] is False
 

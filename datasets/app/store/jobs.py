@@ -101,7 +101,7 @@ def record_pipeline_error(kind: str, market: str | None, error: str) -> int:
         return job.id
 
 
-_ACTIVITY_CAP = 800  # keep the live feed bounded — trim older lines past this many
+_ACTIVITY_CAP = 5000  # keep the feed bounded — but deep enough that past runs stay browsable
 
 
 def log_activity(kind: str, market: str | None, message: str,
@@ -123,8 +123,10 @@ def log_activity(kind: str, market: str | None, message: str,
         pass
 
 
-def list_activity(limit: int = 80, kind: str | None = None, job_id: int | None = None) -> list[dict]:
-    """Most-recent-first activity lines, optionally scoped to a pipeline kind or a specific job."""
+def list_activity(limit: int = 80, kind: str | None = None, job_id: int | None = None,
+                  level: str | None = None) -> list[dict]:
+    """Most-recent-first activity lines, optionally scoped to a pipeline kind, a specific job,
+    or a level (info/warn/error) — the admin's verbose per-run log view."""
     try:
         with SessionLocal() as db:
             q = select(PipelineActivity)
@@ -132,6 +134,8 @@ def list_activity(limit: int = 80, kind: str | None = None, job_id: int | None =
                 q = q.where(PipelineActivity.job_id == job_id)
             if kind:
                 q = q.where(PipelineActivity.kind == kind)
+            if level:
+                q = q.where(PipelineActivity.level == level)
             rows = db.execute(q.order_by(PipelineActivity.id.desc()).limit(limit)).scalars().all()
             return [{"id": r.id, "job_id": r.job_id, "kind": r.kind, "market": r.market,
                      "level": r.level, "message": r.message,
@@ -186,10 +190,20 @@ def last_job_at(kind: str) -> datetime | None:
         return db.scalar(select(func.max(IngestionJob.started_at)).where(IngestionJob.kind == kind))
 
 
-def list_jobs(limit: int = 25) -> list[dict]:
+def list_jobs(limit: int = 25, kind: str | None = None, market: str | None = None,
+              status: str | None = None, offset: int = 0) -> list[dict]:
+    """Recent ingestion runs, newest first — filterable by pipeline kind / market / status and
+    pageable (offset), so the admin can browse the FULL run history, not just the last page."""
     with SessionLocal() as db:
+        q = select(IngestionJob)
+        if kind:
+            q = q.where(IngestionJob.kind == kind)
+        if market:
+            q = q.where(IngestionJob.market == market.upper())
+        if status:
+            q = q.where(IngestionJob.status == status)
         rows = db.execute(
-            select(IngestionJob).order_by(IngestionJob.started_at.desc()).limit(limit)
+            q.order_by(IngestionJob.started_at.desc()).offset(max(0, offset)).limit(limit)
         ).scalars().all()
         return [
             {
@@ -201,6 +215,19 @@ def list_jobs(limit: int = 25) -> list[dict]:
             }
             for j in rows
         ]
+
+
+def count_jobs(kind: str | None = None, market: str | None = None, status: str | None = None) -> int:
+    """Total run count for the current filter — the admin history pager's denominator."""
+    with SessionLocal() as db:
+        q = select(func.count(IngestionJob.id))
+        if kind:
+            q = q.where(IngestionJob.kind == kind)
+        if market:
+            q = q.where(IngestionJob.market == market.upper())
+        if status:
+            q = q.where(IngestionJob.status == status)
+        return int(db.scalar(q) or 0)
 
 
 def _load_details(raw: str | None) -> list[dict]:
@@ -263,13 +290,18 @@ async def run_ticker_job(
 
 async def run_backfill(
     market: str | None = None, tickers: list[str] | None = None, deep: bool = True,
-    limit: int | None = None, preset: str | None = None,
+    limit: int | None = None, preset: str | None = None, mode: str = "full",
 ) -> dict:
     """Run a backfill and record it as an IngestionJob (with live per-ticker progress).
 
     Either pass a ``preset`` id (resolved from universes) or an explicit ``market`` +
     ``tickers``. Concurrency is serialized by the Procrastinate queue's per-pipeline lock
     (``pipe:financials:<market>``), so this runner no longer guards itself.
+
+    ``mode="delta"`` skips tickers whose stored statements are still fresh (latest
+    report_period younger than ~80일 — the current quarter), so a universe re-run only
+    re-downloads companies where a NEW filing likely exists instead of re-spending the
+    upstream quota on the whole universe.
     """
     if preset:
         market, tickers = await resolve_one(preset)  # dynamic fetch (PH-PIPE)
@@ -283,9 +315,27 @@ async def run_backfill(
     if not tickers:
         return {"status": "error", "error": "No tickers to backfill (US universe needs a preset or explicit tickers)."}
 
-    job_id = start_job("backfill", market, (spec + (" · deep" if deep else ""))[:256], total=len(tickers))
+    skipped_fresh: list[str] = []
+    if mode == "delta":
+        from app.store.ingest_state import fresh_financials_tickers
+
+        fresh = await asyncio.to_thread(fresh_financials_tickers, market, tickers)
+        skipped_fresh = [t for t in tickers if t.upper() in fresh]
+        tickers = [t for t in tickers if t.upper() not in fresh]
+        if not tickers:
+            job_id = start_job("backfill", market, (spec + " · delta")[:256], total=0)
+            note = f"델타 — 전체 {len(skipped_fresh)}종목 모두 최신 (재수집 없음)"
+            finish_job(job_id, "success", rows=0, error=note)
+            log_activity("backfill", market, f"✓ {note}", job_id)
+            return {"job_id": job_id, "status": "success", "rows": 0, "skipped_fresh": len(skipped_fresh)}
+
+    job_id = start_job("backfill", market,
+                       (spec + (" · deep" if deep else "") + (" · delta" if mode == "delta" else ""))[:256],
+                       total=len(tickers))
     src = "SEC EDGAR" if market.upper() == "US" else "OpenDART"
-    log_activity("backfill", market, f"▶ 재무 백필 시작 · {len(tickers)}종목 · {src}", job_id)
+    log_activity("backfill", market,
+                 f"▶ 재무 백필 시작 · {len(tickers)}종목 · {src}"
+                 + (f" · 델타(최신 {len(skipped_fresh)}종목 스킵)" if mode == "delta" else ""), job_id)
     # log progress milestones (~every 10%) so the feed shows the bulk load advancing, not just a bar
     step = max(1, len(tickers) // 10)
 

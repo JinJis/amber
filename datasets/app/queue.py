@@ -51,7 +51,7 @@ app = App(connector=PsycopgConnector(conninfo=_conninfo(settings.database_url)))
     queue="ingest",
     retry=RetryStrategy(max_attempts=3, exponential_wait=30),
 )
-async def run_pipeline(market: str, tickers: list[str], pipeline_id: str) -> dict:
+async def run_pipeline(market: str, tickers: list[str], pipeline_id: str, mode: str = "full") -> dict:
     p = PIPELINE_BY_ID.get(pipeline_id)
     if not p:
         return {"skipped": f"unknown pipeline {pipeline_id!r}"}
@@ -62,7 +62,7 @@ async def run_pipeline(market: str, tickers: list[str], pipeline_id: str) -> dic
     kind = p.get("kind") or pipeline_id
     await _reap_stale_jobs(kind, market)
     try:
-        await p["runner"](market, tickers)
+        await p["runner"](market, tickers, mode=mode)
     except Exception:  # noqa: BLE001 — log the FULL traceback (not just str) before retry kicks in
         tb = traceback.format_exc()
         logger.error("run_pipeline %s/%s failed:\n%s", pipeline_id, market, tb)
@@ -70,7 +70,7 @@ async def run_pipeline(market: str, tickers: list[str], pipeline_id: str) -> dic
         # tracking (e.g. the start_job INSERT) would otherwise leave the admin with an empty note.
         await _record_error(kind, market, tb)
         raise   # re-raise so Procrastinate records the failure + applies the retry strategy
-    return {"ran": pipeline_id, "market": market, "tickers": len(tickers)}
+    return {"ran": pipeline_id, "market": market, "tickers": len(tickers), "mode": mode}
 
 
 async def _record_error(kind: str, market: str, tb: str) -> None:
@@ -94,15 +94,16 @@ async def _reap_stale_jobs(kind: str, market: str) -> None:
         logger.info("reap_stale_jobs %s/%s skipped: %s", kind, market, exc)
 
 
-async def defer_pipeline(market: str, tickers: list[str], pipeline_id: str) -> int | None:
+async def defer_pipeline(market: str, tickers: list[str], pipeline_id: str,
+                         mode: str = "full") -> int | None:
     """Enqueue one pipeline run (deduped per pipeline+market). Returns the job id (or None if a
-    job for that pipeline+market is already queued)."""
+    job for that pipeline+market is already queued). ``mode="delta"`` = new/changed items only."""
     job = run_pipeline.configure(
         lock=f"pipe:{pipeline_id}:{market}",
         queueing_lock=f"pipe:{pipeline_id}:{market}",
     )
     try:
-        return await job.defer_async(market=market, tickers=tickers, pipeline_id=pipeline_id)
+        return await job.defer_async(market=market, tickers=tickers, pipeline_id=pipeline_id, mode=mode)
     except Exception as exc:  # noqa: BLE001 — AlreadyEnqueued (queueing_lock) → skip silently
         logger.info("defer_pipeline %s/%s skipped: %s", pipeline_id, market, exc)
         return None
@@ -115,9 +116,12 @@ async def defer_pipeline(market: str, tickers: list[str], pipeline_id: str) -> i
 async def _sweep(pipeline_id: str) -> None:
     from app.store.universes import resolve_universe
 
+    # Cron sweeps run in DELTA mode: the point of a periodic sweep is to pick up what's NEW —
+    # re-collecting the unchanged universe every week burned the OpenDART daily quota (and
+    # embedding cost) for nothing. A full re-collect stays available as a manual admin run.
     for market, tickers in await resolve_universe(settings.scheduler_universe):
         if tickers:
-            await defer_pipeline(market.value, tickers, pipeline_id)
+            await defer_pipeline(market.value, tickers, pipeline_id, mode="delta")
 
 
 @app.periodic(cron="0 * * * *")            # hourly
@@ -172,13 +176,18 @@ async def close() -> None:
     await app.close_async()
 
 
-async def defer_sweep(pipeline_id: str) -> dict:
+async def defer_sweep(pipeline_id: str, mode: str = "delta") -> dict:
     """Manually enqueue a pipeline's sweep right now (the admin 'run now' button) — resolves the
-    configured universe and defers a job per market, exactly like the periodic cron sweep."""
+    configured universe and defers a job per market. Defaults to delta (like the cron sweep);
+    pass mode='full' for a complete re-collect."""
     if pipeline_id not in PIPELINE_BY_ID:
         return {"deferred": False, "detail": f"unknown pipeline {pipeline_id!r}"}
-    await _sweep(pipeline_id)
-    return {"deferred": True, "pipeline_id": pipeline_id}
+    from app.store.universes import resolve_universe
+
+    for market, tickers in await resolve_universe(settings.scheduler_universe):
+        if tickers:
+            await defer_pipeline(market.value, tickers, pipeline_id, mode=mode)
+    return {"deferred": True, "pipeline_id": pipeline_id, "mode": mode}
 
 
 # --- admin: monitor + control over app.job_manager ----------------------------------------------
