@@ -1,12 +1,28 @@
 # Whole platform, one command:  docker compose up --build
-# Reads a single shared ./.env (copy from .env.example) for every service.
+# Config is split into env/*.env by topic (see env/README.md) — copy the *.example
+# templates or run `bash scripts/split_env.sh`. A single root .env still works too
+# (every env_file is optional; later files override earlier).
 name: valuegraph-platform
 
 services:
   datasets:
     build: ./datasets
     image: valuegraph-datasets:latest
-    env_file: [.env]
+    env_file:
+      # split config (env/README.md); a single root .env still works too — all optional,
+      # later files override earlier. Missing files are skipped (required: false).
+      - path: .env
+        required: false
+      - path: env/app.env
+        required: false
+      - path: env/gemini.env
+        required: false
+      - path: env/data-keys.env
+        required: false
+      - path: env/auth-billing.env
+        required: false
+      - path: env/secrets.env
+        required: false
     environment:
       DATABASE_URL: "postgresql+psycopg://rag:rag@postgres:5432/datasets"
       GOOGLE_APPLICATION_CREDENTIALS: "/secrets/gcp-sa.json"   # Document AI (deck parsing)
@@ -33,7 +49,21 @@ services:
   worker:
     build: ./datasets
     image: valuegraph-datasets:latest
-    env_file: [.env]
+    env_file:
+      # split config (env/README.md); a single root .env still works too — all optional,
+      # later files override earlier. Missing files are skipped (required: false).
+      - path: .env
+        required: false
+      - path: env/app.env
+        required: false
+      - path: env/gemini.env
+        required: false
+      - path: env/data-keys.env
+        required: false
+      - path: env/auth-billing.env
+        required: false
+      - path: env/secrets.env
+        required: false
     environment:
       DATABASE_URL: "postgresql+psycopg://rag:rag@postgres:5432/datasets"
       RAG_URL: "http://rag:8002"
@@ -58,7 +88,21 @@ services:
   control-plane:
     build: ./control-plane
     image: valuegraph-control-plane:latest
-    env_file: [.env]
+    env_file:
+      # split config (env/README.md); a single root .env still works too — all optional,
+      # later files override earlier. Missing files are skipped (required: false).
+      - path: .env
+        required: false
+      - path: env/app.env
+        required: false
+      - path: env/gemini.env
+        required: false
+      - path: env/data-keys.env
+        required: false
+      - path: env/auth-billing.env
+        required: false
+      - path: env/secrets.env
+        required: false
     environment:
       # In the compose network backend services are reachable by name.
       DATASETS_URL: "http://datasets:8000"
@@ -88,7 +132,21 @@ services:
     build: ./mcp
     image: valuegraph-mcp:latest
     profiles: ["tools"]
-    env_file: [.env]
+    env_file:
+      # split config (env/README.md); a single root .env still works too — all optional,
+      # later files override earlier. Missing files are skipped (required: false).
+      - path: .env
+        required: false
+      - path: env/app.env
+        required: false
+      - path: env/gemini.env
+        required: false
+      - path: env/data-keys.env
+        required: false
+      - path: env/auth-billing.env
+        required: false
+      - path: env/secrets.env
+        required: false
     environment:
       MCP_GATEWAY_URL: "http://control-plane:8001"
 
@@ -124,7 +182,21 @@ services:
   rag:
     build: ./rag
     image: valuegraph-rag:latest
-    env_file: [.env]
+    env_file:
+      # split config (env/README.md); a single root .env still works too — all optional,
+      # later files override earlier. Missing files are skipped (required: false).
+      - path: .env
+        required: false
+      - path: env/app.env
+        required: false
+      - path: env/gemini.env
+        required: false
+      - path: env/data-keys.env
+        required: false
+      - path: env/auth-billing.env
+        required: false
+      - path: env/secrets.env
+        required: false
     environment:
       # Embeddings + dim come from .env (RAG_EMBEDDING_MODEL=gemini-embedding-2). The vector store
       # is pgvector (RAG_VECTOR_STORE=pgvector in .env) backed by the postgres service below.
@@ -150,7 +222,21 @@ services:
   agent-engine:
     build: ./agent-engine
     image: valuegraph-agent-engine:latest
-    env_file: [.env]
+    env_file:
+      # split config (env/README.md); a single root .env still works too — all optional,
+      # later files override earlier. Missing files are skipped (required: false).
+      - path: .env
+        required: false
+      - path: env/app.env
+        required: false
+      - path: env/gemini.env
+        required: false
+      - path: env/data-keys.env
+        required: false
+      - path: env/auth-billing.env
+        required: false
+      - path: env/secrets.env
+        required: false
     environment:
       AGENT_GATEWAY_URL: "http://control-plane:8001"
       # Planner backend + model + key — overridable from the shell (falls back to
@@ -176,7 +262,21 @@ services:
   studio-api:
     build: ./studio-api
     image: valuegraph-studio-api:latest
-    env_file: [.env]
+    env_file:
+      # split config (env/README.md); a single root .env still works too — all optional,
+      # later files override earlier. Missing files are skipped (required: false).
+      - path: .env
+        required: false
+      - path: env/app.env
+        required: false
+      - path: env/gemini.env
+        required: false
+      - path: env/data-keys.env
+        required: false
+      - path: env/auth-billing.env
+        required: false
+      - path: env/secrets.env
+        required: false
     environment:
       CONTROL_PLANE_URL: "http://control-plane:8001"
       AGENT_ENGINE_URL: "http://agent-engine:8003"
@@ -203,7 +303,21 @@ services:
   web:
     build: ./web
     image: valuegraph-web:latest
-    env_file: [.env]
+    env_file:
+      # split config (env/README.md); a single root .env still works too — all optional,
+      # later files override earlier. Missing files are skipped (required: false).
+      - path: .env
+        required: false
+      - path: env/app.env
+        required: false
+      - path: env/gemini.env
+        required: false
+      - path: env/data-keys.env
+        required: false
+      - path: env/auth-billing.env
+        required: false
+      - path: env/secrets.env
+        required: false
     environment:
       STUDIO_API_URL: "http://studio-api:8004"
     ports:
@@ -218,7 +332,21 @@ services:
   admin:
     build: ./admin
     image: valuegraph-admin:latest
-    env_file: [.env]
+    env_file:
+      # split config (env/README.md); a single root .env still works too — all optional,
+      # later files override earlier. Missing files are skipped (required: false).
+      - path: .env
+        required: false
+      - path: env/app.env
+        required: false
+      - path: env/gemini.env
+        required: false
+      - path: env/data-keys.env
+        required: false
+      - path: env/auth-billing.env
+        required: false
+      - path: env/secrets.env
+        required: false
     environment:
       ADMINUI_USERNAME: "${ADMINUI_USERNAME:-admin}"
       ADMINUI_PASSWORD: "${ADMINUI_PASSWORD:-admin}"

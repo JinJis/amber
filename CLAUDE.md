@@ -68,7 +68,7 @@ These hold across every service; breaking one fails review.
    come from Gemini. When a task needs judgment (difficulty, extraction, synthesis, review), reach for an
    LLM/agent, not an `if`-ladder.
 
-## 3. Services (ports = host:container; one `docker compose`, one shared `.env`)
+## 3. Services (ports = host:container; one `docker compose`; config split in `env/*.env`, see `env/README.md`)
 
 | Service | Host port | Package | Role |
 |---|---|---|---|
@@ -100,7 +100,9 @@ Request flow (one chat turn): browser → web BFF (session) → studio-api (tena
 
 ## 5. Commands
 ```bash
-cp .env.example .env                 # free keys (OPENDART/ECOS/FRED); AUTH_DEV_LOGIN=true; GOOGLE_API_KEY for Gemini
+for f in env/*.env.example; do cp "$f" "${f%.example}"; done   # split config by topic (env/README.md);
+                                     # fill env/gemini.env (GOOGLE_API_KEY) + env/data-keys.env (OPENDART/ECOS/FRED…).
+                                     # A single root .env still works (compose reads both; env/* override).
 docker compose up --build            # datasets:8000 gateway:8010 rag:8002 agent:8003 studio:8004 web:3000 admin:8005 (+ worker)
 docker compose stop worker           # pause ALL automatic ingestion (the Procrastinate cron sweeps live here)
 docker compose up -d --build web     # rebuild one service after a change
@@ -121,7 +123,7 @@ service(s) touched · the relevant e2e/coverage harness still green · **the qua
 bar; if the task adds a tool / endpoint / feature, add an eval scenario (with `criteria`) for it** ·
 the new roadmap's test totals + the task status updated in the same PR.
 
-## 6. Environment (Gemini only; never commit secrets — document new keys in `.env.example`)
+## 6. Environment (Gemini only; never commit secrets — document new keys in the right `env/*.env.example`)
 ```
 GOOGLE_API_KEY=                      # one key for all Gemini use — enables the gemini planner + live tests
 AGENT_LLM_BACKEND=gemini             # Gemini-only (stub removed); default gemini, requires GOOGLE_API_KEY
