@@ -15,6 +15,7 @@
 >   OPS-1, M0–M6, M-DESK, M-QUANT; one task per PR)
 > - **History Lab implementation contract:** [`docs/HISTORY_LAB_SPEC.md`](./docs/HISTORY_LAB_SPEC.md)
 > - **Publish layer (공유 카드·팩트체크·노트):** [`docs/PUBLISH_SPEC.md`](./docs/PUBLISH_SPEC.md)
+> - **Quality plan (RAG/검색/UX 품질 — RQ·UXQ):** [`docs/QUALITY_SPEC.md`](./docs/QUALITY_SPEC.md)
 > - **UX spec (chat-first, all new screens):** [`docs/UX_SPEC.md`](./docs/UX_SPEC.md)
 > - **How the services fit together (current state):** [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
 > - **Product idea / vision:** [`docs/IDEA.md`](./docs/IDEA.md)
