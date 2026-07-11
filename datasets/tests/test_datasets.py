@@ -236,7 +236,12 @@ async def test_queue_periodic_schedules_registered():
     assert sched["news"] == "0 * * * *"          # hourly
     assert sched["prices"] == "0 4 * * *"         # daily
     assert sched["financials"] == "0 3 * * 1"     # weekly
-    assert set(sched) == {"news", "prices", "financials", "corp_actions", "filing_text"}
+    # filing_text 뒤에 스태거된 어닝콜/발표자료/KR실적 주간 스윕도 편입 (default-off였던 것)
+    assert sched["transcript_text"] == "0 6 * * 1"
+    assert sched["kr_earnings"] == "30 6 * * 1"
+    assert sched["presentation_text"] == "0 7 * * 1"
+    assert set(sched) == {"news", "prices", "financials", "corp_actions", "filing_text",
+                          "transcript_text", "kr_earnings", "presentation_text"}
 
 
 async def test_queue_overview_failsafe_without_db(monkeypatch):

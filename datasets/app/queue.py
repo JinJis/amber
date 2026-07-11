@@ -119,8 +119,11 @@ async def _sweep(pipeline_id: str) -> None:
     # Cron sweeps run in DELTA mode: the point of a periodic sweep is to pick up what's NEW —
     # re-collecting the unchanged universe every week burned the OpenDART daily quota (and
     # embedding cost) for nothing. A full re-collect stays available as a manual admin run.
+    markets = (PIPELINE_BY_ID.get(pipeline_id) or {}).get("markets") or []
     for market, tickers in await resolve_universe(settings.scheduler_universe):
-        if tickers:
+        # skip markets the pipeline doesn't serve (e.g. presentation_text=US-only) so a
+        # single-market pipeline doesn't queue a no-op job for the other market.
+        if tickers and market.value in markets:
             await defer_pipeline(market.value, tickers, pipeline_id, mode="delta")
 
 
@@ -152,6 +155,27 @@ async def sweep_corp_actions(timestamp: int) -> None:
 @app.task(name="sweep_filing_text", queue="sweep", queueing_lock="sweep_filing_text")
 async def sweep_filing_text(timestamp: int) -> None:
     await _sweep("filing_text")
+
+
+# 어닝콜/발표자료/KR실적 — 원래 default-off라 자동 갱신이 안 됐다(수동 1회만 색인 → 커버리지 희박).
+# filing_text 뒤에 스태거해 주간 델타 스윕에 편입: 이미 색인한 트랜스크립트·덱·잠정실적은 건너뛰고
+# 새 분기/공시만 받는다. 한 종류만 관심이면 해당 스윕을 주석 처리하면 된다.
+@app.periodic(cron="0 6 * * 1")            # weekly Mon 06:00
+@app.task(name="sweep_transcript_text", queue="sweep", queueing_lock="sweep_transcript_text")
+async def sweep_transcript_text(timestamp: int) -> None:
+    await _sweep("transcript_text")         # US+KR 어닝콜 전문 (API Ninjas 프리미엄 / AV 폴백)
+
+
+@app.periodic(cron="30 6 * * 1")           # weekly Mon 06:30
+@app.task(name="sweep_kr_earnings", queue="sweep", queueing_lock="sweep_kr_earnings")
+async def sweep_kr_earnings(timestamp: int) -> None:
+    await _sweep("kr_earnings")             # KR 잠정실적 공정공시 (OpenDART — 쿼터 로테이션)
+
+
+@app.periodic(cron="0 7 * * 1")            # weekly Mon 07:00
+@app.task(name="sweep_presentation_text", queue="sweep", queueing_lock="sweep_presentation_text")
+async def sweep_presentation_text(timestamp: int) -> None:
+    await _sweep("presentation_text")       # US 8-K 발표자료 덱 (Document AI — 콜당 과금)
 
 
 # --- lifecycle (datasets web process) -----------------------------------------------------------
