@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel
 
+from agentengine.citations import _citations
 from agentengine.client import PlatformClient
 from agentengine.config import settings
 from agentengine.usage import report as report_usage
@@ -138,14 +139,23 @@ async def _gather(client: PlatformClient, tools: dict[str, dict],
         if res.get("status") != 200:
             return None
         data = res.get("data")
-        as_of = data.get("as_of") if isinstance(data, dict) else None
-        url, _accn, _cik = _canonical_provenance(data)
-        cite = Citation(
-            tool=name, source=tools[name].get("source") or tools[name].get("connector_name"),
-            url=url, as_of=as_of, freshness=compute_freshness(as_of),
-            cadence=tools[name].get("cadence"), category=tools[name].get("category"),
-            kind="data", ticker=args.get("ticker"), used=True,
-        )
+        # Build the citation with the SHARED producer (kind/snippet/table/evidence_image_url/
+        # per-row urls) — the hand-rolled minimal Citation rendered an empty '추출 데이터' panel
+        # with no document and no link in the SourceViewer. Fall back to the minimal card only
+        # when the producer finds nothing citable in the shape.
+        cite = next(iter(_citations(tools[name], res)), None)
+        if cite is None:
+            as_of = data.get("as_of") if isinstance(data, dict) else None
+            url, _accn, _cik = _canonical_provenance(data)
+            cite = Citation(
+                tool=name, source=tools[name].get("source") or tools[name].get("connector_name"),
+                url=url, as_of=as_of, freshness=compute_freshness(as_of),
+                cadence=tools[name].get("cadence"), category=tools[name].get("category"),
+                kind="data", ticker=args.get("ticker"),
+            )
+        if cite.ticker is None:
+            cite.ticker = args.get("ticker")
+        cite.used = True
         return {"tool": name, "args": args, "why": why, "data": data, "citation": cite}
 
     results = await asyncio.gather(*(one(n, a, w) for n, a, w in plan))

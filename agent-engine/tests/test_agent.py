@@ -83,7 +83,7 @@ async def test_intake_falls_back_to_allow_when_llm_unavailable():
 
 def test_citations_extract_urls_from_nested_result():
     tool = {"name": "sec_edgar__filings", "source": "SEC EDGAR"}
-    result = {"data": {"filings": [{"filing_url": "https://sec.gov/a"}, {"filing_url": "https://sec.gov/b"}]}}
+    result = {"status": 200, "data": {"filings": [{"filing_url": "https://sec.gov/a"}, {"filing_url": "https://sec.gov/b"}]}}
     cites = A._citations(tool, result)
     urls = {c.url for c in cites}
     assert urls == {"https://sec.gov/a", "https://sec.gov/b"}
@@ -92,7 +92,7 @@ def test_citations_extract_urls_from_nested_result():
 
 def test_citations_fallback_to_source_when_no_url():
     tool = {"name": "yahoo__prices", "source": "Yahoo Finance"}
-    cites = A._citations(tool, {"data": {"ticker": "AAPL", "prices": []}})
+    cites = A._citations(tool, {"status": 200, "data": {"ticker": "AAPL", "prices": []}})
     assert len(cites) == 1 and cites[0].url is None and cites[0].source == "Yahoo Finance"
 
 
@@ -114,7 +114,7 @@ def test_citations_metrics_show_real_figures_and_canonical_link():
          "accession_number": "0000320193-25-000079", "cik": "320193"},
         {"report_period": "2024-12-31", "gross_margin": 0.44, "net_margin": 0.23,
          "accession_number": "0000320193-24-000123", "cik": "320193"}]}
-    cites = A._citations(tool, {"data": data})
+    cites = A._citations(tool, {"status": 200, "data": data})
     assert len(cites) == 1
     c = cites[0]
     assert c.url == "https://www.sec.gov/Archives/edgar/data/320193/000032019325000079/0000320193-25-000079-index.htm"
@@ -149,7 +149,7 @@ def test_valuation_artifact_carries_computation_trace():
                       "rows": [{"year": 1, "fcf": 1.08e11, "pv": 9.8e10}]},
         "disclaimer": "예측이 아닙니다.",
     }
-    arts = _build_artifacts({"name": "valuation__valuation", "source": "SEC EDGAR"}, {"data": data})
+    arts = _build_artifacts({"name": "valuation__valuation", "source": "SEC EDGAR"}, {"status": 200, "data": data})
     assert arts and arts[0].computation is not None
     comp = arts[0].computation
     assert comp.method == "2단계 FCF 할인 (DCF)" and comp.formula
@@ -166,7 +166,7 @@ def test_quant_screen_and_backtest_carry_computation():
          "applied_filters": [{"field": "pe", "operator": "lte", "value": 15}],
          "results": [{"ticker": "AAPL", "market_cap": 3e12, "pe": 12.0, "pb": 40.0, "roe": 1.5,
                       "return_window": 0.2}]}
-    qa = _build_artifacts({"name": "search__quant_screen", "source": "store"}, {"data": q})
+    qa = _build_artifacts({"name": "search__quant_screen", "source": "store"}, {"status": 200, "data": q})
     assert qa and qa[0].computation
     assert any(r.value.startswith("≤") for r in qa[0].computation.assumptions)  # PER ≤ 15
     assert any(r.label == "PE" for r in qa[0].computation.steps)                # factor formula
@@ -176,7 +176,7 @@ def test_quant_screen_and_backtest_carry_computation():
          "holdings": [{"ticker": "AAPL", "weight": 0.6}, {"ticker": "MSFT", "weight": 0.4}],
          "metrics": {"total_return": 0.85, "cagr": 0.17, "max_drawdown": -0.22},
          "curve": [{"date": "2020-01-01", "value": 10000}, {"date": "2024-01-01", "value": 18500}]}
-    ba = _build_artifacts({"name": "backtest__backtest", "source": "store"}, {"data": b})
+    ba = _build_artifacts({"name": "backtest__backtest", "source": "store"}, {"status": 200, "data": b})
     assert ba and ba[0].computation
     assert any(r.label == "AAPL" for r in ba[0].computation.inputs)
     assert any(r.label == "누적수익" for r in ba[0].computation.steps)
@@ -189,7 +189,7 @@ def test_valuation_ddm_and_rim_carry_their_own_trace():
     ddm = {"model": "ddm", "ticker": "KO", "value_per_share": 60.0, "source": "사용자 입력 (D0)",
            "assumptions": {"growth_rate": 0.05, "discount_rate": 0.09, "dividend_per_share": 1.84},
            "inputs": {"dividend_per_share": 1.84}, "breakdown": {"d0": 1.84, "d1": 1.93}}
-    a = _build_artifacts({"name": "valuation__valuation", "source": "x"}, {"data": ddm})
+    a = _build_artifacts({"name": "valuation__valuation", "source": "x"}, {"status": 200, "data": ddm})
     assert a and a[0].computation and a[0].computation.method == "배당할인 (DDM)"
     assert "D1" in (a[0].computation.formula or "")
     assert any(r.label == "차기 배당 D1" for r in a[0].computation.steps)
@@ -200,7 +200,7 @@ def test_valuation_ddm_and_rim_carry_their_own_trace():
            "inputs": {"bvps": 30.0, "roe": 0.35, "equity": 2.2e11, "shares": 7.4e9},
            "breakdown": {"bvps": 30.0, "pv_residual": 4.2e11, "pv_terminal": 6.0e11,
                          "rows": [{"year": 1, "bvps": 31.8, "residual_income": 9.0, "pv": 8.2}]}}
-    b = _build_artifacts({"name": "valuation__valuation", "source": "x"}, {"data": rim})
+    b = _build_artifacts({"name": "valuation__valuation", "source": "x"}, {"status": 200, "data": rim})
     assert b and b[0].computation and b[0].computation.method == "잔여이익 (RIM)"
     assert any(r.label == "ROE" for r in b[0].computation.inputs)
     assert any(r.label == "잔여이익 PV 합" for r in b[0].computation.steps)
@@ -212,7 +212,7 @@ def test_non_computed_artifact_has_no_computation_trace():
     from agentengine.artifacts import _build_artifacts
     data = {"ticker": "AAPL", "prices": [{"time": "2024-01-02", "open": 1, "high": 2, "low": 1,
                                           "close": 2, "volume": 100}]}
-    arts = _build_artifacts({"name": "yahoo__prices", "source": "Yahoo Finance"}, {"data": data})
+    arts = _build_artifacts({"name": "yahoo__prices", "source": "Yahoo Finance"}, {"status": 200, "data": data})
     assert arts and all(a.computation is None for a in arts)
 
 
@@ -223,7 +223,7 @@ def test_valuation_without_value_emits_no_artifact():
     data = {"model": "dcf", "ticker": "ZZZZ", "value_per_share": None,
             "assumptions": {"growth_rate": 0.08, "discount_rate": 0.10, "years": 5},
             "inputs": {"base_fcf": None, "shares": None}, "breakdown": {}}
-    assert _build_artifacts({"name": "valuation__valuation", "source": "x"}, {"data": data}) == []
+    assert _build_artifacts({"name": "valuation__valuation", "source": "x"}, {"status": 200, "data": data}) == []
 
 
 def test_mark_evidence_fallback_when_no_inline_anchors():
@@ -238,13 +238,13 @@ def test_citations_prices_and_generic_show_real_values():
     tool = {"name": "yahoo__prices", "source": "Yahoo Finance", "connector": "yahoo"}
     data = {"ticker": "AAPL", "prices": [
         {"time": "2026-06-12T00:00:00", "close": 210.5}, {"time": "2026-06-13T00:00:00", "close": 213.0}]}
-    c = A._citations(tool, {"data": data})[0]
+    c = A._citations(tool, {"status": 200, "data": data})[0]
     assert c.table[0] == ["날짜", "종가"] and c.table[1][0] == "2026-06-13"  # newest first
     assert "213" in (c.snippet or "")
     # generic tabular result → a table of its real values (scales to new data sources)
     tool2 = {"name": "datasets_store__insider", "source": "SEC EDGAR", "connector": "datasets_store"}
     data2 = {"trades": [{"insider": "CEO", "shares": 1000, "filing_url": "https://x"}]}
-    c2 = A._citations(tool2, {"data": data2})[0]
+    c2 = A._citations(tool2, {"status": 200, "data": data2})[0]
     assert c2.table is not None and c2.url == "https://x"
 
 
@@ -254,16 +254,16 @@ def test_citations_prefer_response_declared_source_over_catalog_label():
     tool = {"name": "yahoo__prices", "source": "Yahoo Finance (폴백: …)", "connector": "yahoo"}
     data = {"ticker": "005930", "source": "한국투자증권 (KIS)",
             "prices": [{"time": "2026-07-01T00:00:00", "close": 74300.0}]}
-    c = A._citations(tool, {"data": data})[0]
+    c = A._citations(tool, {"status": 200, "data": data})[0]
     assert c.source == "한국투자증권 (KIS)"
     # snapshot shape: the source rides inside `snapshot`
     tool2 = {"name": "yahoo__price_snapshot", "source": "Yahoo Finance (폴백: …)", "connector": "yahoo"}
     data2 = {"snapshot": {"ticker": "AAPL", "price": 210.5, "source": "Stooq"}}
-    c2 = A._citations(tool2, {"data": data2})[0]
+    c2 = A._citations(tool2, {"status": 200, "data": data2})[0]
     assert c2.source == "Stooq"
     # no response-declared source → the catalog label still applies
     data3 = {"ticker": "AAPL", "prices": [{"time": "2026-07-01T00:00:00", "close": 210.5}]}
-    c3 = A._citations(tool, {"data": data3})[0]
+    c3 = A._citations(tool, {"status": 200, "data": data3})[0]
     assert c3.source == "Yahoo Finance (폴백: …)"
 
 
@@ -274,7 +274,7 @@ def test_derived_citation_carries_computation_drv2():
     data = {"model": "ddm", "ticker": "KO", "value_per_share": 62.1,
             "inputs": {"dividend_per_share": 1.94}, "assumptions": {"growth_rate": 0.04, "discount_rate": 0.08},
             "breakdown": {"d1": 2.0176}, "source": "SEC EDGAR", "note": "가정 기반 계산 · 예측·목표가 아님"}
-    c = A._citations(tool, {"data": data})[0]
+    c = A._citations(tool, {"status": 200, "data": data})[0]
     assert c.computation is not None and c.computation.method == "배당할인 (DDM)"
     assert c.computation.formula and c.computation.assumptions
     # DRV-1 forward-compat: a data-plane-embedded computation block wins as-is
@@ -285,13 +285,13 @@ def test_derived_citation_carries_computation_drv2():
                    {"label": "EPS", "value": "6.42", "symbol": "EPS",
                     "evidence": {"market": "US", "accession": "0000320193-24-000123", "concept": "EPS", "value": 6.42}}],
         "steps": [{"label": "PER", "value": "32.8x"}]}}
-    c2 = A._citations(tool2, {"data": data2})[0]
+    c2 = A._citations(tool2, {"status": 200, "data": data2})[0]
     assert c2.computation is not None and c2.computation.formula == "PER = P ÷ EPS"
     assert c2.computation.inputs[1].symbol == "EPS" and c2.computation.inputs[1].evidence["accession"]
     # back-compat: a non-derived tool citation carries no computation
     tool3 = {"name": "yahoo__prices", "source": "Yahoo Finance", "connector": "yahoo"}
     data3 = {"ticker": "AAPL", "prices": [{"time": "2026-07-01T00:00:00", "close": 210.5}]}
-    assert A._citations(tool3, {"data": data3})[0].computation is None
+    assert A._citations(tool3, {"status": 200, "data": data3})[0].computation is None
 
 
 def test_evidence_url_attached_for_us_as_reported_filing():
@@ -301,7 +301,7 @@ def test_evidence_url_attached_for_us_as_reported_filing():
     data = {"ticker": "AAPL", "periods": [{"report_period": "2024-09-28", "line_items": [
         {"concept": "Revenues", "value": 391035000000.0, "accession_number": "0000320193-24-000123", "cik": "320193"},
         {"concept": "Assets", "value": 352755000000.0, "accession_number": "0000320193-24-000123", "cik": "320193"}]}]}
-    c = A._citations(tool, {"data": data})[0]
+    c = A._citations(tool, {"status": 200, "data": data})[0]
     assert c.evidence_image_url is not None
     assert "/evidence?" in c.evidence_image_url
     assert "concept=Revenues" in c.evidence_image_url and "accession=0000320193-24-000123" in c.evidence_image_url
@@ -316,7 +316,7 @@ def test_evidence_url_for_income_statements_uses_candidate_concepts():
         {"revenue": 391035000000.0, "net_income": 93736000000.0, "report_period": "2024-09-28",
          "accession_number": "0000320193-24-000123"},
         {"revenue": 383285000000.0, "report_period": "2023-09-30", "accession_number": "0000320193-23-000106"}]}
-    c = A._citations(tool, {"data": data})[0]
+    c = A._citations(tool, {"status": 200, "data": data})[0]
     assert c.evidence_image_url and "/evidence?" in c.evidence_image_url
     assert "accession=0000320193-24-000123" in c.evidence_image_url      # newest period
     assert "report_period=2024-09-28" in c.evidence_image_url
@@ -333,7 +333,7 @@ def test_evidence_url_for_kr_dart_statements():
         {"revenue": 300870903000000.0, "net_income": 34451351000000.0, "report_period": "2024-12-31",
          "accession_number": "20250311000736"},
         {"revenue": 258935494000000.0, "report_period": "2023-12-31", "accession_number": "20240312000736"}]}
-    c = A._citations(tool, {"data": data})[0]
+    c = A._citations(tool, {"status": 200, "data": data})[0]
     assert c.evidence_image_url and "/evidence?" in c.evidence_image_url
     assert "market=KR" in c.evidence_image_url
     assert "concept=revenue" in c.evidence_image_url          # field name, not a us-gaap tag
@@ -347,7 +347,7 @@ def test_corporate_actions_citation_is_a_dividend_data_card():
     data = {"ticker": "AAPL", "currency": "USD",
             "dividends": [{"ex_date": "2026-02-07", "amount": 0.25}, {"ex_date": "2025-11-07", "amount": 0.25}],
             "splits": [{"date": "2020-08-31", "ratio": "4:1"}]}
-    c = A._citations(tool, {"data": data})[0]
+    c = A._citations(tool, {"status": 200, "data": data})[0]
     assert c.table and c.table[0] == ["배당락일", "배당금"]
     assert c.table[1][0] == "2026-02-07" and "배당" in (c.snippet or "")
     assert c.evidence_image_url is None  # no document → data card only
@@ -361,7 +361,7 @@ def test_macro_citation_is_a_clean_data_card():
     data = {"interest_rates": [
         {"bank": "FED", "name": "U.S. Federal Reserve", "rate": 4.375, "date": "2025-07-08"},
         {"bank": "FED", "name": "U.S. Federal Reserve", "rate": 4.5, "date": "2024-07-08"}]}
-    c = A._citations(tool, {"data": data})[0]
+    c = A._citations(tool, {"status": 200, "data": data})[0]
     assert c.table and c.table[0] == ["기관", "금리", "기준일"]
     assert c.table[1] == ["U.S. Federal Reserve", "4.375%", "2025-07-08"]   # newest first
     assert c.snippet and "4.375%" in c.snippet and c.as_of == "2025-07-08"
@@ -376,13 +376,13 @@ def test_rag_filing_citation_carries_passage_evidence():
                         "provenance": {"source": "SEC EDGAR", "doc_type": "filing", "market": "US",
                                        "accession": "0000320193-24-000123", "ticker": "AAPL",
                                        "section": "p.12", "url": "https://sec.gov/i"}}]}
-    c = A._citations(tool, {"data": filing})[0]
+    c = A._citations(tool, {"status": 200, "data": filing})[0]
     assert c.evidence_image_url and "text=" in c.evidence_image_url
     assert "accession=0000320193-24-000123" in c.evidence_image_url and "market=US" in c.evidence_image_url
 
     news = {"hits": [{"text": "Apple shares rose.",
                       "provenance": {"source": "Reuters", "doc_type": "news", "market": "US", "url": "https://r"}}]}
-    assert A._citations(tool, {"data": news})[0].evidence_image_url is None
+    assert A._citations(tool, {"status": 200, "data": news})[0].evidence_image_url is None
 
 
 def test_evidence_anchors_on_the_figure_the_answer_cites():
@@ -413,7 +413,7 @@ def test_evidence_url_for_balance_sheet_instant_context():
          "accession_number": "0000320193-25-000079"},
         {"total_assets": 364980000000.0, "report_period": "2024-09-28",
          "accession_number": "0000320193-24-000123"}]}
-    c = A._citations(tool, {"data": data})[0]
+    c = A._citations(tool, {"status": 200, "data": data})[0]
     assert c.evidence_image_url and "/evidence?" in c.evidence_image_url
     assert "concept=Assets" in c.evidence_image_url                      # total_assets → Assets
     assert "accession=0000320193-25-000079" in c.evidence_image_url      # newest period
@@ -429,7 +429,7 @@ def test_evidence_url_for_cash_flow_duration_context():
         {"net_cash_flow_from_operations": 118254000000.0, "net_cash_flow_from_investing": 9447000000.0,
          "net_cash_flow_from_financing": -108488000000.0, "report_period": "2025-09-27",
          "accession_number": "0000320193-25-000079"}]}
-    c = A._citations(tool, {"data": data})[0]
+    c = A._citations(tool, {"status": 200, "data": data})[0]
     assert c.evidence_image_url and "concept=NetCashProvidedByUsedInOperatingActivities" in c.evidence_image_url
     assert "report_period=2025-09-27" in c.evidence_image_url
     assert c.table and any("영업활동CF" in row for row in c.table)        # cash-flow table rendered
@@ -438,14 +438,14 @@ def test_evidence_url_for_cash_flow_duration_context():
 def test_evidence_url_none_for_non_filing_or_non_us():
     # prices (no filing) → no evidence URL
     c = A._citations({"name": "yahoo__prices", "source": "Yahoo Finance", "connector": "yahoo"},
-                     {"data": {"ticker": "AAPL", "prices": [{"time": "2026-06-13", "close": 1.0}]}})[0]
+                     {"status": 200, "data": {"ticker": "AAPL", "prices": [{"time": "2026-06-13", "close": 1.0}]}})[0]
     assert c.evidence_image_url is None
 
 
 def test_rag_citation_builds_canonical_link_from_accession():
     # a RAG chunk with no url but a KR accession → DART viewer link (not linkless)
     tool = {"name": "rag__search", "connector": "rag", "source": "RAG"}
-    result = {"data": {"hits": [{"text": "메모리 매출원가율 개선", "provenance": {
+    result = {"status": 200, "data": {"hits": [{"text": "메모리 매출원가율 개선", "provenance": {
         "source": "OpenDART", "doc_type": "filing", "market": "KR",
         "accession": "20260605000073", "as_of": "2026-06-05"}}]}}
     cites = A._citations(tool, result)
@@ -458,12 +458,19 @@ def test_dedup_citations_collapses_repeats():
     from agentengine.models import Citation
     cites = [
         Citation(tool="opendart__income_statements", source="OpenDART (FSS)", url=None),
-        Citation(tool="opendart__balance_sheets", source="OpenDART (FSS)", url=None),  # dup (src,url)
+        Citation(tool="opendart__income_statements", source="OpenDART (FSS)", url=None),  # same tool → dup
+        Citation(tool="opendart__balance_sheets", source="OpenDART (FSS)", url=None),  # url-less, OTHER tool → kept
         Citation(tool="opendart__filings", source="OpenDART (FSS)", url="https://dart/x"),
     ]
     out = A.dedup_citations(cites)
-    assert len(out) == 2  # the two same (source=None-url) collapse to one; the url'd one stays
-    assert {(c.source, c.url) for c in out} == {("OpenDART (FSS)", None), ("OpenDART (FSS)", "https://dart/x")}
+    # the url-less fall-back key includes the tool: two derived tools on one connector stay
+    # two cards, while the same tool repeating collapses (the '📎 OpenDART · 📎 OpenDART' fix).
+    assert len(out) == 3
+    assert {(c.source, c.url, c.tool) for c in out} == {
+        ("OpenDART (FSS)", None, "opendart__income_statements"),
+        ("OpenDART (FSS)", None, "opendart__balance_sheets"),
+        ("OpenDART (FSS)", "https://dart/x", "opendart__filings")}
+    assert [c.index for c in out] == [1, 2, 3]
 
 
 @respx.mock
@@ -624,7 +631,7 @@ def test_citations_use_per_hit_rag_provenance():
     # RAG answers must cite each passage's REAL source/url, not the connector's
     # generic label (the eval caught the agent citing "Platform RAG" instead).
     tool = {"name": "rag__search", "connector": "rag", "source": "Platform RAG (filings/news)"}
-    result = {"data": {"hits": [
+    result = {"status": 200, "data": {"hits": [
         {"text": "...", "provenance": {"source": "SEC EDGAR", "url": "https://sec.gov/aapl"}},
         {"text": "...", "provenance": {"source": "OpenDART (FSS)", "url": "https://dart/x"}},
     ]}}
@@ -657,14 +664,14 @@ def test_universal_evidence_text_fragment_links():
     assert A.text_fragment_url(None, "p") is None
     # a news citation carries the fragment on its url
     tool = {"name": "google_news__news", "source": "Google News"}
-    c = A._citations(tool, {"data": {"news": [
+    c = A._citations(tool, {"status": 200, "data": {"news": [
         {"title": "엔비디아 AI 수요 급증", "source": "Reuters", "url": "https://r/a", "date": "2026-06-20"}]}})[0]
     assert c.url.startswith("https://r/a#:~:text=") and c.snippet == "엔비디아 AI 수요 급증"
 
 
 def test_rag_citation_is_enriched_for_preview_card():
     tool = {"name": "rag__search", "connector": "rag", "source": "Platform RAG"}
-    result = {"data": {"hits": [
+    result = {"status": 200, "data": {"hits": [
         {"text": "Apple sources chips from TSMC, a key supplier.",
          "provenance": {"source": "SEC EDGAR", "url": "https://sec.gov/aapl", "doc_type": "10-K",
                         "as_of": "2026-06-01", "ticker": "AAPL", "accession": "0000320193-26"}},
@@ -682,7 +689,7 @@ def test_rag_citation_is_enriched_for_preview_card():
 def test_artifacts_from_prices_timeseries():
     tool = {"name": "yahoo__prices", "source": "Yahoo Finance"}
     # real Price shape: the date is in `time` (no `date` field), value in `close`
-    result = {"data": {"ticker": "AAPL", "prices": [
+    result = {"status": 200, "data": {"ticker": "AAPL", "prices": [
         {"time": "2024-01-02", "close": 185.6}, {"time": "2024-01-03", "close": 184.2}]}}
     arts = A._artifacts(tool, result)
     assert len(arts) == 1
@@ -695,7 +702,7 @@ def test_artifacts_from_prices_timeseries():
 
 def test_artifacts_from_metrics_history_multi_series():
     tool = {"name": "datasets_store__metrics_history", "source": "ingestion store"}
-    result = {"data": {"ticker": "AAPL", "metrics": [
+    result = {"status": 200, "data": {"ticker": "AAPL", "metrics": [
         {"report_period": "2024-09-28", "gross_margin": 0.46, "net_margin": 0.24},
         {"report_period": "2025-09-27", "gross_margin": 0.47, "net_margin": 0.27}]}}
     a = A._artifacts(tool, result)[0]
@@ -707,7 +714,7 @@ def test_artifacts_from_metrics_history_multi_series():
 def test_artifacts_income_statements_render_as_bars():
     # money amounts (매출·순이익) → bar chart; ratios stay line (chart_style differs).
     tool = {"name": "sec_edgar__income_statements", "source": "SEC EDGAR"}
-    result = {"data": {"income_statements": [
+    result = {"status": 200, "data": {"income_statements": [
         {"ticker": "AAPL", "report_period": "2024-09-28", "revenue": 391_000_000_000, "net_income": 93_000_000_000},
         {"ticker": "AAPL", "report_period": "2025-09-27", "revenue": 410_000_000_000, "net_income": 99_000_000_000}]}}
     a = A._artifacts(tool, result)[0]
@@ -717,7 +724,7 @@ def test_artifacts_income_statements_render_as_bars():
 
 def test_artifacts_from_guru_trades_table():
     tool = {"name": "datasets_store__guru_trades", "source": "SEC EDGAR 13F"}
-    result = {"data": {"guru": {"investor": "Warren Buffett"}, "report_period": "2026-03-31",
+    result = {"status": 200, "data": {"guru": {"investor": "Warren Buffett"}, "report_period": "2026-03-31",
                        "filing_date": "2026-05-15", "comparable": True, "trades": [
         {"ticker": "AAPL", "action": "added", "value_usd": 2_000_000_000, "value_change_usd": 500_000_000, "shares_change": 1000},
         {"ticker": "OXY", "action": "exited", "value_usd": 0, "value_change_usd": -300_000_000, "shares_change": -2000}]}}
@@ -730,7 +737,7 @@ def test_artifacts_from_guru_trades_table():
 
 def test_artifacts_from_guru_common_table():
     tool = {"name": "datasets_store__guru_common", "source": "SEC EDGAR 13F"}
-    result = {"data": {"common": [
+    result = {"status": 200, "data": {"common": [
         {"ticker": "AAPL", "holder_count": 3, "holders": [
             {"investor": "Warren Buffett"}, {"investor": "Bill Ackman"}, {"investor": "Michael Burry"}]}]}}
     a = A._artifacts(tool, result)[0]
@@ -755,7 +762,7 @@ def test_intake_context_builds_recent_transcript():
 
 
 def test_artifacts_none_for_unchartable_result():
-    assert A._artifacts({"name": "sec_edgar__filings", "source": "SEC EDGAR"}, {"data": {"filings": []}}) == []
+    assert A._artifacts({"name": "sec_edgar__filings", "source": "SEC EDGAR"}, {"status": 200, "data": {"filings": []}}) == []
 
 
 @respx.mock
@@ -813,15 +820,15 @@ async def test_refresh_artifact_unknown_tool_returns_none(monkeypatch):
 
 
 def test_datasets_citation_typed_metric_vs_data():
-    price = A._citations({"name": "yahoo__prices", "source": "Yahoo Finance"}, {"data": {"prices": []}})
-    filings = A._citations({"name": "sec_edgar__filings", "source": "SEC EDGAR"}, {"data": {"x": 1}})
+    price = A._citations({"name": "yahoo__prices", "source": "Yahoo Finance"}, {"status": 200, "data": {"prices": []}})
+    filings = A._citations({"name": "sec_edgar__filings", "source": "SEC EDGAR"}, {"status": 200, "data": {"x": 1}})
     assert price[0].kind == "metric" and filings[0].kind == "data"
 
 
 def test_news_citation_uses_publisher_headline_date():
     # /news must cite each article's publisher + headline + date, not "Google News"
     tool = {"name": "google_news__news", "connector": "google_news", "source": "Google News"}
-    result = {"data": {"news": [
+    result = {"status": 200, "data": {"news": [
         {"ticker": "NVDA", "title": "Nvidia chips surge in overnight trading", "source": "Yahoo Finance",
          "date": "2026-06-15", "url": "https://news.google.com/x"},
         {"ticker": "NVDA", "title": "SpaceX growth lifts Nvidia", "source": "Barron's",
@@ -835,7 +842,7 @@ def test_news_citation_uses_publisher_headline_date():
 
 def test_financial_citation_gets_as_of_from_report_period():
     tool = {"name": "opendart__income_statements", "source": "OpenDART (FSS)"}
-    result = {"data": {"statements": [
+    result = {"status": 200, "data": {"statements": [
         {"report_period": "2025-12-31", "revenue": 1}, {"report_period": "2026-03-31", "revenue": 2},
     ]}}
     cite = A._citations(tool, result)[0]
@@ -1526,7 +1533,7 @@ def test_to_gemini_contents_replays_raw_for_parallel_calls():
     raw = object()  # sentinel for the shared model Content (replayed by identity)
     d1 = Decision(tool="yahoo__prices", args={"ticker": "AAPL"}, raw_content=raw)
     d2 = Decision(tool="google_news__news", args={"ticker": "AAPL"}, raw_content=raw)
-    history = [(d1, {"data": {"x": 1}}), (d2, {"data": {"y": 2}})]
+    history = [(d1, {"status": 200, "data": {"x": 1}}), (d2, {"status": 200, "data": {"y": 2}})]
 
     contents = _to_gemini_contents(None, history, "AAPL 주가")
     assert contents.count(raw) == 1                       # the batch's model turn emitted exactly once
@@ -1556,7 +1563,7 @@ def test_economic_indicator_citation_data_card():
     data = {"slug": "cpi", "name": "US CPI", "unit": "index", "source": "DBnomics",
             "source_url": "https://db.nomics.world/BLS/cu/CUSR0000SA0",
             "observations": [{"date": "2025-11", "value": 318.0}, {"date": "2025-12", "value": 319.1}]}
-    c = A._citations(tool, {"data": data})[0]
+    c = A._citations(tool, {"status": 200, "data": data})[0]
     assert c.table and c.table[0] == ["기간", "US CPI"] and c.table[1][0] == "2025-12"  # newest first
 
 
@@ -1571,7 +1578,7 @@ def test_technical_indicator_citation_data_card():
                  "lines": [{"label": "SMA(20)", "latest": 195.5, "points": [{"date": "2025-06-01", "value": 195.5}]}]},
                 {"key": "rsi_14", "name": "RSI(14)", "pane": "sub", "unit": "ratio_0_100",
                  "lines": [{"label": "RSI(14)", "latest": 62.3, "points": [{"date": "2025-06-01", "value": 62.3}]}]}]}
-    c = A._citations(tool, {"data": data})[0]
+    c = A._citations(tool, {"status": 200, "data": data})[0]
     assert c.table and c.table[0] == ["지표", "최신값"]
     assert any(row[0] == "SMA(20)" for row in c.table) and any(row[0] == "RSI(14)" for row in c.table)
     assert "서술적" in (c.snippet or "")  # labeled descriptive, never a trading signal
@@ -1580,7 +1587,7 @@ def test_technical_indicator_citation_data_card():
 def test_artifacts_prices_with_ohlc_become_candlestick():
     # PH-VIZ-1: real OHLCV → candlestick artifact (+ a close line kept for the table view).
     tool = {"name": "yahoo__prices", "source": "Yahoo Finance"}
-    result = {"data": {"ticker": "AAPL", "prices": [
+    result = {"status": 200, "data": {"ticker": "AAPL", "prices": [
         {"time": "2024-01-02", "open": 184.0, "high": 186.0, "low": 183.0, "close": 185.6, "volume": 1000},
         {"time": "2024-01-03", "open": 185.0, "high": 185.5, "low": 183.0, "close": 184.2, "volume": 1200}]}}
     a = A._artifacts(tool, result)[0]
@@ -1605,9 +1612,9 @@ def test_chart_markers_and_pricelines_from_turn_events():
     class _E:
         tool = "sec_edgar__earnings"
     history = [
-        (_D(), {"data": {"ticker": "AAPL", "dividends": [{"ex_date": "2024-02-09", "amount": 0.24}],
+        (_D(), {"status": 200, "data": {"ticker": "AAPL", "dividends": [{"ex_date": "2024-02-09", "amount": 0.24}],
                          "splits": [{"date": "2024-06-10", "ratio": "4:1"}]}}),
-        (_E(), {"data": {"ticker": "AAPL", "market": "US",
+        (_E(), {"status": 200, "data": {"ticker": "AAPL", "market": "US",
                          "earnings": [{"filing_date": "2024-02-01", "filing_url": "https://sec.gov/x"}]}}),
     ]
     enrich_chart_markers([a], history)
@@ -1628,14 +1635,14 @@ def test_chart_markers_skip_other_ticker():
 
     class _D:
         tool = "yahoo__corporate_actions"
-    history = [(_D(), {"data": {"ticker": "MSFT", "dividends": [{"ex_date": "2024-02-09", "amount": 0.75}]}})]
+    history = [(_D(), {"status": 200, "data": {"ticker": "MSFT", "dividends": [{"ex_date": "2024-02-09", "amount": 0.75}]}})]
     enrich_chart_markers([a], history)
     assert a.markers == []   # MSFT events never bleed onto the AAPL chart
 
 
 def _tech_result(ticker="AAPL"):
     # the shape datasets' /technical-indicators returns (PH-DATA-6).
-    return {"data": {"ticker": ticker, "market": "US", "interval": "day",
+    return {"status": 200, "data": {"ticker": ticker, "market": "US", "interval": "day",
                      "source": "Technical indicators (computed from Yahoo Finance)", "as_of": "2024-01-03",
                      "indicators": [
                          {"key": "sma_20", "name": "SMA(20)", "pane": "price", "unit": "price",
@@ -1650,7 +1657,7 @@ def _tech_result(ticker="AAPL"):
 def test_artifacts_asset_classes_table():
     # CE-1: cross-asset snapshot → a sourced table card.
     tool = {"name": "yahoo__asset_classes", "source": "Yahoo Finance"}
-    result = {"data": {"groups": [{"name": "주가지수", "members": [
+    result = {"status": 200, "data": {"groups": [{"name": "주가지수", "members": [
         {"label": "S&P 500", "ticker": "^GSPC", "price": 5000.0, "change_percent": 0.5}]}],
         "source": "Yahoo Finance", "as_of": "2024-01-02"}}
     a = A._artifacts(tool, result)[0]
@@ -1661,7 +1668,7 @@ def test_artifacts_asset_classes_table():
 def test_artifacts_commodities_table():
     # commodity panel → a sourced grouped table (분류·종목·현재가·등락%).
     tool = {"name": "yahoo__commodities", "source": "Yahoo Finance"}
-    result = {"data": {"groups": [{"name": "귀금속", "members": [
+    result = {"status": 200, "data": {"groups": [{"name": "귀금속", "members": [
         {"label": "금", "ticker": "GC=F", "price": 2000.0, "change_percent": 0.8}]}],
         "source": "Yahoo Finance", "as_of": "2024-01-02"}}
     a = A._artifacts(tool, result)[0]
@@ -1672,7 +1679,7 @@ def test_artifacts_commodities_table():
 def test_artifacts_themes_table():
     # thematic panel → grouped sourced table (분류·종목·현재가·등락%).
     tool = {"name": "yahoo__themes", "source": "Yahoo Finance"}
-    result = {"data": {"groups": [{"name": "테크·AI", "members": [
+    result = {"status": 200, "data": {"groups": [{"name": "테크·AI", "members": [
         {"label": "반도체", "ticker": "SOXX", "price": 655.0, "change_percent": 2.4}]}],
         "source": "Yahoo Finance"}}
     a = A._artifacts(tool, result)[0]
@@ -1682,7 +1689,7 @@ def test_artifacts_themes_table():
 def test_artifacts_semiconductor_proxy_table():
     # DRAM-spot proxy panel → grouped table, labelled NOT a spot price (in the title).
     tool = {"name": "yahoo__semiconductor", "source": "Yahoo Finance"}
-    result = {"data": {"groups": [{"name": "지수", "members": [
+    result = {"status": 200, "data": {"groups": [{"name": "지수", "members": [
         {"label": "필라델피아 반도체지수(SOX)", "ticker": "^SOX", "price": 14634.7, "change_percent": 2.04}]}],
         "source": "Yahoo Finance"}}
     a = A._artifacts(tool, result)[0]
@@ -1692,29 +1699,29 @@ def test_artifacts_semiconductor_proxy_table():
 def test_artifacts_kis_volume_rank_and_flow_tables():
     # CE-12: KR volume ranking + investor flow → sourced tables.
     vr = A._artifacts({"name": "kis__volume_rank", "source": "KIS"},
-                      {"data": {"source": "한국투자증권 (KIS)", "results": [
+                      {"status": 200, "data": {"source": "한국투자증권 (KIS)", "results": [
                           {"rank": 1, "ticker": "005930", "name": "삼성전자", "price": 337250,
                            "change_percent": -4.6, "value": 4_160_000_000_000}]}})[0]
     assert vr.kind == "table" and "거래량 순위" in vr.title
     assert vr.table[1][3] == "-4.60%" and "조" in vr.table[1][4]
     fl = A._artifacts({"name": "kis__investor_flow", "source": "KIS"},
-                      {"data": {"ticker": "005930", "flows": [
+                      {"status": 200, "data": {"ticker": "005930", "flows": [
                           {"date": "20260622", "close": 353500, "individual_net": -100,
                            "foreign_net": 5000, "institution_net": -2000}]}})[0]
     assert fl.kind == "table" and "수급" in fl.title and fl.table[1][3] == "+5,000"
     # fluctuation ranking (losers) + ETF NAV
     fr = A._artifacts({"name": "kis__fluctuation_rank", "source": "KIS"},
-                      {"data": {"direction": "down", "results": [
+                      {"status": 200, "data": {"direction": "down", "results": [
                           {"rank": 1, "ticker": "000660", "name": "SK하이닉스", "price": 100000,
                            "change_percent": -9.9, "volume": 555}]}})[0]
     assert fr.kind == "table" and "하락률 순위" in fr.title and fr.table[1][3] == "-9.90%"
     etf = A._artifacts({"name": "kis__etf_nav", "source": "KIS"},
-                       {"data": {"ticker": "069500", "name": "KODEX 200", "price": 141675,
+                       {"status": 200, "data": {"ticker": "069500", "name": "KODEX 200", "price": 141675,
                                  "nav": 141792.70, "premium_discount_pct": -0.06,
                                  "price_change_percent": -4.5, "nav_change_percent": -4.4}})[0]
     assert etf.kind == "table" and "ETF NAV" in etf.title and etf.table[3] == ["괴리율", "-0.06%"]
     mc = A._artifacts({"name": "kis__market_cap_rank", "source": "KIS"},
-                      {"data": {"results": [{"rank": 1, "ticker": "005930", "name": "삼성전자",
+                      {"status": 200, "data": {"results": [{"rank": 1, "ticker": "005930", "name": "삼성전자",
                                              "market_cap_eok": 19526571, "market_weight_pct": 24.03,
                                              "change_percent": -5.52}]}})[0]
     assert mc.kind == "table" and "시가총액 순위" in mc.title and mc.table[1][2] == "1,952.7조"
@@ -1723,11 +1730,11 @@ def test_artifacts_kis_volume_rank_and_flow_tables():
 def test_artifacts_fmp_estimates_and_calendar_tables():
     # CE-11: consensus estimates + earnings calendar → sourced tables (third-party labelled).
     est = A._artifacts({"name": "fmp__consensus_estimates", "source": "FMP"},
-                       {"data": {"symbol": "AAPL", "source": "FMP (애널리스트 컨센서스 · 제3자)", "estimates": [
+                       {"status": 200, "data": {"symbol": "AAPL", "source": "FMP (애널리스트 컨센서스 · 제3자)", "estimates": [
                            {"date": "2026-09-27", "revenue_avg": 4.5e11, "eps_avg": 7.2, "net_income_avg": 1.1e11}]}})[0]
     assert est.kind == "table" and "컨센서스" in est.title and est.table[1][1] == "450.0B"
     cal = A._artifacts({"name": "fmp__earnings_calendar", "source": "FMP"},
-                       {"data": {"symbol": "AAPL", "events": [
+                       {"status": 200, "data": {"symbol": "AAPL", "events": [
                            {"date": "2026-04-30", "eps_estimated": 1.95, "eps_actual": 2.01,
                             "eps_surprise": 0.06, "revenue_actual": 1.11e11}]}})[0]
     assert cal.kind == "table" and "실적 캘린더" in cal.title and cal.table[1][3] == "+0.06"
@@ -1736,7 +1743,7 @@ def test_artifacts_fmp_estimates_and_calendar_tables():
 def test_artifacts_news_digest_table():
     # CE-10: recent news → a sourced, pinnable digest table.
     tool = {"name": "google_news__news", "source": "Google News"}
-    result = {"data": {"news": [
+    result = {"status": 200, "data": {"news": [
         {"title": "엔비디아, AI 데이터센터 수요 급증", "source": "Reuters", "date": "2026-06-20", "ticker": "NVDA"},
         {"title": "반도체 업황 회복 신호", "source": "연합뉴스", "date": "2026-06-19", "ticker": "NVDA"}]}}
     a = A._artifacts(tool, result)[0]
@@ -1748,7 +1755,7 @@ def test_artifacts_news_digest_table():
 def test_artifacts_macro_panel_table():
     # CE-9: 국가경제 패널 → a sourced table (지표·최신·변화·그룹).
     tool = {"name": "fred__macro_panel", "source": "DBnomics"}
-    result = {"data": {"region": "US", "source": "DBnomics", "indicators": [
+    result = {"status": 200, "data": {"region": "US", "source": "DBnomics", "indicators": [
         {"slug": "cpi", "name": "US CPI", "unit": "index", "group": "물가", "latest": 314.5, "change": 0.8, "as_of": "2025-09"},
         {"slug": "unemployment", "name": "US Unemployment", "unit": "%", "group": "고용", "latest": 4.1, "change": -0.1, "as_of": "2025-09"}]}}
     a = A._artifacts(tool, result)[0]
@@ -1760,7 +1767,7 @@ def test_artifacts_macro_panel_table():
 def test_artifacts_backtest_equity_curve():
     # CE-7: backtest → an equity-curve timeseries (portfolio + benchmark).
     tool = {"name": "datasets_store__backtest", "source": "ingestion store"}
-    result = {"data": {"metrics": {"total_return": 0.21}, "curve": [
+    result = {"status": 200, "data": {"metrics": {"total_return": 0.21}, "curve": [
         {"date": "2024-01-02", "value": 10000.0}, {"date": "2025-01-02", "value": 12100.0}],
         "benchmark": {"ticker": "SPY", "curve": [
             {"date": "2024-01-02", "value": 10000.0}, {"date": "2025-01-02", "value": 11500.0}]}}}
@@ -1773,7 +1780,7 @@ def test_artifacts_backtest_equity_curve():
 def test_artifacts_quant_screen_table():
     # CE-6: factor screener → a sourced ranked table.
     tool = {"name": "datasets_store__quant_screen", "source": "ingestion store"}
-    result = {"data": {"market": "US", "sort": "roe", "count": 1, "results": [
+    result = {"status": 200, "data": {"market": "US", "sort": "roe", "count": 1, "results": [
         {"ticker": "AAPL", "market_cap": 3_000_000_000_000, "pe": 30.0, "pb": 45.0, "roe": 1.5, "return_window": 0.18}]}}
     a = A._artifacts(tool, result)[0]
     assert a.kind == "table" and "퀀트 스크리너" in a.title
@@ -1784,7 +1791,7 @@ def test_artifacts_quant_screen_table():
 def test_artifacts_valuation_table():
     # CE-5: a valuation calc → a sourced table with the projection + intrinsic value summary.
     tool = {"name": "datasets_store__valuation", "source": "재무제표 기반 모델"}
-    result = {"data": {"model": "dcf", "ticker": "AAPL", "value_per_share": 182.5, "as_of": "2025-09-27",
+    result = {"status": 200, "data": {"model": "dcf", "ticker": "AAPL", "value_per_share": 182.5, "as_of": "2025-09-27",
                        "source": "SEC EDGAR", "breakdown": {"rows": [
                            {"year": 1, "fcf": 1100.0, "pv": 1000.0}, {"year": 2, "fcf": 1210.0, "pv": 980.0}]}}}
     a = A._artifacts(tool, result)[0]
@@ -1796,7 +1803,7 @@ def test_artifacts_valuation_table():
 def test_artifacts_sector_heatmap_table():
     # CE-2: sector heatmap → a sourced ranked table card.
     tool = {"name": "yahoo__sector_heatmap", "source": "Yahoo Finance"}
-    result = {"data": {"sectors": [
+    result = {"status": 200, "data": {"sectors": [
         {"sector": "기술", "ticker": "XLK", "change_percent": 2.5},
         {"sector": "금융", "ticker": "XLF", "change_percent": -1.0}],
         "source": "Yahoo Finance", "as_of": "2024-01-02"}}
@@ -2053,7 +2060,7 @@ def test_citations_and_artifacts_carry_cadence_and_category():
     data = {"ticker": "AAPL", "prices": [
         {"time": "2024-01-02", "open": 1, "high": 2, "low": 1, "close": 2, "volume": 10},
         {"time": "2024-01-03", "open": 2, "high": 3, "low": 2, "close": 3, "volume": 12}]}
-    result = {"data": data}
+    result = {"status": 200, "data": data}
     cites = A._citations(tool, result)
     assert cites and all(c.cadence == "daily" and c.category == "market" for c in cites)
     arts = A._artifacts(tool, result)
@@ -2062,7 +2069,7 @@ def test_citations_and_artifacts_carry_cadence_and_category():
     # a one-shot source is stamped one_shot → no notification bot once pinned
     tool2 = {"name": "sec_edgar__company_facts", "source": "SEC EDGAR", "connector": "sec_edgar",
              "cadence": "one_shot", "category": "fundamentals"}
-    c2 = A._citations(tool2, {"data": {"ticker": "AAPL", "name": "Apple"}})
+    c2 = A._citations(tool2, {"status": 200, "data": {"ticker": "AAPL", "name": "Apple"}})
     assert c2 and all(x.cadence == "one_shot" for x in c2)
 
 
@@ -2076,7 +2083,7 @@ def test_8k_filing_listing_gets_evidence_url_and_event_snippet():
         "filing_type": "8-K", "filed": "2024-05-01", "items": "5.02,9.01",
         "description": "항목 5.02 임원·이사 변동 · 항목 9.01 재무제표·첨부자료",
         "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019324000100/aapl-8k.htm"}]}
-    c = A._citations(tool, {"data": data})[0]
+    c = A._citations(tool, {"status": 200, "data": data})[0]
     assert c.snippet and "임원" in c.snippet and c.snippet != "8-K"   # event summary, not the form
     assert c.doc_type == "8-K"
     assert c.evidence_image_url and "/evidence?" in c.evidence_image_url
@@ -2090,7 +2097,7 @@ def test_8k_filing_listing_derives_cik_from_url_when_absent():
     data = {"filings": [{
         "accession_number": "0000320193-24-000101", "form": "8-K",
         "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019324000101/x.htm"}]}
-    c = A._citations(tool, {"data": data})[0]
+    c = A._citations(tool, {"status": 200, "data": data})[0]
     assert c.evidence_image_url and "cik=320193" in c.evidence_image_url  # pulled from the url
 
 
@@ -2126,7 +2133,7 @@ def test_vol_context_artifact_carries_ribbon_field():
             "windows": {"20": {"realized_vol_pct": 17.6, "percentile": 74.4},
                         "60": {"realized_vol_pct": 13.9, "percentile": 56.5}},
             "level": {"current": 14.2, "percentile": 22.0}}}
-    art = A._artifacts(tool, {"data": data})[0]
+    art = A._artifacts(tool, {"status": 200, "data": data})[0]
     assert art.vol_context and art.vol_context["windows"]["20"]["percentile"] == 74.4
     assert art.vol_context["level"]["current"] == 14.2       # VIX level rides too
 
@@ -2221,3 +2228,210 @@ async def test_usage_report_attributes_project(monkeypatch):
     usage.report("plan", "gemini-flash-latest", resp)
     await asyncio.sleep(0.01)
     assert sent[-1]["project_id"] is None
+
+
+# --- evidence-pipeline fixes: /financials wrapper · failed-result guard · dedup merge ---
+def test_statements_root_unwraps_financials_wrapper():
+    # `/financials` nests the statements under {"financials": {...}}; the per-statement
+    # routes return them flat — both must normalize to ONE shape for every extractor.
+    from agentengine.figures import _statements_root
+
+    rows = [{"revenue": 1.0, "net_income": 0.5, "report_period": "2024-12-31"}]
+    assert _statements_root({"financials": {"income_statements": rows}}) == {"income_statements": rows}
+    flat = {"income_statements": rows}
+    assert _statements_root(flat) is flat                       # already flat → untouched
+    assert _statements_root(None) is None                       # non-dict → untouched
+    bad = {"financials": "oops"}
+    assert _statements_root(bad) is bad                         # malformed wrapper → untouched
+
+
+def test_evidence_same_for_wrapped_and_unwrapped_financials():
+    # the 재무제표 preview regression: a /financials-shaped result must yield the SAME
+    # (snippet, table) as the flat per-statement shape — not a figure-less label card.
+    from agentengine.figures import _evidence
+
+    rows = [
+        {"revenue": 400_000_000_000.0, "net_income": 90_000_000_000.0, "report_period": "2024-09-28"},
+        {"revenue": 380_000_000_000.0, "net_income": 85_000_000_000.0, "report_period": "2023-09-30"}]
+    tool = {"name": "sec_edgar__all_financials", "source": "SEC EDGAR"}
+    flat = _evidence(tool, {"income_statements": rows})
+    wrapped = _evidence(tool, {"financials": {"income_statements": rows}})
+    assert wrapped == flat
+    snippet, table = wrapped
+    assert snippet and "매출 400.00B" in snippet and "(2024-09-28)" in snippet
+    assert table and table[0][0] == "기간" and table[1] == ["2024-09-28", "400.00B", "90.00B"]
+
+
+def test_evidence_url_sees_through_financials_wrapper_us_and_kr():
+    # the /evidence link builders must anchor a wrapped statements result exactly like the
+    # flat shape: market + accession + concept + report_period + value all in the URL.
+    from agentengine.evidence import _evidence_url, evidence_url_for_answer
+
+    us = {"financials": {"income_statements": [
+        {"revenue": 391035000000.0, "report_period": "2024-09-28",
+         "accession_number": "0000320193-24-000123"}]}}
+    u = _evidence_url(us, "0000320193-24-000123", "320193", "US")
+    assert u and u.startswith("/evidence?") and "market=US" in u
+    assert "accession=0000320193-24-000123" in u and "report_period=2024-09-28" in u
+    assert "Revenues" in u and "value=391035000000" in u
+    # the answer-anchored variant unwraps too (matches the answer's revenue figure)
+    ua = evidence_url_for_answer(us, "0000320193-24-000123", "320193", "US",
+                                 "매출은 $391,035M였습니다.")
+    assert ua and "value=391035000000" in ua and "report_period=2024-09-28" in ua
+
+    kr = {"financials": {"income_statements": [
+        {"revenue": 300870903000000.0, "report_period": "2024-12-31",
+         "accession_number": "20250311000736"}]}}
+    k = _evidence_url(kr, "20250311000736", None, "KR")
+    assert k and "market=KR" in k and "concept=revenue" in k       # KR anchors the field name
+    assert "accession=20250311000736" in k and "report_period=2024-12-31" in k
+    assert "value=300870903000000" in k
+    ka = evidence_url_for_answer(kr, "20250311000736", None, "KR",
+                                 "매출은 300,870,903백만원이었어요.")
+    assert ka and "concept=revenue" in ka and "value=300870903000000" in ka
+
+
+def test_all_financials_artifact_from_wrapped_statements():
+    # an `__all_financials` (combined /financials) result now produces the same 매출·순이익
+    # chart as `__income_statements` — previously the wrapper yielded NO artifact.
+    tool = {"name": "sec_edgar__all_financials", "source": "SEC EDGAR"}
+    result = {"status": 200, "data": {"financials": {"income_statements": [
+        {"ticker": "AAPL", "report_period": "2024-09-28", "revenue": 391_000_000_000, "net_income": 93_000_000_000},
+        {"ticker": "AAPL", "report_period": "2025-09-27", "revenue": 410_000_000_000, "net_income": 99_000_000_000}]}}}
+    arts = A._artifacts(tool, result)
+    assert len(arts) == 1
+    a = arts[0]
+    assert a.kind == "timeseries" and a.chart_style == "bar" and a.ticker == "AAPL"
+    assert {s.label for s in a.series} == {"매출", "순이익"}
+    assert a.series[0].points[0].x == "2024-09-28" and a.as_of == "2025-09-27"
+
+
+def test_citations_skip_failed_or_empty_results():
+    # a FAILED call must contribute NOTHING — previously it still minted a bare catalog-label
+    # card ('Platform RAG (filings/news)', no url/snippet) that polluted the evidence panel.
+    tool = {"name": "rag__search", "connector": "rag", "source": "Platform RAG (filings/news)"}
+    assert A._citations(tool, {"status": 503, "data": {"detail": "upstream down"}}) == []
+    assert A._citations(tool, {"status": 200, "data": None}) == []
+    tool2 = {"name": "yahoo__prices", "source": "Yahoo Finance", "connector": "yahoo"}
+    assert A._citations(tool2, {"status": 502, "data": "Bad Gateway"}) == []
+    # a successful call still cites (guard doesn't over-drop)
+    ok = A._citations(tool2, {"status": 200, "data": {"ticker": "AAPL", "prices": []}})
+    assert len(ok) == 1 and ok[0].source == "Yahoo Finance"
+
+
+def test_filing_listing_as_of_from_datasets_filing_keys():
+    # datasets Filing rows serialize `filing_date`/`report_date` (not 'filed') — the listing
+    # citation must still carry as_of + a freshness bucket from them.
+    tool = {"name": "sec_edgar__filings", "source": "SEC EDGAR", "connector": "sec_edgar"}
+    data = {"filings": [
+        {"form": "10-K", "filing_date": "2026-07-02", "filing_url": "https://sec.gov/a"},
+        {"form": "10-Q", "report_date": "2026-03-31", "filing_url": "https://sec.gov/b"}]}
+    c1, c2 = A._citations(tool, {"status": 200, "data": data})
+    assert c1.as_of == "2026-07-02" and c1.freshness in {"fresh", "aging", "stale"}
+    assert c2.as_of == "2026-03-31" and c2.freshness in {"fresh", "aging", "stale"}
+
+
+def test_filing_listing_recovers_market_from_row_link():
+    # an Ingestion-Store listing tool carries NO market hint — the row's own sec.gov/dart url
+    # (or accession format) recovers it, so the citation still gets an in-app evidence URL.
+    tool = {"name": "datasets_store__filings", "source": "Ingestion Store", "connector": "datasets_store"}
+    us = {"filings": [{
+        "accession_number": "0000320193-24-000100", "form": "8-K", "filing_date": "2026-07-01",
+        "filing_url": "https://www.sec.gov/Archives/edgar/data/320193/000032019324000100/x.htm"}]}
+    c = A._citations(tool, {"status": 200, "data": us})[0]
+    assert c.evidence_image_url and "market=US" in c.evidence_image_url
+    assert "accession=0000320193-24-000100" in c.evidence_image_url
+    assert "cik=320193" in c.evidence_image_url             # recovered from the SEC url itself
+
+    kr = {"filings": [{
+        "accession_number": "20260605000073", "form": "주요사항보고서", "filing_date": "2026-06-05",
+        "filing_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260605000073"}]}
+    ck = A._citations(tool, {"status": 200, "data": kr})[0]
+    assert ck.evidence_image_url and "market=KR" in ck.evidence_image_url
+    assert "accession=20260605000073" in ck.evidence_image_url
+
+
+def test_rag_citation_strips_heading_prefix_from_snippet_and_evidence():
+    # a "[Item 1A …]" heading prefix is chunker metadata, not document text — it must vanish
+    # from BOTH the snippet and the /evidence text needle (else the viewer highlight misses).
+    from urllib.parse import parse_qs, urlparse
+
+    tool = {"name": "rag__search", "connector": "rag", "source": "Platform RAG"}
+    result = {"status": 200, "data": {"hits": [{
+        "text": "[Item 1A Risk Factors] The Company depends on TSMC for advanced nodes.",
+        "provenance": {"source": "SEC EDGAR", "doc_type": "10-K", "market": "US",
+                       "accession": "0000320193-24-000123", "as_of": "2026-06-01"}}]}}
+    c = A._citations(tool, result)[0]
+    assert c.snippet.startswith("The Company depends") and "[Item 1A" not in c.snippet
+    assert c.evidence_image_url and "text=" in c.evidence_image_url
+    needle = parse_qs(urlparse(c.evidence_image_url).query)["text"][0]
+    assert needle.startswith("The Company depends") and "Item 1A" not in needle
+
+
+def test_dedup_merges_duplicate_fields_instead_of_dropping():
+    # (a) same (source, url) twice → ONE card whose gaps are filled from the duplicate
+    # (dropping the dup must not drop its evidence anchor / as_of).
+    from agentengine.models import Citation
+    a = Citation(tool="t1", source="SEC EDGAR", url="https://sec.gov/x", snippet="8-K 요약")
+    b = Citation(tool="t2", source="SEC EDGAR", url="https://sec.gov/x",
+                 evidence_image_url="/evidence?market=US&accession=1", as_of="2026-07-01")
+    out = A.dedup_citations([a, b])
+    assert len(out) == 1 and out[0] is a
+    assert out[0].snippet == "8-K 요약"                                  # existing fields kept
+    assert out[0].evidence_image_url == "/evidence?market=US&accession=1"  # gap filled, not dropped
+    assert out[0].as_of == "2026-07-01"
+    assert out[0].index == 1
+
+
+def test_dedup_collapses_same_url_across_source_labels():
+    # (b) one document cited under two DIFFERENT source labels ('SEC EDGAR' vs '공시 (SEC/DART)')
+    # → one card, merged.
+    from agentengine.models import Citation
+    a = Citation(tool="t1", source="SEC EDGAR", url="https://sec.gov/8k")
+    b = Citation(tool="t2", source="공시 (SEC/DART)", url="https://sec.gov/8k", snippet="임원 변동")
+    out = A.dedup_citations([a, b])
+    assert len(out) == 1 and out[0].snippet == "임원 변동"
+
+
+def test_dedup_keeps_urlless_citations_from_different_tools():
+    # (c) two url-less citations, same source label, DIFFERENT tools → both survive
+    # (the fall-back key includes the tool), and (d) indexes stay 1-based sequential.
+    from agentengine.models import Citation
+    out = A.dedup_citations([
+        Citation(tool="sec_edgar__metrics_snapshot", source="SEC EDGAR"),
+        Citation(tool="sec_edgar__income_statements", source="SEC EDGAR"),
+        Citation(tool="t3", source="Reuters", url="https://r/a"),
+        Citation(tool="t4", source="Reuters", url="https://r/a"),   # exact dup → merged away
+    ])
+    assert len(out) == 3
+    assert {c.tool for c in out} == {"sec_edgar__metrics_snapshot", "sec_edgar__income_statements", "t3"}
+    assert [c.index for c in out] == [1, 2, 3]
+
+
+def test_merge_citation_works_on_objects_and_dicts():
+    from agentengine.citations import merge_citation
+    from agentengine.models import Citation
+    obj_a = Citation(tool="t1", source="S", url="u", snippet="원문")
+    obj_b = Citation(tool="t2", source="S", url="u", table=[["기간", "매출"]], as_of="2026-01-01")
+    merge_citation(obj_a, obj_b)
+    assert obj_a.table == [["기간", "매출"]] and obj_a.as_of == "2026-01-01"
+    assert obj_a.snippet == "원문"                     # never overwrites a present field
+
+    d_a = {"tool": "t1", "source": "S", "url": "u", "snippet": None, "evidence_image_url": None}
+    d_b = {"tool": "t2", "source": "S", "url": "u", "snippet": "본문",
+           "evidence_image_url": "/evidence?x=1", "as_of": "2026-02-02"}
+    merge_citation(d_a, d_b)
+    assert d_a["snippet"] == "본문" and d_a["evidence_image_url"] == "/evidence?x=1"
+    assert d_a["as_of"] == "2026-02-02"                # dict gaps (even absent keys) get filled
+
+
+def test_market_from_link_host_and_accession_formats():
+    from agentengine.provenance import _market_from_link
+
+    assert _market_from_link("https://www.sec.gov/Archives/edgar/data/1/x.htm") == "US"
+    assert _market_from_link("https://dart.fss.or.kr/dsaf001/main.do?rcpNo=2026") == "KR"
+    assert _market_from_link(None, "0000320193-24-000100") == "US"   # 18 digits, dashed (SEC)
+    assert _market_from_link(None, "000032019324000100") == "US"     # 18 digits, bare
+    assert _market_from_link(None, "20260605000073") == "KR"         # 14-digit DART rcept_no
+    assert _market_from_link(None, None) is None
+    assert _market_from_link("https://news.example.com/a", "abc-123") is None  # garbage → None

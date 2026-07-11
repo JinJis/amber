@@ -35,6 +35,10 @@ export function SourceViewer({ c, onClose, onQuote }: {
   // transcripts, macro pages, news) uses the HTML FilingViewer.
   const isDeck = !!deckSrc(c);
   const frameSrc = isDeck ? null : viewerSrc(c);
+  // A DERIVED figure's trust envelope is its math (공식 + 출처 있는 입력 + 단계) — show the
+  // DerivationCard as the stage even when a source page exists; each input row's [원문↗] still
+  // opens its own filing cell (evInput), so the real document stays one click away.
+  const showDerivation = shape === "data" && !!c.computation;
 
   // SH-4: capture the highlighted passage (or the cited snippet) into a quote card → share pipeline.
   function quoteThis() {
@@ -70,6 +74,25 @@ export function SourceViewer({ c, onClose, onQuote }: {
             {isDeck ? (
               // an 8-K presentation deck — render the real slides (pdf.js) + highlight the cited chunk
               <DeckViewer c={c} />
+            ) : showDerivation && evInput ? (
+              // an INPUT's own source page (filing cell highlighted) — back returns to the derivation
+              <div className="sv-ev-input">
+                <button className="sv-act mono" onClick={() => setEvInput(null)}>← 계산 과정으로</button>
+                <FilingViewer c={evInput} />
+              </div>
+            ) : showDerivation ? (
+              // DRV-3: the derivation IS the body of a derived figure's preview — formula +
+              // sourced inputs + steps take precedence over rendering a source page.
+              <article className="sv-page">
+                <div className="sv-page-hd mono">{c.source || "추출 데이터"}{c.ticker ? ` · ${c.ticker}` : ""}</div>
+                <DerivationCard comp={c.computation!}
+                  onEvidence={(url, row) => setEvInput({
+                    evidence_image_url: url, source: row.source || c.source,
+                    kind: "filing", snippet: `${row.label} = ${row.value}`,
+                  })} />
+                {c.table ? <SrcTable table={c.table} /> : null}
+                <p className="sv-data-note mono">{c.as_of ? `as_of ${c.as_of} · ` : ""}출처에서 가져오거나 계산한 값이에요 (입력마다 원문 셀을 열 수 있어요)</p>
+              </article>
             ) : frameSrc ? (
               // The REAL source page in-app (filing OR external page), cited value highlighted. The
               // extracted figures we used stay visible in the right-side context aside.

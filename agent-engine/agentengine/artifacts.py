@@ -88,6 +88,9 @@ def _build_artifacts(tool: dict, result: dict) -> list[Artifact]:
     data = result.get("data")
     if not isinstance(data, dict):
         return []
+    from agentengine.figures import _statements_root
+
+    data = _statements_root(data)   # `/financials` wraps the statements — normalize the shape
     name, src = tool["name"], tool.get("source")
     # canonical link to the filing the figures came from (drawn on the artifact card)
     url, accn, cik = _canonical_provenance(data)
@@ -842,7 +845,9 @@ def _h_history_regimes(ctx: _Ctx) -> list[Artifact]:
 _BUILDERS: list[tuple[tuple[str, ...], object]] = [
     (("__prices",), _h_prices),
     (("__metrics_history",), _h_metrics_history),
-    (("__income_statements",), _h_income_statements),
+    # __all_financials (the combined /financials pull) carries the same income_statements rows
+    # once the wrapper is normalized — same chart, so a 재무제표 question isn't figure-less.
+    (("__income_statements", "__all_financials"), _h_income_statements),
     (("__asset_classes", "__commodities", "__semiconductor", "__themes"), _h_groups),
     (("__volume_rank",), _h_volume_rank),
     (("__fluctuation_rank",), _h_fluctuation_rank),

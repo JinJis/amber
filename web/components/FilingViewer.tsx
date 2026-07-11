@@ -131,9 +131,13 @@ function highlight(doc: Document, t: Target): boolean {
       if (mark(byVal || ms[0])) return true;
     }
   }
-  // 2) Text passage — find the leading slice of the cited snippet in the document body
+  // 2) Text passage — find the leading slice of the cited snippet in the document body.
+  // RAG chunk text carries chunker artifacts the document never contains: table rows are
+  // serialized as "cell | cell | cell" and sections get a "[Item 1A …]" heading prefix —
+  // strip both so the needle can actually match the DOM text.
   if (t.text) {
-    const words = t.text.split(/\s+/).filter(Boolean);
+    const cleaned = t.text.replace(/^\[[^\]]{1,80}\]\s*/, "").replace(/\s*\|\s*/g, " ");
+    const words = cleaned.split(/\s+/).filter(Boolean);
     for (const n of [10, 8, 6, 4]) {
       const el = findByText(doc, words.slice(0, n).join(" "));
       if (el && mark(el)) return true;
@@ -206,9 +210,16 @@ export function FilingViewer({ c }: { c: Citation }) {
   }, [zoom, html]);
 
   if (state === "none") {
+    // honest gap — we hold the cited passage, but the page itself can't render in-app
+    // (문서 원본 미확보·스크립트 전용 페이지·유료 기사 등). 이유를 말해주고 원문 링크로 안내한다.
+    const host = (() => { try { return c.url ? new URL(c.url).hostname.replace(/^www\./, "") : null; } catch { return null; } })();
     return (
       <div className="fv-empty">
-        <div className="fv-empty-quote">{c.snippet ? `“${c.snippet}”` : "원문 미리보기를 불러올 수 없습니다."}</div>
+        <div className="fv-empty-quote">{c.snippet ? `“${c.snippet}”` : "원문 미리보기를 불러올 수 없어요."}</div>
+        <p className="fv-empty-why mono">
+          {host ? `${host} 페이지는 앱 안에서 보여드릴 수 없어요 — 원문에서 확인해 주세요.`
+                : "이 문서는 지금 앱 안에서 보여드릴 수 없어요 — 원문에서 확인해 주세요."}
+        </p>
         {c.url ? (
           <a className="fv-empty-link" href={c.url} target="_blank" rel="noreferrer">원문 보기 ↗</a>
         ) : null}

@@ -99,32 +99,77 @@ async def _fetch(url: str) -> str | None:
 
 
 def _cache_path(url: str) -> pathlib.Path:
-    # "v2:" — the sanitize policy changed (passive CSP + <base>); old cached copies carried the
-    # strict filing CSP and rendered external pages as gray, unstyled shells. New key → regenerate.
-    key = hashlib.sha256(("v2:" + url).encode("utf-8")).hexdigest()[:32]
+    # "v3:" — a server-side visible-text floor was added; the v2 cache holds useless JS shells
+    # (e.g. Google News interstitials: 336 KB, 11 visible chars) stored before the floor existed.
+    # New key → those entries are naturally abandoned and real pages regenerate.
+    key = hashlib.sha256(("v3:" + url).encode("utf-8")).hexdigest()[:32]
     return pathlib.Path(settings.evidence_docs_dir) / "source" / f"{key}.html"
+
+
+_TAG_RE = re.compile(r"(?is)<(script|style)\b.*?</\1>|<[^>]+>")
+_MIN_VISIBLE_CHARS = 120   # below this the sanitized page is a script-shell/consent wall — a gap
+
+
+def _visible_chars(markup: str) -> int:
+    """Visible text length after tags go — mirrors (and pre-empts) the FE's empty-shell check."""
+    import html as _html
+
+    return len(re.sub(r"\s+", " ", _html.unescape(_TAG_RE.sub(" ", markup))).strip())
+
+
+# DART's public viewer (dsaf001/main.do?rcpNo=…) is a script-driven shell: after sanitizing,
+# only the viewer chrome survives — no document. Canonicalize it to the real filing markup we
+# already serve for /evidence/html (same sanitize + persistent cache path).
+_DART_VIEWER_RE = re.compile(r"^https?://dart\.fss\.or\.kr/dsaf001/main\.do", re.IGNORECASE)
+_DART_RCPNO_RE = re.compile(r"[?&]rcpNo=(\d+)")
 
 
 async def get_source_html(url: str) -> str | None:
     """Cache-first sanitized HTML for an arbitrary public source page (or None → UI uses the link)."""
     url = _strip_fragment(url)
-    if not _safe(url):
+
+    # a DART viewer link IS a filing — serve the real document through the filing path
+    if _DART_VIEWER_RE.match(url):
+        m = _DART_RCPNO_RE.search(url)
+        if m:
+            from app.store.filing_html import get_filing_html
+
+            return await get_filing_html("KR", m.group(1))
         return None
-    path = _cache_path(url)
+
+    # a Google News interstitial can never render (client-side JS redirect) — resolve the
+    # article id to the publisher URL first, then fetch/sanitize THAT page.
+    from app.store.gnews_resolve import is_gnews_article_url, resolve_gnews_url
+
+    fetch_url = url
+    if is_gnews_article_url(url):
+        resolved = await resolve_gnews_url(url)
+        if not resolved:
+            return None    # honest gap — the external link still redirects in a real browser
+        fetch_url = _strip_fragment(resolved)
+
+    if not _safe(fetch_url):
+        return None
+    path = _cache_path(url)   # keyed by the CITATION's url so repeat views hit the cache
     if path.exists():
         return await asyncio.to_thread(path.read_text, encoding="utf-8", errors="replace")
-    raw = await _fetch(url)
+    raw = await _fetch(fetch_url)
     if not raw or not raw.strip():
         return None
     from urllib.parse import urlsplit
 
     from app.store.filing_html import CSP_PASSIVE
-    parts = urlsplit(url)
+    parts = urlsplit(fetch_url)
     page_base = f"{parts.scheme}://{parts.netloc}{parts.path.rsplit('/', 1)[0]}/"
     # external pages: PASSIVE CSP (styles/images/fonts over https render; scripts/XHR still dead)
     # + <base> so the page's relative asset URLs resolve inside srcdoc — fixes the gray shell.
     clean = sanitize(_META_POLICY_RE.sub("", raw), csp=CSP_PASSIVE, base=page_base)
+    if _visible_chars(clean) < _MIN_VISIBLE_CHARS:
+        # a script-rendered shell (or bot/consent wall) — caching it would poison every future
+        # view with an empty iframe; return the honest gap instead.
+        log.info("source html below visible-text floor, skipped %s", fetch_url[:100])
+        return None
     path.parent.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(path.write_text, clean, encoding="utf-8")
-    log.info("source html stored (%d KB) %s → %s", len(clean) // 1024, url[:80], path)
+    log.info("source html stored (%d KB) %s → %s", len(clean) // 1024, fetch_url[:80], path)
     return clean

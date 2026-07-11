@@ -39,6 +39,11 @@ services:
       RAG_URL: "http://rag:8002"
       GOOGLE_APPLICATION_CREDENTIALS: "/secrets/gcp-sa.json"   # Document AI (deck parsing)
     volumes:
+      # Share the datasets data volume: filing ingest warms the evidence-HTML cache
+      # (get_filing_html). Without this mount the cache written during ingestion lands in
+      # the worker's own ephemeral FS, so every /evidence/html view re-fetched upstream —
+      # and KR previews died whenever the OpenDART daily quota was already spent.
+      - datasets_data:/data
       - ./secrets:/secrets:ro   # gcp service-account JSON (gitignored)
     command: ["python", "-m", "procrastinate", "--app=app.queue.app", "worker", "--concurrency=4", "--queues=ingest,sweep"]
     depends_on:

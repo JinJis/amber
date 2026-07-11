@@ -46,6 +46,25 @@ def _market_hint(tool: dict, data) -> str | None:
     return None
 
 
+def _market_from_link(url: str | None, accession: str | None = None) -> str | None:
+    """Deterministic market recovery from the row's own provenance when the tool/data carry no
+    market hint (e.g. the Ingestion-Store listing tools): the canonical link's host, else the
+    accession format (SEC: 18 digits/dashed; DART rcept_no: 14 digits)."""
+    u = (url or "").lower()
+    if "sec.gov" in u:
+        return "US"
+    if "dart.fss.or.kr" in u:
+        return "KR"
+    a = str(accession or "")
+    digits = a.replace("-", "")
+    if digits.isdigit():
+        if len(digits) == 18:
+            return "US"
+        if len(digits) == 14:
+            return "KR"
+    return None
+
+
 _CANON_URL_KEYS = ("filing_url", "source_url")
 _PROV_KEYS = {"filing_url", "source_url", "accession_number", "cik", "url", "ticker",
               "market", "currency", "period", "fiscal_period", "source"}

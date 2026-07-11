@@ -51,6 +51,18 @@
 
 ---
 
+## 1-9. 근거 뷰어 관련 (2026-07-11 evidence-pipeline fix에서 확인됨)
+- [ ] **OpenDART 사용한도**: 전체 유니버스 파이프라인이 일일 한도(무료 키 2만 건)를 소진하면
+  그날의 KR 공시 뷰어(문서 fetch)가 전부 죽어요(지금은 캐시 공유로 대부분 흡수되지만, 새 공시는
+  여전히 라이브 fetch). [opendart.fss.or.kr](https://opendart.fss.or.kr) → 사용현황 확인,
+  한도 상향 신청 또는 인제스트용/서빙용 키 분리 검토
+- [ ] **재빌드 + 재기동 필요**: 이번 픽스는 `docker-compose.yml`(worker에 `datasets_data:/data`
+  볼륨 추가)을 바꿨어요 — worker 컨테이너를 **recreate**해야 인제스트 시 공시 HTML 캐시가
+  datasets와 공유돼요 (`docker compose up -d --build datasets worker agent-engine rag studio-api web`)
+- [ ] (로컬 스택만) **Vertex 리랭커 프로젝트 설정**: rag 로그에 `RESOURCE_PROJECT_INVALID`가 찍히면
+  GCP 프로젝트/SA env가 memory의 구성(chungjin-456905, value-graph@ SA)과 다른 것 — `.env`의
+  RAG_GCP_* 값을 확인하세요 (검색은 fail-safe로 동작하지만 리랭킹 품질이 빠져요)
+
 ## 2. 바이럴·품질 (선택이지만 효과 큼)
 - [ ] **Kakao JS 키** (V-6 카톡 리치 공유): developers.kakao.com 같은 앱 → JavaScript 키 + Web 플랫폼 도메인 등록 → `NEXT_PUBLIC_KAKAO_JS_KEY` (키가 오면 V-6 구현 착수 가능)
 - [ ] **RAG 코퍼스 재인제스트** (RQ-9 — 검색 품질 최대 지렛대): 유니버스 재인제스트 + transcript US/KR + era news

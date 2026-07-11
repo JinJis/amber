@@ -85,9 +85,14 @@ async def _proxy(method, path, request, *, connector_id, cost=0, project_id=None
     headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP}
     if extra_headers:
         headers.update(extra_headers)
+    # RAG-bound requests (semantic search/ingest) embed via an external model API and can run
+    # long under concurrent ingest — give them their own budget instead of the global cap, so a
+    # slow search degrades a turn's latency rather than silently dropping its RAG evidence.
+    timeout = settings.rag_http_timeout_seconds if base_url == settings.rag_url else settings.http_timeout_seconds
     started = time.monotonic()
     try:
-        upstream = await _client.request(method, url, content=await request.body(), headers=headers)
+        upstream = await _client.request(method, url, content=await request.body(),
+                                         headers=headers, timeout=timeout)
     except httpx.HTTPError as exc:
         if project_id:
             _audit(project_id, key_id, ACTION_ERROR, f"{method} {path}: {exc}")

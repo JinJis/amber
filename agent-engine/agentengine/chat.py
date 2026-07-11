@@ -31,7 +31,7 @@ from agentengine.config import settings
 from agentengine.evidence import evidence_url_for_answer
 from agentengine.models import AgentSpec
 from agentengine.planner import get_planner
-from agentengine.provenance import _canonical_provenance, _market_hint
+from agentengine.provenance import _canonical_provenance, _market_from_link, _market_hint
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +178,25 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
     artifacts: list[dict] = []
     art_objs: list = []          # the Artifact objects → enrich with chart markers post-loop
     seen_artifacts: set = set()
-    seen_cites: set = set()
+    # dedup with MERGE: a duplicate (same source+url, or same url under another label) fills the
+    # survivor's missing fields (evidence anchor, table, computation) instead of being dropped —
+    # two tools citing one document must yield one card carrying ALL the evidence.
+    from agentengine.citations import citation_key, merge_citation
+    seen_cites: dict = {}      # citation_key → the surviving citation dict
+    seen_cite_urls: dict = {}  # url → the surviving citation dict (cross-label collapse)
+
+    def _add_citation(cit: dict) -> bool:
+        """Register a streamed citation; False → a survivor absorbed it (don't emit/append)."""
+        key = citation_key(cit.get("source"), cit.get("url"), cit.get("tool"))
+        survivor = seen_cites.get(key) or (seen_cite_urls.get(cit.get("url")) if cit.get("url") else None)
+        if survivor is not None:
+            merge_citation(survivor, cit)
+            return False
+        seen_cites[key] = cit
+        if cit.get("url"):
+            seen_cite_urls[cit["url"]] = cit
+        return True
+
     answered = False
     refined = False              # run the verify/refine pass once, just before synthesis
     final_text = ""
@@ -318,10 +336,8 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                 # fills live as each sub-agent lands, not in one dump after the slowest one.
                 for c in res.citations:
                     cit = c.model_dump()
-                    key = (cit.get("source"), cit.get("url"))
-                    if key in seen_cites:
+                    if not _add_citation(cit):
                         continue
-                    seen_cites.add(key)
                     cit["index"] = len(citations) + 1
                     citations.append(cit)
                     yield {"type": "citation", **cit}
@@ -417,10 +433,8 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
                 before = len(citations)
                 for c in _citations(tool, result):
                     cit = c.model_dump()
-                    key = (cit.get("source"), cit.get("url"))
-                    if key in seen_cites:  # de-dup repeated sources across tool calls
+                    if not _add_citation(cit):  # de-dup (merge) repeated sources across tool calls
                         continue
-                    seen_cites.add(key)
                     cit["index"] = len(citations) + 1  # 1-based [n] anchor
                     citations.append(cit)
                     cite_ctx.append((cit, tool, d.args or {}, result.get("data")))
@@ -469,8 +483,8 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
     for cit, tool, _args, data in cite_ctx:
         if not isinstance(data, dict):
             continue
-        market = _market_hint(tool, data)
-        _, accn, cik = _canonical_provenance(data)
+        _url, accn, cik = _canonical_provenance(data)
+        market = _market_hint(tool, data) or _market_from_link(_url or cit.get("url"), accn)
         new_url = evidence_url_for_answer(data, cit.get("page") or accn, cik, market, final_text)
         if new_url:
             cit["evidence_image_url"] = new_url
@@ -495,7 +509,9 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
     if rag_tool and cite_ctx and final_text:
         from agentengine.passages import enrich_listing_passages, looks_like_title
         search_tool = tools.get("datasets_store__filing_search") if isinstance(tools, dict) else None
-        targets = [(cit, _market_hint(tool, data), (args or {}).get("ticker"))
+        targets = [(cit,
+                    _market_hint(tool, data) or _market_from_link(cit.get("url"), cit.get("page")),
+                    (args or {}).get("ticker"))
                    for cit, tool, args, data in cite_ctx
                    if cit.get("kind") == "filing" and cit.get("used") and cit.get("page")
                    and looks_like_title(cit.get("snippet"))]

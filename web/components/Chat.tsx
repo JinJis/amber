@@ -33,14 +33,17 @@ import type {
 
 // Map a citation-carrying SSE event (streamed `citation` or the `done` list) to a Citation.
 // cadence/category ride along so a pinned widget knows if it can carry an alert; table +
-// evidence_image_url let the source card reach the original filing/page.
-function toCitation(ev: any): Citation {
+// evidence_image_url let the source card reach the original filing/page; computation renders
+// the 계산 근거 (DerivationCard) and confidence(+why) the 신뢰 badge — dropping any of these
+// here silently kills its UI (the DerivationCard never rendered live because of exactly that).
+export function toCitation(ev: any): Citation {
   return {
     tool: ev.tool, source: ev.source, url: ev.url, index: ev.index, kind: ev.kind,
     doc_type: ev.doc_type, as_of: ev.as_of, freshness: ev.freshness,
     cadence: ev.cadence, category: ev.category,
     snippet: ev.snippet, ticker: ev.ticker, page: ev.page,
     table: ev.table, evidence_image_url: ev.evidence_image_url, used: ev.used,
+    computation: ev.computation, confidence: ev.confidence, confidence_why: ev.confidence_why,
   };
 }
 
@@ -155,7 +158,13 @@ export default function Chat({ name, email, image, features, guest = false, prov
         audit: m.audit ?? undefined,    // persisted → 판정 + 본문 수치 하이라이트 survive reload
         hook: (m as { hook?: string | null }).hook ?? undefined,
         suggestions: m.suggestions ?? [],  // persisted → 더 파고들기 chips survive reload
-        used: (m.citations ?? []).map((c) => c.index).filter((n): n is number => n != null),
+        // 인용/참고 구분은 인용 JSON 안의 per-citation `used` 플래그로 복원한다 — 전체 index를
+        // used로 승격하면 재열람 시 '참고만 한 출처' 접힘이 사라지고 출처 수가 부풀려진다.
+        used: (() => {
+          const flagged = (m.citations ?? []).filter((c) => c.used && c.index != null).map((c) => c.index!);
+          return flagged.length ? flagged
+            : (m.citations ?? []).map((c) => c.index).filter((n): n is number => n != null);
+        })(),
       })));
       // resume an in-flight answer: if this conversation is still generating, tail its run live
       const ar = await fetch(`/api/conversations/${id}/active-run`);

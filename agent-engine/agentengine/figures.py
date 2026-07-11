@@ -58,11 +58,23 @@ def _shape_table(rows: list[dict], period_key: str, cols, period_label: str):
     return snippet or None, table
 
 
+def _statements_root(data):
+    """`/financials` nests the three statements under a top-level ``financials`` wrapper
+    ({"financials": {"income_statements": […], …}}) while the per-statement routes return them
+    at the top level — normalize so every extractor sees one shape. Without this the combined
+    endpoint produced citations with NO table/snippet/evidence anchor (the 재무제표 preview
+    regression)."""
+    if isinstance(data, dict) and isinstance(data.get("financials"), dict):
+        return data["financials"]
+    return data
+
+
 def _evidence(tool: dict, data) -> tuple[str | None, list[list[str]] | None]:
     """The specific figures a structured result contributed — a one-line computation
     summary + a small extracted table — so the preview shows real data, not a label."""
     if not isinstance(data, dict):
         return None, None
+    data = _statements_root(data)
     if isinstance(data.get("metrics"), list):
         return _shape_table(data["metrics"], "report_period", _METRIC_COLS, "기간")
     if isinstance(data.get("income_statements"), list):

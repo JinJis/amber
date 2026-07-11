@@ -4,8 +4,8 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ContextPanel, TrustStrip } from "../components/EvidencePanel";
 import { linkifyCitations } from "../components/Chat";
-import { trustSummary } from "../lib/evidence";
-import type { Msg } from "../lib/types";
+import { evidenceOf, trustSummary } from "../lib/evidence";
+import type { Citation, Msg } from "../lib/types";
 
 afterEach(cleanup);
 
@@ -103,6 +103,52 @@ describe("근거 패널 v3 — 수집 중 뷰 (스트리밍)", () => {
     // 판정·원장·인용/참고 구분은 아직 없음 — 완료 시에만
     expect(screen.queryByTestId("trust-strip")).toBeNull();
     expect(screen.queryByTestId("ctx-used")).toBeNull();
+  });
+});
+
+// 대화 리로드 경로: Chat.openConversation은 per-citation `used` 플래그에서 m.used를 복원한다
+// (플래그가 하나도 없으면 전체 index로 폴백). 패널의 인용/참고 파티션은 그 결과를 evidenceOf로
+// 읽는다 — 여기서 그 파티션 계약을 고정한다 (리로드 시 '참고만 한 출처' 접힘이 사라지면 회귀).
+describe("evidenceOf — 리로드된 메시지의 인용/참고 파티션", () => {
+  const cites: Citation[] = [
+    { index: 1, kind: "filing", source: "SEC EDGAR", used: true },
+    { index: 2, kind: "news", source: "참고 기사", url: "http://n" },        // consulted-only
+    { index: 3, kind: "data", source: "재무 스냅샷", used: true },
+  ];
+  // Chat.openConversation의 복원 로직과 동일한 파생 (플래그된 index → m.used)
+  const derivedUsed = (cs: Citation[]) => {
+    const flagged = cs.filter((c) => c.used && c.index != null).map((c) => c.index!);
+    return flagged.length ? flagged : cs.map((c) => c.index).filter((n): n is number => n != null);
+  };
+
+  it("used 플래그가 있으면 그 인용만 '인용한 출처'로, 나머지는 참고로 남는다", () => {
+    const m: Msg = { role: "assistant", content: "", citations: cites, used: derivedUsed(cites) };
+    const used = evidenceOf(m);
+    expect(used.map((c) => c.index)).toEqual([1, 3]);
+    // EvidencePanel이 기대는 여집합: 참고만 한 출처
+    const others = cites.filter((c) => !used.includes(c));
+    expect(others.map((c) => c.index)).toEqual([2]);
+  });
+
+  it("플래그가 하나도 없으면 전체 index로 폴백한다 (아무것도 숨기지 않음)", () => {
+    const bare = cites.map(({ used: _u, ...c }) => c);
+    const m: Msg = { role: "assistant", content: "", citations: bare, used: derivedUsed(bare) };
+    expect(evidenceOf(m).map((c) => c.index)).toEqual([1, 2, 3]);
+  });
+
+  it("m.used가 없거나 비면 전체 인용을 반환한다 (evidenceOf 자체 폴백)", () => {
+    expect(evidenceOf({ role: "assistant", content: "", citations: cites } as Msg)).toHaveLength(3);
+    expect(evidenceOf({ role: "assistant", content: "", citations: cites, used: [] } as Msg)).toHaveLength(3);
+  });
+
+  it("리로드 형태의 메시지로 패널을 그리면 인용 2 · 참고 1로 나뉜다", () => {
+    const m: Msg = {
+      role: "assistant", content: "매출 [1] 과 PER [3].",
+      citations: cites, used: derivedUsed(cites),
+    };
+    render(<ContextPanel {...panelProps} msg={m} />);
+    expect(screen.getByTestId("ctx-used").textContent).toContain("인용한 출처 2");
+    expect(screen.getByTestId("ctx-others").textContent).toContain("참고만 한 출처 1");
   });
 });
 

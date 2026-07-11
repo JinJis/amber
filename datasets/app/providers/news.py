@@ -58,17 +58,25 @@ class GoogleNewsProvider:
             root = ElementTree.fromstring(text)
         except ElementTree.ParseError:
             return []
+        from app.store.gnews_resolve import decode_local
+
         out: list[News] = []
         for item in root.iter("item"):
             title = item.findtext("title")
             source_el = item.find("source")
+            # The RSS <link> is a news.google.com interstitial (client-side JS redirect), which
+            # the in-app evidence viewer can never render. When the article id still base64-embeds
+            # the publisher URL, decode it locally (zero network cost) so the citation carries the
+            # REAL article; opaque ids keep the google link (resolved lazily at evidence-view time).
+            link = item.findtext("link")
+            url = (decode_local(link) if link else None) or link
             out.append(
                 News(
                     ticker=ticker.upper() if ticker and market is Market.US else ticker,
                     title=title,
                     source=source_el.text if source_el is not None else None,
                     date=_to_date(item.findtext("pubDate")),
-                    url=item.findtext("link"),
+                    url=url,
                 )
             )
             if len(out) >= limit:

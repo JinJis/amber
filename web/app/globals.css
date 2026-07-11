@@ -1157,6 +1157,7 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .fv-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 14px; padding: 40px; text-align: center; }
 .fv-empty-quote { color: var(--text-2); font-size: 14px; line-height: 1.6; max-width: 460px; }
+.fv-empty-why { color: var(--muted); font-size: 12px; max-width: 460px; }
 .fv-empty-link { color: #fff; background: var(--ink); border-radius: 8px; padding: 9px 16px;
   text-decoration: none; font-size: 13px; }
 

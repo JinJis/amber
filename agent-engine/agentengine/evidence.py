@@ -78,6 +78,9 @@ def _statement_url(market, data, accn, cik) -> str | None:
     """Financial statements (income / balance / cash-flow) → /evidence for the newest
     period's first available headline figure. US anchors candidate us-gaap concepts; KR
     anchors the field name directly (the DART matcher resolves it to the account label)."""
+    from agentengine.figures import _statements_root
+
+    data = _statements_root(data)
     for key, headlines in _STATEMENT_HEADLINES:
         rows = [r for r in (data.get(key) or []) if isinstance(r, dict) and r.get("report_period")]
         rows.sort(key=lambda r: str(r.get("report_period")), reverse=True)
@@ -138,6 +141,9 @@ def evidence_url_for_answer(data, accn, cik, market, answer: str | None) -> str 
     m = (market or "").upper()
     if m not in ("US", "KR") or not accn or not isinstance(data, dict) or not answer:
         return _evidence_url(data, accn, cik, market)
+    from agentengine.figures import _statements_root
+
+    data = _statements_root(data)
     for key, fields in _STATEMENT_HEADLINES:
         rows = [r for r in (data.get(key) or []) if isinstance(r, dict) and r.get("report_period")]
         rows.sort(key=lambda r: str(r.get("report_period")), reverse=True)
@@ -161,6 +167,9 @@ def _evidence_url(data, accn, cik, market) -> str | None:
     m = (market or "").upper()
     if m not in ("US", "KR") or not accn or not isinstance(data, dict):
         return None
+    from agentengine.figures import _statements_root
+
+    data = _statements_root(data)
     if m == "KR":  # DART has no as-reported XBRL — statement figures only
         return _statement_url("KR", data, accn, cik)
     # US as-reported: explicit us-gaap concept per line item

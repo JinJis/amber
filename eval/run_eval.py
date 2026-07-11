@@ -103,6 +103,7 @@ def chat_messages(messages: list[dict], agent_id: str) -> dict:
     tools, statuses, cites, ans, arts, cads = [], [], [], [], [], []
     audit = {}
     confs, suggestions, subagents, cite_urls, cite_comps = [], [], {}, [], []
+    cite_evidence = []   # evidence_image_url — the in-app viewer's document+highlight anchor
     clarify = None
     refused = None
     for line in raw.decode("utf-8", "replace").splitlines():
@@ -125,6 +126,8 @@ def chat_messages(messages: list[dict], agent_id: str) -> dict:
                 cite_comps.append(ev["computation"])
             if ev.get("url"):                # the external source page the in-app viewer renders
                 cite_urls.append(ev["url"])
+            if ev.get("evidence_image_url"):  # in-app document viewer anchor (market/accession/…)
+                cite_evidence.append(ev["evidence_image_url"])
             if ev.get("cadence"):
                 cads.append(ev["cadence"])
             if ev.get("confidence"):
@@ -155,9 +158,11 @@ def chat_messages(messages: list[dict], agent_id: str) -> dict:
                     cite_urls.append(c["url"])
                 if isinstance(c, dict) and isinstance(c.get("computation"), dict):
                     cite_comps.append(c["computation"])
+                if isinstance(c, dict) and c.get("evidence_image_url"):
+                    cite_evidence.append(c["evidence_image_url"])
     return {"http": code, "tools": tools, "statuses": statuses, "citations": cites,
             "artifacts": arts, "cadences": cads, "confidences": confs, "cite_urls": cite_urls,
-            "cite_computations": cite_comps, "audit": audit,
+            "cite_computations": cite_comps, "cite_evidence": cite_evidence, "audit": audit,
             "clarify": clarify, "subagents": list(subagents.values()), "suggestions": suggestions,
             "answer": "".join(ans).strip(), "refused": bool(refused)}
 
@@ -222,6 +227,7 @@ def run_scenario_desk_feed(sc: dict) -> dict:
     cites = sorted({(ci.get("source") or "?") for c in cards for ci in (c.get("citations") or [])})
     return {"tools": feed.get("used_tools") or [], "statuses": [code], "citations": cites,
             "answer": answer, "cards": cards, "artifacts": [], "cadences": [], "cite_urls": [],
+            "cite_evidence": [],
             "confidences": [], "suggestions": [], "subagents": {}, "clarify": None, "refused": False}
 
 
@@ -350,6 +356,16 @@ def grade(checks: dict, r: dict) -> list[tuple[str, bool, str]]:
         ok = any(isinstance(c, dict) and c.get("method")
                  and (c.get("inputs") or c.get("assumptions") or c.get("steps")) for c in comps)
         out.append(("emits computation trace", ok, f"computations={[(c or {}).get('method') for c in comps]}"))
+    if "expect_evidence_anchor" in checks:
+        # EV-FIX: a citation must carry an /evidence?… anchor (market+accession) so the in-app
+        # viewer can render the ORIGINAL document and highlight the cited element. `True` = any
+        # anchor with an accession; a string asserts a substring (e.g. "market=US").
+        want = checks["expect_evidence_anchor"]
+        anchors = r.get("cite_evidence") or []
+        ok = (any("accession=" in (a or "") for a in anchors) if want is True
+              else any(want in (a or "") for a in anchors))
+        out.append((f"carries evidence anchor {want if want is not True else ''}".strip(), ok,
+                    f"anchors={anchors[:3]}"))
     if "expect_cite_url" in checks:
         # the source-page viewer: a citation must carry an external source URL (so the in-app viewer
         # can render + highlight it). A substring asserts it points at the expected host.

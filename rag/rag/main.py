@@ -6,6 +6,10 @@ the same service runs CPU-OSS, GCP (Vertex), or GPU without code changes.
 
 from __future__ import annotations
 
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 
 from rag.config import settings
@@ -16,9 +20,31 @@ from rag.search import search as run_search
 
 setup_logging()
 
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # Warm the query embedder in the background: the OSS backends load their model lazily on
+    # the FIRST search, which can exceed the gateway's HTTP timeout — that turn's rag__search
+    # then 502'd and the answer silently lost its RAG evidence. Best-effort: a warmup failure
+    # just means the first search pays the model load like before.
+    async def _warm() -> None:
+        try:
+            from rag.embeddings import get_embedder
+
+            await get_embedder().embed_query("warmup")
+            logging.getLogger("rag").info("embedder warmed")
+        except Exception as exc:  # noqa: BLE001 — warmup must never block startup
+            logging.getLogger("rag").warning("embedder warmup skipped: %s", exc)
+
+    task = asyncio.create_task(_warm())
+    yield
+    task.cancel()
+
+
 app = FastAPI(
     title="Platform RAG", version="0.1.0",
     description="Provenance-first RAG with pluggable embedding/reranker/store backends.",
+    lifespan=_lifespan,
 )
 install_request_logging(app)
 

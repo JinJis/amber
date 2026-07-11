@@ -29,7 +29,11 @@ class TTLCache:
         self._lock = asyncio.Lock()                       # guards _store + _inflight
         self._inflight: dict[str, asyncio.Lock] = {}      # per-key single-flight locks
 
-    async def get_or_set(self, key: str, factory: Callable[[], Awaitable[T]]) -> T:
+    async def get_or_set(self, key: str, factory: Callable[[], Awaitable[T]],
+                         ttl_seconds: int | None = None) -> T:
+        """``ttl_seconds`` overrides the default TTL for this key — for slow-changing bulk
+        loads (the DART corp registry changes ~daily; re-downloading the multi-MB zip every
+        15 minutes wastes the OpenDART quota the evidence viewer also depends on)."""
         async with self._lock:
             hit = self._store.get(key)
             if hit is not None and hit[0] > time.monotonic():
@@ -43,7 +47,7 @@ class TTLCache:
                     return hit[1]  # type: ignore[return-value]
             value = await factory()  # only one caller per key reaches here; failures aren't cached
             async with self._lock:
-                self._store[key] = (time.monotonic() + self._ttl, value)
+                self._store[key] = (time.monotonic() + (ttl_seconds or self._ttl), value)
             return value
 
     def clear(self) -> None:

@@ -2163,6 +2163,25 @@ def test_ticker_is_required_where_a_company_is_mandatory():
     assert not ticker_required("google_news", "news")          # general feed
 
 
+def test_filings_resources_expose_filing_type_param():
+    # The unfiltered filings feed is dominated by high-frequency noise (US: insider Form 4s;
+    # KR: 지분/소유 reports) — BOTH markets' manifests must advertise the filing_type filter so
+    # an agent asked about a 사업보고서/10-K can pull the report it actually means.
+    from app.connectors.catalog import get_connector
+
+    for cid in ("sec_edgar", "opendart"):
+        res = next(r for r in get_connector(cid).resources if r.name == "filings")
+        ft = next((p for p in res.params if p.name == "filing_type"), None)
+        assert ft is not None, f"{cid}.filings lacks a filing_type param"
+        assert ft.description, f"{cid}.filings filing_type needs guidance for the planner"
+    # the guidance is market-specific (10-K vs 사업보고서), not a shared copy-paste
+    us = next(r for r in get_connector("sec_edgar").resources if r.name == "filings")
+    kr = next(r for r in get_connector("opendart").resources if r.name == "filings")
+    us_ft = next(p.description for p in us.params if p.name == "filing_type")
+    kr_ft = next(p.description for p in kr.params if p.name == "filing_type")
+    assert "10-K" in us_ft and "사업보고서" in kr_ft and us_ft != kr_ft
+
+
 def test_catalog_resource_paths_are_real_routes():
     from fastapi.routing import APIRoute
 

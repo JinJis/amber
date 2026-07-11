@@ -12,6 +12,7 @@ is the 6-digit ``stock_code``. The resolver below bridges the two and is cached.
 from __future__ import annotations
 
 import io
+import time
 import zipfile
 from datetime import date
 from xml.etree import ElementTree
@@ -61,8 +62,41 @@ def _key() -> str:
     return settings.opendart_api_key
 
 
+_CORP_MAP_TTL = 24 * 3600     # the registry changes ~daily; the bulk zip is meant to be fetched ~once/day
+_QUOTA_BLOCK_TTL = 600.0      # after a quota error, fail fast for a while instead of re-downloading
+_quota_blocked_until = 0.0    # monotonic deadline while the key is known 사용한도-초과
+
+
+def _parse_error_envelope(content: bytes) -> tuple[str | None, str | None]:
+    """OpenDART signals errors as HTTP 200 + a small XML envelope — (status, message) or None."""
+    if len(content) > 2048 or not content.lstrip().startswith(b"<?xml"):
+        return None, None
+    try:
+        root = ElementTree.fromstring(content.decode("utf-8", errors="replace"))
+    except ElementTree.ParseError:
+        return None, None
+    return root.findtext("status"), root.findtext("message")
+
+
+def mark_quota_blocked() -> None:
+    """Remember that the key is over its daily 사용한도 so every OpenDART consumer fails fast
+    (honest 503) instead of burning further calls against a blocked key."""
+    global _quota_blocked_until
+    _quota_blocked_until = time.monotonic() + _QUOTA_BLOCK_TTL
+
+
+def quota_blocked() -> bool:
+    return time.monotonic() < _quota_blocked_until
+
+
 async def _corp_map() -> dict[str, dict]:
-    """stock_code(6) -> {corp_code, corp_name}."""
+    """stock_code(6) -> {corp_code, corp_name}.
+
+    Cached for a day (not the global 15-min TTL): every KR request needs this map, and
+    re-downloading the multi-MB corpCode.xml zip hundreds of times a day both trips OpenDART's
+    bulk-abuse throttling and burns the daily quota the evidence viewer shares. A quota error
+    (status 020/021) is negative-cached briefly so a blocked key fails fast with the honest
+    message instead of hammering the endpoint on every request."""
 
     async def _load() -> dict[str, dict]:
         content = await fetch_bytes(
@@ -72,7 +106,12 @@ async def _corp_map() -> dict[str, dict]:
             zf = zipfile.ZipFile(io.BytesIO(content))
             xml = zf.read(zf.namelist()[0])
         except (zipfile.BadZipFile, IndexError) as exc:
-            raise upstream_error("opendart", f"corpCode.xml not a zip: {exc}")
+            status, message = _parse_error_envelope(content)
+            if status in ("020", "021"):
+                mark_quota_blocked()
+            raise upstream_error(
+                "opendart",
+                f"{status}: {message}" if status else f"corpCode.xml not a zip: {exc}")
         root = ElementTree.fromstring(xml)
         out: dict[str, dict] = {}
         for node in root.iter("list"):
@@ -84,7 +123,9 @@ async def _corp_map() -> dict[str, dict]:
                 }
         return out
 
-    return await cache.get_or_set("dart:corp_map", _load)
+    if quota_blocked():
+        raise upstream_error("opendart", "020: 사용한도를 초과하였습니다 (quota blocked — cached)")
+    return await cache.get_or_set("dart:corp_map", _load, ttl_seconds=_CORP_MAP_TTL)
 
 
 async def _corp_code(ref: SecurityRef) -> str:
@@ -98,12 +139,16 @@ async def _corp_code(ref: SecurityRef) -> str:
 
 
 async def _dart_json(path: str, params: dict) -> dict:
+    if quota_blocked():
+        raise upstream_error("opendart", "020: 사용한도를 초과하였습니다 (quota blocked — cached)")
     params = {"crtfc_key": _key(), **params}
     data = await fetch_json("opendart", f"{_BASE}/{path}", params=params)
     status = data.get("status")  # type: ignore[union-attr]
     if status == "013":  # no data
         return {"status": status, "list": []}
     if status and status != "000":
+        if status in ("020", "021"):
+            mark_quota_blocked()
         raise upstream_error("opendart", f"{status}: {data.get('message')}")
     return data  # type: ignore[return-value]
 

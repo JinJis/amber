@@ -83,6 +83,51 @@ async def test_ingest_deck_parses_and_indexes(monkeypatch, tmp_path):
     assert pdf and pdf.startswith(b"%PDF")
 
 
+@pytest.mark.asyncio
+async def test_get_deck_pdf_refetches_on_cache_miss(monkeypatch, tmp_path):
+    # a cited deck whose cache file is gone (lost volume / other host) is re-resolved from SEC
+    # and re-fetched into the cache — the citation still opens.
+    monkeypatch.setattr(DI.settings, "evidence_docs_dir", str(tmp_path))
+    monkeypatch.setattr(DI, "recent_decks", lambda tk, limit: _coro([
+        {"accession": "a-8k1", "ticker": "AAPL", "filed": "2024-07-30", "title": "Earnings",
+         "pdf_url": "https://sec.test/ex992-deck.pdf"}]))
+    monkeypatch.setattr(DI, "_fetch_pdf", lambda url: _coro(b"%PDF-1.4 refetched deck"))
+
+    pdf = await DI.get_deck_pdf("DECK:AAPL:a-8k1")
+    assert pdf == b"%PDF-1.4 refetched deck"
+    cache = DI._cache_path("AAPL", "a-8k1")
+    assert cache.exists() and cache.read_bytes() == pdf     # cache file written
+
+    # second call is cache-first: the resolver must not run again
+    def boom(*a, **k):
+        raise AssertionError("recent_decks must not be called on a cache hit")
+    monkeypatch.setattr(DI, "recent_decks", boom)
+    assert await DI.get_deck_pdf("DECK:AAPL:a-8k1") == b"%PDF-1.4 refetched deck"
+
+
+@pytest.mark.asyncio
+async def test_get_deck_pdf_none_when_accession_not_among_recent(monkeypatch, tmp_path):
+    monkeypatch.setattr(DI.settings, "evidence_docs_dir", str(tmp_path))
+    monkeypatch.setattr(DI, "recent_decks", lambda tk, limit: _coro([
+        {"accession": "some-other", "ticker": "AAPL", "pdf_url": "https://sec.test/other.pdf"}]))
+
+    def boom(url):
+        raise AssertionError("no matching deck → nothing must be fetched")
+    monkeypatch.setattr(DI, "_fetch_pdf", boom)
+    assert await DI.get_deck_pdf("DECK:AAPL:a-8k1") is None
+    assert list(tmp_path.rglob("*.pdf")) == []               # and nothing cached
+
+
+@pytest.mark.asyncio
+async def test_get_deck_pdf_not_a_deck_accession(monkeypatch, tmp_path):
+    monkeypatch.setattr(DI.settings, "evidence_docs_dir", str(tmp_path))
+
+    def boom(*a, **k):
+        raise AssertionError("a non-deck accession must resolve nothing")
+    monkeypatch.setattr(DI, "recent_decks", boom)
+    assert await DI.get_deck_pdf("TR:AAPL:2024Q3") is None   # a transcript, not a deck
+
+
 def test_chunks_to_docs_carries_page_and_synthetic_accession():
     docs = DI._chunks_to_docs(
         {"ticker": "AAPL", "accession": "a-8k1", "pdf_url": "u", "filed": "2024-07-30"},

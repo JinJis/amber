@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     admin_token: str = "dev-admin-token"
     rate_limit_per_minute: int = 120
     http_timeout_seconds: float = 30.0
+    # RAG search embeds the query via an external model API and can run long under concurrent
+    # ingest — a 30s proxy cap silently dropped ALL RAG evidence from a turn (502). RAG-bound
+    # requests get their own, longer budget.
+    rag_http_timeout_seconds: float = 90.0
 
 
 settings = Settings()

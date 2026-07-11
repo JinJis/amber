@@ -8,6 +8,7 @@ backed the answer (evidence vs merely consulted).
 
 from __future__ import annotations
 
+import re
 from urllib.parse import quote
 
 from agentengine.evidence import _evidence_url, filing_evidence_url, rag_evidence_url
@@ -16,6 +17,7 @@ from agentengine.models import Citation, Computation
 from agentengine.provenance import (
     _canonical_provenance,
     _filing_link,
+    _market_from_link,
     _market_hint,
     _rag_link,
 )
@@ -130,6 +132,9 @@ def _rag_citations(tool: dict, data) -> list[Citation] | None:
         seen.add(key)
         as_of = prov.get("as_of")
         text = (h or {}).get("text") or ""
+        # a "[Item 1A …]" / "[제2장 …]" heading prefix is chunker metadata, not document text —
+        # strip it so the snippet reads clean AND the viewer's text-highlight needle can match.
+        text = re.sub(r"^\[[^\]]{1,80}\]\s*", "", text)
         # news/web passages get a text-fragment deep link so opening the source highlights the
         # cited passage in the live page; filing passages keep a clean url (the in-app viewer highlights them).
         is_news = (prov.get("doc_type") or "").lower() == "news" and not prov.get("accession")
@@ -148,7 +153,13 @@ def _rag_citations(tool: dict, data) -> list[Citation] | None:
 
 def _citations(tool: dict, result: dict) -> list[Citation]:
     """Build the tool's citations and stamp each with the source's periodicity + category (from
-    the catalog tool dict) so the pin→alert flow can gate on it downstream."""
+    the catalog tool dict) so the pin→alert flow can gate on it downstream.
+
+    A FAILED call (non-200 / no data) contributes nothing: previously it still produced a bare
+    catalog-label card ('Platform RAG (filings/news)', no url, no snippet) that polluted the
+    evidence panel with sources the answer never used."""
+    if result.get("status") != 200 or result.get("data") is None:
+        return []
     cites = _build_citations(tool, result)
     cad, cat = tool.get("cadence"), tool.get("category")
     for c in cites:
@@ -220,7 +231,10 @@ def _build_citations(tool: dict, result: dict) -> list[Citation]:
             if not u or u in seen:
                 continue
             seen.add(u)
-            fa = f.get("filed") or f.get("report_period") or f.get("as_of")
+            # datasets Filing rows serialize `filing_date`/`report_date` — without them every
+            # listing citation shipped as_of=None (empty freshness dot on the card).
+            fa = (f.get("filed") or f.get("filing_date") or f.get("report_date")
+                  or f.get("report_period") or f.get("as_of"))
             fa = str(fa)[:10] if fa else None
             form = f.get("form") or f.get("filing_type")
             # 8-K fix: a real summary (8-K event labels / doc description), not a bare form label —
@@ -232,7 +246,8 @@ def _build_citations(tool: dict, result: dict) -> list[Citation]:
             accn = f.get("accession_number")
             cik = f.get("cik") or _cik_from_url(u)
             hl = _first_item_header(f.get("items"))
-            ev = filing_evidence_url(market, accn, cik, hl) if accn else None
+            row_market = market or _market_from_link(u, accn)
+            ev = filing_evidence_url(row_market, accn, cik, hl) if accn else None
             out.append(Citation(
                 tool=tool["name"], source=src, url=u, kind="filing", as_of=fa,
                 freshness=compute_freshness(fa), page=accn, doc_type=form,
@@ -243,6 +258,7 @@ def _build_citations(tool: dict, result: dict) -> list[Citation]:
     # link to the exact filing they came from — not a label or a directory listing.
     as_of = _latest_date(data)
     url, accn, cik = _canonical_provenance(data)        # canonical filing link / accession
+    market = market or _market_from_link(url, accn)     # recover from the row's own provenance
     if not url and accn:                                # build it from the identifier
         url = _filing_link(market, accn, cik)
     snippet, table = _evidence(tool, data)              # the real figures + extracted table
@@ -252,16 +268,44 @@ def _build_citations(tool: dict, result: dict) -> list[Citation]:
                      computation=_derived_computation(tool, data))]
 
 
+_MERGE_FIELDS = ("evidence_image_url", "computation", "table", "snippet",
+                 "as_of", "freshness", "doc_type", "ticker", "page")
+
+
+def merge_citation(survivor, incoming) -> None:
+    """Fill the survivor's gaps from a duplicate — two tools citing the same document often
+    carry complementary fields (one has the in-app evidence anchor, the other the summary).
+    Dropping the duplicate must not drop its evidence. Works on Citation objects or dicts."""
+    get = (lambda o, k: o.get(k)) if isinstance(survivor, dict) else getattr
+    put = (lambda o, k, v: o.__setitem__(k, v)) if isinstance(survivor, dict) else setattr
+    for k in _MERGE_FIELDS:
+        if get(survivor, k) is None and get(incoming, k) is not None:
+            put(survivor, k, get(incoming, k))
+
+
+def citation_key(source, url, tool=None) -> tuple:
+    """Dedup identity: (source, url); a url-less citation (derived figures) falls back to the
+    tool name so two derived tools on the same connector don't collapse into one card."""
+    return (source, url) if url else (source, tool)
+
+
 def dedup_citations(cites: list[Citation]) -> list[Citation]:
-    """Collapse repeats — the same (source, url) cited by several tool calls should
-    appear once (fixes the '📎 OpenDART · 📎 OpenDART · …' repetition)."""
-    seen: set = set()
+    """Collapse repeats — the same (source, url) cited by several tool calls should appear once
+    (fixes the '📎 OpenDART · 📎 OpenDART · …' repetition). Two collapses, both merging instead
+    of dropping fields: the exact key, and the same url under a DIFFERENT source label (e.g.
+    'SEC EDGAR' vs '공시 (SEC/DART)' for one 8-K — one card, all evidence kept)."""
+    by_key: dict = {}
+    by_url: dict = {}
     out: list[Citation] = []
     for c in cites:
-        key = (c.source, c.url)
-        if key in seen:
+        key = citation_key(c.source, c.url, c.tool)
+        survivor = by_key.get(key) or (by_url.get(c.url) if c.url else None)
+        if survivor is not None:
+            merge_citation(survivor, c)
             continue
-        seen.add(key)
+        by_key[key] = c
+        if c.url:
+            by_url[c.url] = c
         c.index = len(out) + 1  # 1-based [n] anchor
         out.append(c)
     return out

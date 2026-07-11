@@ -89,7 +89,10 @@ def _add_missing_columns() -> None:
         "referral_code": "VARCHAR(16)", "referred_by": "VARCHAR(256)",
         "email_verified": ("BOOLEAN DEFAULT true" if dialect == "postgresql" else "BOOLEAN DEFAULT 1")})
     add_cols("messages", {"artifacts": "TEXT", "audit": "TEXT",   # inline figures + number audit
-                          "suggestions": "TEXT"})                 # 더 파고들기 chips survive reload
+                          "suggestions": "TEXT",                  # 더 파고들기 chips survive reload
+                          # V-7 공유 훅 — chat.py의 assistant INSERT가 이 컬럼을 쓰므로, 빠져 있으면
+                          # 오래된 DB에서 답변 저장(인용·아티팩트 영속화)이 통째로 실패한다.
+                          "hook": "VARCHAR(160)"})
     add_cols("share_links", {"expires_at": ts, "og_image": "TEXT"})  # IMP-13 expiry · SH-2b OG image
 
 

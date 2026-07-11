@@ -17,6 +17,9 @@ honoured its data-source restrictions / guardrails.
   forbid_artifact    : NO artifact emitted (a conceptual answer mustn't fabricate a chart/table)
   expect_computation : a self-computed artifact carries its derivation (PH-DATA-6 계산 근거) — True
   expect_cite_url    : a citation carries an external source page URL — a host substring or True
+  expect_evidence_anchor : a citation carries an /evidence?… in-app document anchor (market+
+                       accession → the viewer renders the ORIGINAL filing and highlights the
+                       cited element) — True or a substring (e.g. "market=US")
   expect_cadence     : provenance carries this cadence ("daily"…) or True for any periodic source
   expect_connectors_all : EVERY listed connector was reached (parallel multi-source gather)
   expect_clarify     : the intake offered scoping options (clarify-with-options) — True
@@ -57,6 +60,21 @@ SCENARIOS = [
         "question": "삼성전자(005930)의 가장 최근 연간 매출액을 숫자로 알려줘.",
         "criteria": "삼성전자 연간 매출액을 구체적 숫자(단위 포함)와 회계기간, OpenDART 출처와 함께 제시.",
         "checks": {"expect_connector": "opendart__", "expect_status": 200, "expect_cite": "OpenDART",
+                   "answer_regex": r"\d", "expect_refused": False, "judge": True},
+    },
+    {
+        # EV-FIX (2026-07-11): a 사업보고서/재무제표 question must yield citations the in-app
+        # viewer can OPEN — an /evidence anchor (market+accession) on a filing or statement
+        # citation, and the statements chart. This pins the whole evidence-preview chain
+        # (filing_type-filtered listing / financials-wrapper extraction / evidence URL build).
+        "name": "US 사업보고서 → in-app evidence anchor",
+        "agent": {"name": "Eval Research", "model": "gemini", "data_sources": ALL_SOURCES,
+                  "system_prompt": "Answer with sourced facts and the concrete figure."},
+        "question": "엔비디아(NVDA) 최근 사업보고서랑 재무제표 보여줘.",
+        "criteria": "최근 10-K/10-Q(또는 분기 재무제표)의 핵심 수치를 SEC 출처·회계기간과 함께 제시하고, "
+                    "임원거래(Form 4) 나열로 대체하지 않는다.",
+        "checks": {"expect_connector": "sec_edgar__", "expect_status": 200, "expect_cite": "SEC",
+                   "expect_evidence_anchor": "market=US", "expect_artifact": True,
                    "answer_regex": r"\d", "expect_refused": False, "judge": True},
     },
     {

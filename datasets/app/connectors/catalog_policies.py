@@ -23,6 +23,17 @@ P_TICKER_REQ = ResourceParam(name="ticker", required=True, description="Ticker s
 P_MARKET = ResourceParam(name="market", enum=["US", "KR"], description="Market (default US).")
 P_PERIOD = ResourceParam(name="period", required=True, enum=["annual", "quarterly", "ttm"], description="Reporting period.")
 P_LIMIT = ResourceParam(name="limit", type="integer", description="Max rows.")
+# The filings listing filter — without it the recent-submissions feed is dominated by
+# high-frequency noise (US: insider Form 4s), so a 사업보고서/재무제표 question could never
+# surface the actual report. Values match what /filings/types returns per market.
+P_FILING_TYPE_US = ResourceParam(
+    name="filing_type",
+    description="Filter by form, repeatable — 10-K(연간 사업보고서)·10-Q(분기)·8-K(수시)·20-F·6-K·4(임원 거래). "
+                "사업보고서·연차보고서·재무제표 관련 질문이면 10-K(또는 10-Q)를 지정하세요; 미지정 시 최근 접수순 전체(Form 4 위주).")
+P_FILING_TYPE_KR = ResourceParam(
+    name="filing_type",
+    description="보고서명 부분일치 필터, repeatable — 사업보고서·반기보고서·분기보고서·주요사항보고서·감사보고서. "
+                "사업보고서/재무제표 관련 질문이면 '사업보고서'를 지정하세요; 미지정 시 최근 접수순 전체.")
 
 # --- license policies ----------------------------------------------------
 LIC_SEC = License(id="us-public-domain", redistribution=True, attribution_required=False,

@@ -49,14 +49,34 @@ def _cache_path(ticker: str, accession: str) -> pathlib.Path:
 
 
 async def get_deck_pdf(syn_accession: str) -> bytes | None:
-    """The cached deck PDF bytes for a `DECK:…` accession (served to the in-app pdf.js viewer)."""
+    """The cached deck PDF bytes for a `DECK:…` accession (served to the in-app pdf.js viewer).
+
+    Cache-first, then on-demand: on a miss, re-resolve the ticker's recent decks from SEC and
+    fetch the matching accession's PDF into the cache (mirrors get_filing_html's shape) — a cited
+    deck still opens even when the ingest-time cache was lost or lives on another host."""
     parsed = parse_accession(syn_accession)
     if not parsed:
         return None
-    path = _cache_path(*parsed)
-    if not path.exists():
+    ticker, accession = parsed
+    path = _cache_path(ticker, accession)
+    if path.exists():
+        return await asyncio.to_thread(path.read_bytes)
+    try:
+        decks = await recent_decks(ticker, 8)   # wider than the ingest default — older citations
+    except Exception as exc:  # noqa: BLE001 — upstream/network → graceful (None → 204)
+        log.info("deck refetch: recent_decks failed for %s: %s", ticker, exc)
         return None
-    return await asyncio.to_thread(path.read_bytes)
+    row = next((d for d in decks or []
+                if d.get("accession") == accession and d.get("pdf_url")), None)
+    if not row:
+        return None
+    pdf = await _fetch_pdf(row["pdf_url"])
+    if not pdf:
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(path.write_bytes, pdf)
+    log.info("deck pdf refetched %s %s (%d KB)", ticker, accession, len(pdf) // 1024)
+    return pdf
 
 
 async def _fetch_pdf(url: str) -> bytes | None:

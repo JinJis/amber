@@ -165,6 +165,47 @@ async def test_desk_feed_gateway_down_degrades_to_state_cards(monkeypatch):
     assert r.json()["used_tools"] == []
 
 
+async def test_gather_filings_citation_uses_shared_producer():
+    # DK gather citations now come from the SHARED _citations producer: a filings listing yields
+    # kind="filing" with the row's url + descriptive snippet + as_of — the hand-rolled minimal
+    # Citation rendered an empty '추출 데이터' panel (kind="data", no url) in the SourceViewer.
+    tools = {"sec_edgar__filings": {
+        "name": "sec_edgar__filings", "connector": "sec_edgar", "source": "SEC EDGAR",
+        "cadence": "event", "category": "공시", "method": "GET", "path": "/filings", "params": []}}
+
+    class _Client:
+        async def call_tool(self, tool, args):
+            return {"status": 200, "data": {"filings": [{
+                "form": "8-K", "filing_date": "2026-07-02",
+                "description": "항목 5.02 임원·이사 변동",
+                "filing_url": "https://sec.gov/8k"}]}}
+
+    out = await DF._gather(_Client(), tools,
+                           [("sec_edgar__filings", {"ticker": "AAPL", "market": "US"}, "AAPL 최근 공시")])
+    assert len(out) == 1 and out[0]["idx"] == 1
+    cite = out[0]["citation"]
+    assert cite.kind == "filing"                              # not the old generic "data" card
+    assert cite.url == "https://sec.gov/8k" and "임원" in cite.snippet
+    assert cite.as_of == "2026-07-02" and cite.freshness is not None
+    assert cite.used is True                                  # gathered evidence is always used
+    assert cite.ticker == "AAPL"                              # backfilled from the call args
+    assert cite.cadence == "event" and cite.category == "공시"
+
+
+async def test_gather_drops_failed_calls():
+    # a non-200 source is skipped entirely — no citation, no snippet in the synthesis prompt.
+    tools = {"sec_edgar__filings": {"name": "sec_edgar__filings", "connector": "sec_edgar",
+                                    "source": "SEC EDGAR", "method": "GET", "path": "/filings",
+                                    "params": []}}
+
+    class _Client:
+        async def call_tool(self, tool, args):
+            return {"status": 502, "data": None}
+
+    assert await DF._gather(_Client(), tools,
+                            [("sec_edgar__filings", {"ticker": "AAPL"}, "x")]) == []
+
+
 # --- M1 / HL-7: History Lab artifact builders ------------------------------
 # (in this file to keep test_agent.py's already-large module focused; these need no fixtures
 # beyond the builders themselves)
