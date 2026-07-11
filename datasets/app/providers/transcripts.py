@@ -1,13 +1,13 @@
 """Earnings-call transcripts — the spoken record of a quarterly call, with the analyst Q&A.
 
-Primary: **API Ninjas** (`API_NINJAS_KEY`, premium) — full transcripts by (ticker, year, quarter),
-US **and KR** (e.g. ``005930.KS`` — Samsung's calls are held in English), ~5y depth on the
-Developer tier. The raw text is newline-separated ``Speaker: content`` turns, which we parse into
-the same segment shape the RAG ingester and the in-app HTML preview already consume.
+Source: **API Ninjas** (`API_NINJAS_KEY`, premium, REQUIRED) — full transcripts by
+(ticker, year, quarter), US **and KR** (e.g. ``005930.KS`` — Samsung's calls are held in English),
+~5y depth on the Developer tier. The raw text is newline-separated ``Speaker: content`` turns,
+which we parse into the same segment shape the RAG ingester and the in-app HTML preview consume.
 
-Fallback: Alpha Vantage (`ALPHAVANTAGE_API_KEY`, free/rate-limited, US only) — used only when no
-API Ninjas key is configured. No key at all → every call returns None and the feature stays dark
-(honesty: never fabricated).
+Without `API_NINJAS_KEY` the feature stays dark — every call returns None (never fabricated).
+(The old Alpha Vantage US free fallback was removed 2026-07-12: at 25 calls/day it covered almost
+nothing yet added a wasted round-trip per API-Ninjas miss.)
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from app.config import settings
 
 log = logging.getLogger(__name__)
 
-_AV_URL = "https://www.alphavantage.co/query"
 _NINJAS_URL = "https://api.api-ninjas.com/v1/earningstranscript"
 _TIMEOUT = 25.0
 
@@ -97,52 +96,22 @@ async def _fetch_ninjas(ticker: str, quarter: str) -> dict | None:
             "source": "API Ninjas (earnings call)", "segments": segments}
 
 
-async def _fetch_av(ticker: str, quarter: str) -> dict | None:
-    """Alpha Vantage fallback (US only, free tier ~25 calls/day)."""
-    key = settings.alphavantage_api_key
-    if not key:
-        return None
-    params = {"function": "EARNINGS_CALL_TRANSCRIPT", "symbol": ticker.upper(),
-              "quarter": quarter, "apikey": key}
-    try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            r = await client.get(_AV_URL, params=params)
-        if r.status_code != 200:
-            return None
-        data = r.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        log.info("transcript AV fetch failed %s %s: %s", ticker, quarter, exc)
-        return None
-    rows = data.get("transcript")
-    if not isinstance(rows, list) or not rows:
-        if data.get("Note") or data.get("Information"):
-            log.info("transcript AV throttled/empty %s %s: %s", ticker, quarter,
-                     str(data.get("Note") or data.get("Information"))[:120])
-        return None
-    segments = [
-        {"speaker": s.get("speaker") or "", "title": s.get("title") or "",
-         "content": s.get("content") or "", "sentiment": s.get("sentiment")}
-        for s in rows if isinstance(s, dict) and s.get("content")
-    ]
-    if not segments:
-        return None
-    return {"ticker": ticker.upper(), "quarter": quarter, "as_of": None,
-            "source": "Alpha Vantage (earnings call)", "segments": segments}
 
 
 def has_transcript_key() -> bool:
-    return bool(settings.api_ninjas_key or settings.alphavantage_api_key)
+    """Transcripts require API Ninjas (the only source). No key → the feature stays dark."""
+    return bool(settings.api_ninjas_key)
 
 
 def transcripts_cover_kr() -> bool:
-    """KR earnings calls are served by API Ninjas only (AV is US-only)."""
+    """KR earnings calls are served by API Ninjas (same key covers US + KR)."""
     return bool(settings.api_ninjas_key)
 
 
 async def fetch_transcript(ticker: str, quarter: str) -> dict | None:
-    """One earnings-call transcript for (ticker, '2024Q2'), or None. Shape:
+    """One earnings-call transcript for (ticker, '2024Q2'), or None — API Ninjas only. Shape:
     ``{ticker, quarter, as_of?, source, segments: [{speaker, title, content, sentiment}]}``."""
-    return await _fetch_ninjas(ticker, quarter) or await _fetch_av(ticker, quarter)
+    return await _fetch_ninjas(ticker, quarter)
 
 
 async def recent_transcripts(ticker: str, limit: int = 4) -> list[dict]:

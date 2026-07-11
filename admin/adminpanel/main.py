@@ -380,8 +380,8 @@ def _pipeline_card(p: dict, cron_by_pid: dict[str, str]) -> str:
         run_now = (f"<form class=ops method=post action='/ops/queue/sweep/{_esc(pid)}'>"
                    f"<button class=p>지금 수집(델타) ▶</button></form>")
     else:
-        # manual-only pipeline (no auto-cron — these are rate-limited/metered: e.g. Alpha Vantage
-        # 25 calls/day, Document AI per-page). Run is TICKER-SCOPED on purpose: a full-universe run
+        # manual-only pipeline (no auto-cron — these are rate-limited/metered: e.g. API Ninjas
+        # transcripts, Document AI per-page). Run is TICKER-SCOPED on purpose: a full-universe run
         # would blow the quota/cost, so that stays only in the backfill form below. Enter a few tickers.
         mkt = (p.get("markets") or ["US"])[0]
         run_now = (

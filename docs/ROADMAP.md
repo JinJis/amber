@@ -68,7 +68,7 @@ Shipped and green (see `docs/deprecate/ROADMAP.md` for the full ledger):
 - **Charts**: TradingView Lightweight Charts — candles/line/volume, sourced markers
   (earnings/dividend/split/filing), Gemini annotations, technical overlays, user drawings,
   PNG export, range 1M–MAX.
-- **Data**: SEC/OpenDART/Yahoo/FRED·DBnomics/ECOS/Google News/Alpha Vantage transcripts/
+- **Data**: SEC/OpenDART/Yahoo/FRED·DBnomics/ECOS/Google News/API Ninjas transcripts/
   8-K decks/KR 잠정실적 + FMP (estimates/calendar) + KIS (KR realtime) Wave 2.
 - **Product**: chat, watchlists/@groups, agent builder, prompt library, onboarding,
   background-run resume. Also built but now **feature-flagged off by default** (FLAG-1):
@@ -551,9 +551,9 @@ regression lines) is refused with the guardrail label — same boundary as Histo
 ## 9. M3 — Earnings Command Center
 
 ### EC-1 · Transcript archive backfill — ⬜
-Extend `transcript_text` pipeline to walk historical quarters per ticker (Alpha Vantage
-`EARNINGS_CALL_TRANSCRIPT`, free tier 25 req/day → durable queue drains over days; document
-the constraint, show progress in admin; paid-tier env to accelerate). Store quarter metadata
+Extend `transcript_text` pipeline to walk historical quarters per ticker (API Ninjas
+`earningstranscript`, ~5y depth on the premium tier → durable queue; show progress in admin).
+Store quarter metadata
 on chunks. **Accept**: ≥8 quarters for a demo ticker after drain; resumable; rate-limit
 unit-tested.
 

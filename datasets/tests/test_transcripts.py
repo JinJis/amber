@@ -1,7 +1,7 @@
 """Earnings-call transcript ingestion (Phase 1): provider · HTML preview · RAG docs · evidence route.
 
-Alpha Vantage + the RAG POST are mocked (respx); no network or key needed. End-to-end live data is
-exercised by the user once a free ALPHAVANTAGE_API_KEY is set.
+API Ninjas + the RAG POST are mocked (respx); no network or key needed. End-to-end live data is
+exercised once API_NINJAS_KEY is set (the only transcript source; Alpha Vantage was removed).
 """
 
 from __future__ import annotations
@@ -37,23 +37,12 @@ def test_accession_roundtrip():
 @pytest.mark.asyncio
 async def test_fetch_transcript_no_key_returns_none(monkeypatch):
     monkeypatch.setattr(T.settings, "api_ninjas_key", "")
-    monkeypatch.setattr(T.settings, "alphavantage_api_key", "")
     assert await T.fetch_transcript("AAPL", "2024Q3") is None   # dark without a key, never fabricated
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_fetch_transcript_parses_segments(monkeypatch):
-    monkeypatch.setattr(T.settings, "api_ninjas_key", "")
-    monkeypatch.setattr(T.settings, "alphavantage_api_key", "demo")
-    respx.get(T._AV_URL).mock(return_value=httpx.Response(200, json=_SAMPLE))
-    t = await T.fetch_transcript("AAPL", "2024Q3")
-    assert t and t["ticker"] == "AAPL" and len(t["segments"]) == 2
-    assert t["segments"][0]["speaker"] == "Tim Cook"
+    assert T.has_transcript_key() is False
 
 
 def test_render_html_is_sanitized_and_readable():
-    html = TH.render({"ticker": "AAPL", "quarter": "2024Q3", "source": "Alpha Vantage",
+    html = TH.render({"ticker": "AAPL", "quarter": "2024Q3", "source": "API Ninjas",
                       "segments": _SAMPLE["transcript"]})
     assert "default-src 'none'" in html        # strict CSP, same as the filing viewer
     assert "Tim Cook" in html and "gross margin" in html
@@ -71,11 +60,10 @@ def test_transcript_to_docs_chunks_with_synthetic_accession():
 @pytest.mark.asyncio
 @respx.mock
 async def test_ingest_for_ticker_indexes_and_warms_preview(monkeypatch, tmp_path):
-    monkeypatch.setattr(T.settings, "api_ninjas_key", "")
-    monkeypatch.setattr(T.settings, "alphavantage_api_key", "demo")
+    monkeypatch.setattr(T.settings, "api_ninjas_key", "nk")
     monkeypatch.setattr(TH.settings, "evidence_docs_dir", str(tmp_path))
     monkeypatch.setattr(TI.settings, "transcript_ingest_limit", 1)
-    respx.get(T._AV_URL).mock(return_value=httpx.Response(200, json=_SAMPLE))
+    respx.get(T._NINJAS_URL).mock(return_value=httpx.Response(200, json=_NINJAS_SAMPLE))
     rag = respx.post("http://rag.test/rag/ingest").mock(return_value=httpx.Response(200, json={"chunks": 2}))
 
     n = await TI.ingest_transcript_for_ticker("US", "AAPL", rag_url="http://rag.test")
@@ -110,9 +98,8 @@ def test_parse_turns_splits_speakers_and_keeps_preamble():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_fetch_prefers_api_ninjas_and_carries_call_date(monkeypatch):
+async def test_fetch_uses_api_ninjas_and_carries_call_date(monkeypatch):
     monkeypatch.setattr(T.settings, "api_ninjas_key", "nk")
-    monkeypatch.setattr(T.settings, "alphavantage_api_key", "demo")  # must NOT be hit
     nin = respx.get(T._NINJAS_URL).mock(return_value=httpx.Response(200, json=_NINJAS_SAMPLE))
     got = await T.fetch_transcript("AAPL", "2024Q2")
     assert nin.called and got and got["source"].startswith("API Ninjas")

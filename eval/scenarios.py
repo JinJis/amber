@@ -183,10 +183,10 @@ SCENARIOS = [
         "agent": {"name": "Eval Calls", "model": "gemini", "data_sources": ["rag"]},
         "rag_docs": [
             {"text": "Tim Cook: We set an all-time revenue record in Services, which grew 14 percent year over year.",
-             "source": "Alpha Vantage (earnings call)", "doc_type": "transcript", "ticker": "AAPL",
+             "source": "API Ninjas (earnings call)", "doc_type": "transcript", "ticker": "AAPL",
              "accession": "TR:AAPL:2024Q3", "market": "US"},
             {"text": "Analyst: Can you talk about gross margin trends? CFO: We expect gross margin between 45 and 46 percent.",
-             "source": "Alpha Vantage (earnings call)", "doc_type": "transcript", "ticker": "AAPL",
+             "source": "API Ninjas (earnings call)", "doc_type": "transcript", "ticker": "AAPL",
              "accession": "TR:AAPL:2024Q3", "market": "US"},
         ],
         "question": "어닝콜에서 애플 경영진이 서비스 부문 성장률을 몇 퍼센트라고 했어?",

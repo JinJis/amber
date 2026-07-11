@@ -84,7 +84,7 @@ Legend: ✅ have today · 🟡 partial on existing APIs (needs a slice) · 🔵 
 |---|---|---|---|
 | 종목 개요 | profile + snapshot | company_facts + price_snapshot ✅ | ✅ |
 | 재무제표 | 3 statements (+as-reported) | sec_edgar/opendart ✅ | ✅ |
-| 어닝콜 (US) | earnings-call transcript text | Alpha Vantage → RAG (`transcript_text` pipeline) | ✅ (US; free key, 25 calls/day) |
+| 어닝콜 (US+KR) | earnings-call transcript text | API Ninjas → RAG (`transcript_text` pipeline) | ✅ (US+KR; API_NINJAS_KEY 필수) |
 | 발표자료 (US) | 8-K EX-99 investor/earnings decks | SEC EDGAR PDF → Document AI Layout Parser → RAG + in-app pdf.js viewer (`presentation_text`) | ✅ (US; needs DocAI) |
 | 실적공시 (KR) | 잠정실적 공정공시 = 경영진 잠정실적+코멘터리 | OpenDART `list.json`→`document.xml` → RAG + in-app DART viewer (`kr_earnings` pipeline) | ✅ (KR analog of 어닝콜 — no free KR transcript/audio API) |
 | IR자료실 (KR decks/audio) | investor presentation decks / call audio | company IR / KIND / Quartr·FnGuide(유료) | 🔴❓ (no clean free API; KR transcript·deck gated → paid or scrape) |

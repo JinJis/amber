@@ -1,12 +1,12 @@
 """Earnings-call transcripts → RAG corpus (Phase 1 of the research-grade expansion).
 
-Mirrors ``filing_ingest``: pull a ticker's recent quarterly transcripts (Alpha Vantage), index their
+Mirrors ``filing_ingest``: pull a ticker's recent quarterly transcripts (API Ninjas), index their
 text into RAG with provenance, and warm the in-app HTML preview. The transcript carries a synthetic
 ``accession`` ``TR:{ticker}:{quarter}`` so the SAME evidence chain that opens a filing opens the
 transcript — the agent can quote management/analyst remarks and the user verifies them in-app.
 
-US + KR coverage. Primary source is API Ninjas (KR calls ride Yahoo-style codes — 005930.KS /
-.KQ — and are held in English); Alpha Vantage remains the free US-only fallback.
+US + KR coverage from the single API Ninjas key (KR calls ride Yahoo-style codes — 005930.KS /
+.KQ — and are held in English). No key → the feature stays dark.
 """
 
 from __future__ import annotations
@@ -118,7 +118,7 @@ async def run_transcript_text_ingest(market: str, tickers: list[str], mode: str 
         return
     if not has_transcript_key():
         await asyncio.to_thread(finish_job, job, "error", 0,
-                                "API_NINJAS_KEY(권장) 또는 ALPHAVANTAGE_API_KEY를 .env에 넣으면 인덱싱됩니다")
+                                "API_NINJAS_KEY를 env/data-keys.env에 넣으면 어닝콜이 인덱싱됩니다 (US+KR)")
         return
     log_activity("transcript", market, f"▶ 시작 · {len(tickers)}종목 · 어닝콜 트랜스크립트 → RAG", job_id=job)
     total = 0

@@ -1,6 +1,6 @@
 """KR earnings disclosures (잠정실적 공정공시) → RAG corpus — the KR analog of the US earnings-call ingest.
 
-There is no free KR earnings-call transcript/audio API (Alpha Vantage is US-only), so we index the
+There is no free KR earnings-call transcript/audio API (API Ninjas covers US), so we index the
 next-best free, point-in-time source: the '영업(잠정)실적(공정공시)' disclosure on DART — management's
 own preliminary results + commentary, the KR equivalent of a US earnings press release/call. We fetch
 the SAME OpenDART ``document.xml`` markup the in-app viewer renders, extract its text into RAG
@@ -8,7 +8,7 @@ the SAME OpenDART ``document.xml`` markup the in-app viewer renders, extract its
 announcement passages and a citation highlights them in the original DART document (accession =
 rcept_no, market = KR → the existing KR filing viewer path, no new viewer code).
 
-KR only; US uses the Alpha Vantage transcript pipeline. Best-effort (0 on no key / no disclosure).
+KR only; US uses the API Ninjas transcript pipeline. Best-effort (0 on no key / no disclosure).
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ async def run_kr_earnings_ingest(market: str, tickers: list[str], mode: str = "f
     if market != "KR":
         await asyncio.to_thread(
             finish_job, job, "success", 0,
-            "잠정실적 공정공시는 KR 전용 — US는 어닝콜 트랜스크립트(Alpha Vantage) 파이프라인 사용")
+            "잠정실적 공정공시는 KR 전용 — US는 어닝콜 트랜스크립트(API Ninjas) 파이프라인 사용")
         await asyncio.to_thread(
             log_activity, "kr_earnings", market,
             "건너뜀 · 잠정실적 공정공시는 KR 전용 (US는 어닝콜 트랜스크립트)", job, "warn")
