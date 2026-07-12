@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     polygon_api_key: str = ""
     tiingo_api_key: str = ""
     fmp_api_key: str = ""
+    # Real-time company news (production sources — Google News RSS is the keyless fallback).
+    # Finnhub: US company-news (free tier 60/min, real-time). https://finnhub.io
+    finnhub_api_key: str = ""
+    # Naver Search Open API: KR company news (free 25k/day, native Korean coverage). Client
+    # ID + Secret from https://developers.naver.com. Unset → KR news falls back to Google News.
+    naver_client_id: str = ""
+    naver_client_secret: str = ""
     # Logo.dev — optional publishable token for high-quality company logos by ticker/domain.
     # Unset → logos fall back to FMP profile images + domain favicons (hybrid resolver, /logos).
     logodev_token: str = ""

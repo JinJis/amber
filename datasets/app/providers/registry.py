@@ -158,9 +158,11 @@ def get_metrics_provider(market: Market) -> MetricsProvider:
 # --- News ----------------------------------------------------------------
 @cache
 def get_news_provider(market: Market) -> NewsProvider:
-    from app.providers.news import GoogleNewsProvider
+    # Market-routed real-time news (KR=Naver · US=Finnhub) with a Google-News keyless fallback,
+    # behind a short dedup cache. Google News stops being the production source (IP-rate-limited).
+    from app.providers.news import AutoNewsProvider
 
-    return GoogleNewsProvider()
+    return AutoNewsProvider()
 
 
 # --- Earnings ------------------------------------------------------------

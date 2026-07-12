@@ -82,3 +82,46 @@ class GoogleNewsProvider:
             if len(out) >= limit:
                 break
         return out
+
+
+# Short dedup cache (NOT staleness): company news 2-3 min old is still "latest", but a 2-min TTL
+# collapses the concurrent per-user storm (N users asking about the same ticker in the same window)
+# into ONE upstream call — the production scale fix that preserves freshness.
+_NEWS_CACHE_TTL = 120.0
+
+
+class AutoNewsProvider:
+    """Market-routed real-time news with a keyless fallback (mirrors the prices auto chain):
+      KR → Naver Search API (native, best KR coverage) · US → Finnhub (real-time, keyed)
+      → Google News RSS fallback when the keyed source is unset OR returns nothing.
+    Google News (keyless, no SLA, IP-rate-limited) stops being the load-bearing production source
+    and becomes the safety net. A 2-min dedup cache keeps freshness while absorbing user scale."""
+
+    async def news(self, market: Market, ticker: str | None, limit: int) -> list[News]:
+        from app.cache import cache
+
+        key = f"news:{getattr(market, 'value', market)}:{ticker or '_'}:{limit}"
+        return await cache.get_or_set(
+            key, lambda: self._fetch(market, ticker, limit), ttl_seconds=_NEWS_CACHE_TTL)
+
+    async def _fetch(self, market: Market, ticker: str | None, limit: int) -> list[News]:
+        primary = _primary_provider(market)
+        if primary is not None:
+            try:
+                out = await primary.news(market, ticker, limit)
+            except Exception:  # noqa: BLE001 — a keyed-source failure never sinks the request
+                out = []
+            if out:
+                return out
+        return await GoogleNewsProvider().news(market, ticker, limit)
+
+
+def _primary_provider(market: Market):
+    """The keyed real-time source for a market, or None (→ Google News fallback)."""
+    if market is Market.US:
+        from app.providers.us.finnhub_news import FinnhubNewsProvider, configured
+        return FinnhubNewsProvider() if configured() else None
+    if market is Market.KR:
+        from app.providers.kr.naver_news import NaverNewsProvider, configured
+        return NaverNewsProvider() if configured() else None
+    return None

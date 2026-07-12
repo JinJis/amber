@@ -258,8 +258,9 @@ CONNECTORS: list[ConnectorManifest] = [
         ],
     ),
     ConnectorManifest(
-        id="google_news", name="Google News", domain="news",
-        description="Company / market news headlines for US and KR (by company name).",
+        id="google_news", name="실시간 뉴스", domain="news",
+        description="Company / market news — real-time, market-routed (KR: Naver · US: Finnhub) "
+                    "with a Google News fallback. Each article carries the real publisher URL.",
         markets=["US", "KR"],
         upstream=UpstreamCredential(requires_key=False),
         license=LIC_NEWS,
