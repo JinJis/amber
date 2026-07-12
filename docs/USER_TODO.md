@@ -75,6 +75,17 @@
   pgvector도 가능하지만 인덱스가 동일(HNSW)이라 삽입 속도 이득은 적어요. Vertex AI Vector
   Search는 수백만 벡터·엄격 지연 SLA일 때만 (신규 백엔드 구현 필요)
 
+## 1-11. 스케일링 감사에서 나온 오너 액션 (2026-07-12, [SCALING_AUDIT](./SCALING_AUDIT.md))
+- [ ] **DB 백업 지금 즉시** (CR-11 — 현재 백업 전무, 디스크 1개 유실 = 테넌트·키·빌링 원장 전체 유실):
+  최소한 서버에 야간 `pg_dump` 크론 + 오프호스트(GCS 등) 복사. 프로덕션은 controlplane·studio(빌링)부터
+  PITR 있는 매니지드 DB로
+- [ ] **admin(:8005) 크레덴셜·노출 정리** (CR-10): `ADMINUI_USERNAME/PASSWORD/SECRET`를 강한 값으로
+  설정하고 포트를 외부에 열지 말 것(프라이빗 네트워크/터널만). 코드 가드(SC-0)가 랜딩되기 전엔 이게 유일한 방어예요
+- [ ] **프로덕션 시크릿 전수 교체** (CR-10): 특히 `AUTH_SECRET`(dev 값이면 세션 위조 가능) ·
+  `SERVICE_TOKEN` · `DATASETS_API_KEYS`(미설정이면 아무 키나 통과). 1-2의 목록에 더해 이 3개는 필수
+- [ ] **레플리카 증설은 SC-2 완료 전 금지**: studio-api를 2대로 늘리면 지금 코드로는 중복 결제 시도·
+  알림 중복 발송·챗 재개 404가 발생해요. 수평 확장해도 되는 티어는 현재 web뿐
+
 ## 2. 바이럴·품질 (선택이지만 효과 큼)
 - [ ] **Kakao JS 키** (V-6 카톡 리치 공유): developers.kakao.com 같은 앱 → JavaScript 키 + Web 플랫폼 도메인 등록 → `NEXT_PUBLIC_KAKAO_JS_KEY` (키가 오면 V-6 구현 착수 가능)
 - [ ] **RAG 코퍼스 재인제스트** (RQ-9 — 검색 품질 최대 지렛대): 유니버스 재인제스트 + transcript US/KR + era news
