@@ -14,7 +14,7 @@ import json
 import logging
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from studioapi.alerts import fire_alert
 from studioapi.config import settings
@@ -49,19 +49,29 @@ def tick(now: datetime | None = None) -> int:
     now = now or datetime.utcnow()
     fired = 0
     with SessionLocal() as db:
-        alerts = db.execute(
-            select(NotificationAlert).where(NotificationAlert.status == "active")
-        ).scalars().all()
-        for a in alerts:
-            if not _due(a, now):
-                continue
-            try:
-                fire_alert(a, db, now=now)
-                fired += 1
-            except Exception:  # one bad alert must not stall the loop
-                log.exception("alert %s failed to fire", a.id)
-        if fired:
-            db.commit()
+        # CR-3: hold an advisory lock for the WHOLE tick so only ONE replica fires each pass —
+        # otherwise every replica selects the same due alerts and delivers N× (user-visible spam).
+        # SQLite / single-process is a no-op. Held across the fire loop on this one session.
+        is_pg = db.bind.dialect.name == "postgresql"
+        if is_pg and not bool(db.execute(func.pg_try_advisory_lock(0x76674131)).scalar()):  # 'vgA1'
+            return 0
+        try:
+            alerts = db.execute(
+                select(NotificationAlert).where(NotificationAlert.status == "active")
+            ).scalars().all()
+            for a in alerts:
+                if not _due(a, now):
+                    continue
+                try:
+                    fire_alert(a, db, now=now)
+                    fired += 1
+                except Exception:  # one bad alert must not stall the loop
+                    log.exception("alert %s failed to fire", a.id)
+            if fired:
+                db.commit()
+        finally:
+            if is_pg:
+                db.execute(func.pg_advisory_unlock(0x76674131))
     return fired
 
 

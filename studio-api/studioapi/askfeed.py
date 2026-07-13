@@ -29,7 +29,8 @@ from datetime import datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from studioapi.config import settings
@@ -93,7 +94,15 @@ async def _refresh_scope(client: httpx.AsyncClient, db: Session, *, scope: str,
                              ensure_ascii=False)
     row.signature = out.get("signature")
     row.generated_at = datetime.utcnow()
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:   # ME-1: another replica inserted this scope PK first → converge onto it
+        db.rollback()
+        existing = db.get(AskFeedCache, scope)
+        if existing is not None:
+            existing.payload, existing.signature = row.payload, row.signature
+            existing.generated_at = row.generated_at
+            db.commit()
     return True
 
 
@@ -101,13 +110,22 @@ async def refresh_once() -> dict:
     """One refresher pass — the single global news_feed scope."""
     async with httpx.AsyncClient() as client:
         with SessionLocal() as db:
-            key = _any_api_key(db)
-            if not key:
+            # CR-3: only ONE replica generates the global news_feed per interval — otherwise every
+            # replica runs the same two-stage Gemini generation (duplicate LLM spend). No-op on SQLite.
+            is_pg = db.bind.dialect.name == "postgresql"
+            if is_pg and not bool(db.execute(func.pg_try_advisory_lock(0x76674132)).scalar()):  # 'vgA2'
                 return {"scopes": 0, "refreshed": 0}
-            ok = await _refresh_scope(client, db, scope=_NEWS_SCOPE, api_key=key,
-                                      body={"scope": _NEWS_SCOPE, "limit": 6},
-                                      timeout=settings.ask_feed_generate_timeout_seconds)
-    return {"scopes": 1, "refreshed": 1 if ok else 0}
+            try:
+                key = _any_api_key(db)
+                if not key:
+                    return {"scopes": 0, "refreshed": 0}
+                ok = await _refresh_scope(client, db, scope=_NEWS_SCOPE, api_key=key,
+                                          body={"scope": _NEWS_SCOPE, "limit": 6},
+                                          timeout=settings.ask_feed_generate_timeout_seconds)
+                return {"scopes": 1, "refreshed": 1 if ok else 0}
+            finally:
+                if is_pg:
+                    db.execute(func.pg_advisory_unlock(0x76674132))
 
 
 async def _loop() -> None:
@@ -198,6 +216,17 @@ def _assemble(db: Session, email: str) -> dict:
     }
 
 
+# ME-1: per-scope single-flight for the on-demand ticker generation. In-proc asyncio.Lock collapses
+# concurrent taps on ONE replica to a single two-stage Gemini pass; a cross-node advisory lock stops a
+# SECOND replica from generating the same scope at the same time (it serves whatever's cached instead).
+_ticker_flight: dict[str, asyncio.Lock] = {}
+
+
+def _scope_lock_id(scope: str) -> int:
+    import hashlib
+    return int.from_bytes(hashlib.blake2b(scope.encode(), digest_size=8).digest(), "big", signed=True)
+
+
 @router.get("/ask-feed/ticker", summary="ASK-6: on-demand deep-dive questions for ONE ticker")
 async def get_ticker_feed(market: str, ticker: str, name: str | None = None,
                           user: User = Depends(current_user)) -> dict:
@@ -208,22 +237,44 @@ async def get_ticker_feed(market: str, ticker: str, name: str | None = None,
     exists, else an empty list the UI draws as an honest gap."""
     scope = _scope_key(market, ticker)
     ttl = timedelta(seconds=settings.ask_feed_ticker_ttl_seconds)
-    with SessionLocal() as db:
-        row = db.get(AskFeedCache, scope)
-        if row is not None and row.generated_at and datetime.utcnow() - row.generated_at < ttl:
-            p = _payload_of(row)
+
+    def _serve(cached: bool) -> dict:
+        with SessionLocal() as db:
+            p = _payload_of(db.get(AskFeedCache, scope))
             taste = recent_tap_kinds(db, user.email)
-            return {"cards": rerank_by_taste((p.get("cards") or [])[:5], taste),
-                    "generated_at": p.get("generated_at"), "cached": True}
-        async with httpx.AsyncClient() as client:
-            await _refresh_scope(client, db, scope=scope, api_key=user.api_key,
-                                 body={"scope": "ticker", "market": (market or "US").upper(),
-                                       "ticker": ticker, "name": name or ticker, "limit": 5},
-                                 timeout=settings.ask_feed_generate_timeout_seconds)
-        p = _payload_of(db.get(AskFeedCache, scope))
-        taste = recent_tap_kinds(db, user.email)
         return {"cards": rerank_by_taste((p.get("cards") or [])[:5], taste),
-                "generated_at": p.get("generated_at"), "cached": False}
+                "generated_at": p.get("generated_at"), "cached": cached}
+
+    def _fresh() -> bool:
+        with SessionLocal() as db:
+            row = db.get(AskFeedCache, scope)
+            return bool(row and row.generated_at and datetime.utcnow() - row.generated_at < ttl)
+
+    if _fresh():
+        return _serve(cached=True)
+
+    # ME-1: single-flight the generation. In-proc lock collapses concurrent taps on this replica;
+    # the double-check inside means only the first tap generates and the rest serve its result.
+    lock = _ticker_flight.setdefault(scope, asyncio.Lock())
+    async with lock:
+        if _fresh():
+            return _serve(cached=True)
+        with SessionLocal() as db:
+            # cross-node: if another replica is already generating this scope, don't duplicate the
+            # two-stage Gemini pass — serve whatever's cached (stale/empty) instead.
+            is_pg = db.bind.dialect.name == "postgresql"
+            got = (not is_pg) or bool(db.execute(func.pg_try_advisory_lock(_scope_lock_id(scope))).scalar())
+            try:
+                if got:
+                    async with httpx.AsyncClient() as client:
+                        await _refresh_scope(client, db, scope=scope, api_key=user.api_key,
+                                             body={"scope": "ticker", "market": (market or "US").upper(),
+                                                   "ticker": ticker, "name": name or ticker, "limit": 5},
+                                             timeout=settings.ask_feed_generate_timeout_seconds)
+            finally:
+                if is_pg and got:
+                    db.execute(func.pg_advisory_unlock(_scope_lock_id(scope)))
+    return _serve(cached=False)
 
 
 # --- ONB-LIVE: 온보딩 쇼케이스 캐시 (하루 1회 갱신, read-through) ------------------------------
