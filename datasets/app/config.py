@@ -133,6 +133,9 @@ class Settings(BaseSettings):
     # how many recent filings filing_search fetches+indexes when a never-seen ticker is queried
     # on-demand (bounded so the first call stays responsive).
     filing_search_ingest_limit: int = 2
+    # HI-7: after an on-demand ingest still finds no filing text for a ticker, skip re-ingesting it
+    # (a ticker with genuinely no matching filings — e.g. an ETF — otherwise re-ingests every search).
+    filing_neg_cache_ttl_seconds: int = 900  # FILING_NEG_CACHE_TTL_SECONDS
 
     # --- RAG news-ingestion pipeline (PH-2b) ------------------------------
     # The RAG service the news pipeline indexes into.

@@ -1512,6 +1512,55 @@ def test_filing_search_ingests_on_demand_then_returns_passages(monkeypatch):
     assert calls["ingest"] == 1 and calls["search"] == 1 and again["ingested"] is False and again["hits"]
 
 
+def test_filing_search_negative_cache_skips_reingest(monkeypatch):
+    """HI-7: a ticker whose on-demand ingest still yields no filing text is negative-cached — the
+    next cold search does NOT re-ingest (an ETF otherwise re-ingests on every search)."""
+    import app.routers.filings as F
+    F._ingest_negcache.clear()
+    F._ingest_flight.clear()
+    calls = {"ingest": 0}
+
+    async def empty_search(rag_url, query, ticker, market, top_k):
+        return []                       # this ticker has no filing text, ever
+
+    async def fake_ingest(market, ticker, limit=2, rag_url=None):
+        calls["ingest"] += 1
+        return 0
+    monkeypatch.setattr("app.store.news_ingest._search_rag", empty_search)
+    monkeypatch.setattr("app.store.filing_ingest.ingest_filing_text_for_ticker", fake_ingest)
+
+    b1 = client.get("/filings/search?ticker=ETFX&query=x&market=US").json()
+    assert calls["ingest"] == 1 and b1["hits"] == []       # cold → ingest, still empty → negcache set
+    client.get("/filings/search?ticker=ETFX&query=x&market=US")
+    assert calls["ingest"] == 1                             # negative cache → no re-ingest
+    F._ingest_negcache.clear()
+
+
+async def test_filing_ingest_single_flight():
+    """HI-7: N concurrent cold searches for the same ticker share ONE ingest (no duplicate
+    download+embed / racing replace_scope)."""
+    import asyncio
+
+    import app.routers.filings as F
+    import app.store.filing_ingest as FI
+    F._ingest_flight.clear()
+    calls = {"ingest": 0}
+
+    async def slow_ingest(market, ticker, limit=2, rag_url=None):
+        calls["ingest"] += 1
+        await asyncio.sleep(0.05)
+        return 5
+
+    orig = FI.ingest_filing_text_for_ticker
+    FI.ingest_filing_text_for_ticker = slow_ingest
+    try:
+        await asyncio.gather(*[F._ingest_once("US", "AAPL") for _ in range(5)])
+        assert calls["ingest"] == 1                         # 5 concurrent callers → one ingest
+    finally:
+        FI.ingest_filing_text_for_ticker = orig
+        F._ingest_flight.clear()
+
+
 def test_filing_url_and_fiscal_label():
     from app.providers.us.sec_edgar import _filing_url, _fiscal_label
 
