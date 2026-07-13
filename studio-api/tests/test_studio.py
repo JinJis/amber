@@ -137,11 +137,31 @@ async def test_ensure_user_survives_activation_failures(monkeypatch):
 
 # --- conversations --------------------------------------------------------
 @respx.mock
-def test_messages_of_unknown_conversation_is_empty(monkeypatch):
+def test_messages_of_unknown_conversation_is_404(monkeypatch):
+    # SC-0.3: an unknown (or unowned) conversation 404s rather than leaking an empty message list.
     _cfg(monkeypatch)
     _mock_control_plane()
     r = client.get("/conversations/cnv_does_not_exist/messages", headers=_hdr("ghost@u.com"))
-    assert r.status_code == 200 and r.json()["messages"] == []
+    assert r.status_code == 404
+
+
+@respx.mock
+def test_conversation_messages_and_stop_owner_only(monkeypatch):
+    """SC-0.3/CR-10: 남의 대화 메시지 읽기·런 중지는 404 (IDOR 방지)."""
+    _cfg(monkeypatch)
+    _mock_control_plane()
+    sse = b'data: {"type":"token","text":"ok"}\n\ndata: {"type":"done","citations":[],"refused":false}\n\n'
+    respx.post("http://ae.test/agent/chat").mock(return_value=httpx.Response(200, content=sse))
+    owner = "owner3@u.com"
+    client.post("/chat/stream", headers=_hdr(owner),
+                json={"messages": [{"role": "user", "content": "내 대화"}]})
+    cid = client.get("/conversations", headers=_hdr(owner)).json()["conversations"][0]["id"]
+    # 소유자는 읽기/중지 가능
+    assert client.get(f"/conversations/{cid}/messages", headers=_hdr(owner)).status_code == 200
+    assert client.post(f"/conversations/{cid}/stop", headers=_hdr(owner)).status_code == 200
+    # 타 유저는 404 — 존재/소유 여부를 노출하지 않는다
+    assert client.get(f"/conversations/{cid}/messages", headers=_hdr("intruder@u.com")).status_code == 404
+    assert client.post(f"/conversations/{cid}/stop", headers=_hdr("intruder@u.com")).status_code == 404
 
 
 async def test_run_manager_survives_leave_and_resumes():
@@ -749,7 +769,8 @@ def test_uxq4_rename_and_delete_conversation(monkeypatch):
     # delete → 목록에서 사라지고 메시지도 빈다
     assert client.delete(f"/conversations/{cid}", headers=_hdr(email)).json()["deleted"] == cid
     assert all(c["id"] != cid for c in client.get("/conversations", headers=_hdr(email)).json()["conversations"])
-    assert client.get(f"/conversations/{cid}/messages", headers=_hdr(email)).json()["messages"] == []
+    # 삭제 후엔 메시지 조회도 404 (대화가 없음 — SC-0.3)
+    assert client.get(f"/conversations/{cid}/messages", headers=_hdr(email)).status_code == 404
 
 
 def test_production_refuses_dev_default_tokens(monkeypatch):

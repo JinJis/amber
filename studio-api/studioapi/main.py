@@ -181,6 +181,8 @@ async def users_onboarded(user: User = Depends(current_user)) -> dict:
 async def stop_run(conversation_id: str, user: User = Depends(current_actor)) -> dict:
     """UXQ-2: 스트리밍 중지 — 서버측 런 취소(생성은 서버에 사니 클라 이탈만으론 안 멈춤)."""
     from studioapi.runs import manager
+    with SessionLocal() as db:  # SC-0.3/CR-10: 소유자만 중지 (남의 대화 런 취소 방지)
+        get_owned(db, Conversation, conversation_id, user.email, "conversation not found")
     return {"stopped": manager.cancel(conversation_id)}
 
 
@@ -229,6 +231,7 @@ async def delete_conversation(conversation_id: str, user: User = Depends(current
 @app.get("/conversations/{conversation_id}/messages", tags=["Conversations"], dependencies=[Depends(require_service)])
 async def conversation_messages(conversation_id: str, user: User = Depends(current_actor)) -> dict:
     with SessionLocal() as db:
+        get_owned(db, Conversation, conversation_id, user.email, "conversation not found")  # SC-0.3/CR-10
         rows = db.execute(
             select(Message).where(Message.conversation_id == conversation_id).order_by(Message.id)
         ).scalars().all()
