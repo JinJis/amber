@@ -16,6 +16,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -200,6 +201,13 @@ class TurnUsage(Base):
     문자열(YYYY-MM-DD / YYYY-MM) — "내일 0시에 충전돼요"가 유저의 자정과 일치해야 한다."""
 
     __tablename__ = "turn_usage"
+    # HI-6: every quota query filters on (user_email, day) or (user_email, month) — on EVERY turn
+    # (check_and_consume + usage_snapshot + the guest IP COUNT). Composite indexes make those
+    # index-only-ish instead of a single-column scan + filter.
+    __table_args__ = (
+        Index("ix_turn_usage_user_day", "user_email", "day"),
+        Index("ix_turn_usage_user_month", "user_email", "month"),
+    )
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_email: Mapped[str] = mapped_column(String(256), index=True)
     conversation_id: Mapped[str | None] = mapped_column(String(48), nullable=True)

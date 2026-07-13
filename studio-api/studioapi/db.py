@@ -96,8 +96,29 @@ def _add_missing_columns() -> None:
     add_cols("share_links", {"expires_at": ts, "og_image": "TEXT"})  # IMP-13 expiry · SH-2b OG image
 
 
+def _add_missing_indexes() -> None:
+    """HI-6: create_all only adds indexes to NEW tables — a long-lived Postgres DB whose turn_usage
+    predates the composite indexes needs an explicit CREATE INDEX IF NOT EXISTS. Idempotent on both
+    dialects; best-effort (never blocks boot)."""
+    if engine.dialect.name not in ("sqlite", "postgresql"):
+        return
+    from sqlalchemy import text
+
+    stmts = (
+        "CREATE INDEX IF NOT EXISTS ix_turn_usage_user_day ON turn_usage (user_email, day)",
+        "CREATE INDEX IF NOT EXISTS ix_turn_usage_user_month ON turn_usage (user_email, month)",
+    )
+    for s in stmts:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(s))
+        except Exception:  # noqa: BLE001 — table may not exist yet / build races; never block boot
+            pass
+
+
 def init_db() -> None:
     from studioapi import models  # noqa: F401
 
     Base.metadata.create_all(engine)
     _add_missing_columns()
+    _add_missing_indexes()

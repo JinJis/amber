@@ -15,7 +15,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+import hashlib
+
+from sqlalchemy import func, select, text, update
 
 from studioapi import plans
 from studioapi.db import SessionLocal
@@ -101,6 +103,16 @@ def usage_snapshot(user: User) -> dict:
             "daily_reset_at": _tomorrow_midnight(now), "monthly_reset_at": _next_month_first(now)}
 
 
+def _lock_user_turns(db, email: str) -> None:
+    """HI-6: serialize a user's concurrent turns so the COUNT→INSERT can't both pass at the boundary
+    (two turns reading used=N<limit and both inserting → quota over-consumed). A per-user transaction
+    advisory lock (Postgres); a no-op on SQLite, which serializes writes anyway."""
+    if db.bind.dialect.name != "postgresql":
+        return
+    lock_id = int.from_bytes(hashlib.blake2b(email.encode(), digest_size=8).digest(), "big", signed=True)
+    db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_id})
+
+
 def check_and_consume(user: User, conversation_id: str | None = None) -> QuotaVerdict:
     """한도 판정 + 허용 시 같은 트랜잭션에서 TurnUsage 소비. blocked면 아무것도 쓰지 않는다."""
     plan = plans.plan_of(user)
@@ -109,6 +121,7 @@ def check_and_consume(user: User, conversation_id: str | None = None) -> QuotaVe
     day, month = now.strftime("%Y-%m-%d"), now.strftime("%Y-%m")
 
     with SessionLocal() as db:
+        _lock_user_turns(db, user.email)   # HI-6: no concurrent-turn over-consumption at the boundary
         daily_used = db.execute(select(func.count()).select_from(TurnUsage).where(
             TurnUsage.user_email == user.email, TurnUsage.day == day)).scalar() or 0
         monthly_used = db.execute(select(func.count()).select_from(TurnUsage).where(
@@ -159,9 +172,9 @@ def check_and_consume(user: User, conversation_id: str | None = None) -> QuotaVe
             from studioapi.guest import gid_of
             from studioapi.models import GuestSession
             gid = gid_of(user.email)
-            sess = db.get(GuestSession, gid) if gid else None
-            if sess is not None:
-                sess.turns_used = (sess.turns_used or 0) + 1
+            if gid:   # HI-6: atomic increment (not a read-modify-write that loses concurrent +1s)
+                db.execute(update(GuestSession).where(GuestSession.id == gid)
+                           .values(turns_used=func.coalesce(GuestSession.turns_used, 0) + 1))
         db.commit()
 
     if degraded:
