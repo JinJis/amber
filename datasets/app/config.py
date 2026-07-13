@@ -94,6 +94,9 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./datasets.db"
     redis_url: str = ""
     cache_ttl_seconds: int = 900
+    # HI-4: bound the in-memory TTLCache — it never evicted expired entries (only replaced on refresh)
+    # and the single-flight locks accumulated forever → an OOM path (a 500-ticker sweep pins GBs).
+    cache_max_entries: int = 2000             # CACHE_MAX_ENTRIES (LRU cap)
     http_timeout_seconds: float = 30.0
     # CR-9/ME-11 / SC-1.5: bound upstream load. A short shared TTL cache on Yahoo chart fetches
     # (single-flight collapses N concurrent users on one ticker → 1 upstream call); a fan-out
