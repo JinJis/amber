@@ -46,9 +46,17 @@ async def _one(label: str, ticker: str) -> dict | None:
 
 async def cross_asset_snapshot() -> dict:
     """Snapshot every group concurrently; drop members that fail (never fabricate)."""
+    from app.config import settings
+
+    sem = asyncio.Semaphore(settings.price_fanout_concurrency)  # CR-9: bound the fan-out burst
+
+    async def _bounded(lbl: str, tk: str):
+        async with sem:
+            return await _one(lbl, tk)
+
     out: list[dict] = []
     for name, members in GROUPS:
-        rows = await asyncio.gather(*[_one(lbl, tk) for lbl, tk in members])
+        rows = await asyncio.gather(*[_bounded(lbl, tk) for lbl, tk in members])
         kept = [r for r in rows if r]
         if kept:
             out.append({"name": name, "members": kept})

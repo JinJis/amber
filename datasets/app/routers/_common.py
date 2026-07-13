@@ -11,6 +11,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterable
 from typing import TypeVar
 
+from app.config import settings
 from app.errors import bad_request
 from app.models.generated import TickersResponse
 from app.providers.registry import get_company_provider
@@ -38,17 +39,24 @@ def validate_period(period: str) -> None:
 _T = TypeVar("_T")
 
 
-async def gather_best_effort(items: Iterable, fn: Callable[[object], Awaitable[_T]]) -> list[_T]:
+async def gather_best_effort(items: Iterable, fn: Callable[[object], Awaitable[_T]],
+                             *, concurrency: int | None = None) -> list[_T]:
     """Run `fn(item)` for every item concurrently; drop any that raise or return None.
 
     The platform's fan-out contract: a per-item failure (e.g. one un-priceable ticker) is skipped,
     never fabricated, and never sinks the rest. Replaces the repeated inner `_one`+gather+filter pattern.
+
+    CR-9: the in-flight fan-out is bounded (`/prices/snapshot/market` can be ~100 tickers wide) so it
+    can't burst 100 concurrent Yahoo calls from one egress IP. Per-call semaphore → no cross-loop issue.
     """
+    sem = asyncio.Semaphore(concurrency or settings.price_fanout_concurrency)
+
     async def _safe(item):
-        try:
-            return await fn(item)
-        except Exception:  # noqa: BLE001 — best-effort: skip a failing item, don't fabricate
-            return None
+        async with sem:
+            try:
+                return await fn(item)
+            except Exception:  # noqa: BLE001 — best-effort: skip a failing item, don't fabricate
+                return None
 
     results = await asyncio.gather(*[_safe(i) for i in items])
     return [r for r in results if r is not None]

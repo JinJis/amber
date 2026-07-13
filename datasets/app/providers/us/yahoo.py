@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
+from app.cache import cache
+from app.config import settings
 from app.errors import not_found
 from app.http import fetch_json
 from app.models.generated import Price, PriceSnapshot
@@ -32,9 +34,16 @@ def _epoch(d: date) -> int:
 
 
 async def _chart(symbol: str, params: dict) -> dict | None:
-    data = await fetch_json("yahoo", f"{_BASE}/{symbol}", params=params, headers=_UA)
-    results = (data.get("chart") or {}).get("result")  # type: ignore[union-attr]
-    return results[0] if results else None
+    # CR-9: short shared TTL cache with per-key single-flight — N concurrent users on one ticker
+    # collapse to ONE Yahoo call, and a .KS/.KQ miss is cached so it isn't re-fetched each request.
+    key = "yahoo:chart:" + symbol + ":" + "&".join(f"{k}={params[k]}" for k in sorted(params))
+
+    async def _load() -> dict | None:
+        data = await fetch_json("yahoo", f"{_BASE}/{symbol}", params=params, headers=_UA)
+        results = (data.get("chart") or {}).get("result")  # type: ignore[union-attr]
+        return results[0] if results else None
+
+    return await cache.get_or_set(key, _load, ttl_seconds=settings.yahoo_price_cache_ttl_seconds)
 
 
 def _d(ts) -> str | None:

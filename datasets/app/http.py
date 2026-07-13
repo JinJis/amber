@@ -23,6 +23,38 @@ _BREAK_SECONDS = 60.0                 # …fail fast for this long (no hammering
 _breaker: dict[str, list] = {}        # provider → [consecutive_failures, opened_at]
 
 
+class _RateLimiter:
+    """Token-spacing limiter: at most `rate_per_sec` calls/sec, awaited before each call. Async-safe
+    (one lock), process-local. CR-9/ME-11: uniform per-provider client-side throttle — SEC EDGAR's
+    ~10 req/s guideline foremost (a cold fan-out across CIKs otherwise gets the platform IP banned)."""
+
+    def __init__(self, rate_per_sec: float) -> None:
+        self.min_interval = 1.0 / max(0.001, rate_per_sec)
+        self._last = 0.0
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            t = time.monotonic()
+            wait = self._last + self.min_interval - t
+            if wait > 0:
+                await asyncio.sleep(wait)
+                t += wait
+            self._last = t
+
+
+def _build_limiters() -> dict[str, _RateLimiter]:
+    lim: dict[str, _RateLimiter] = {}
+    if settings.sec_edgar_rate_per_sec > 0:
+        lim["sec_edgar"] = _RateLimiter(settings.sec_edgar_rate_per_sec)
+    if getattr(settings, "yahoo_rate_per_sec", 0) > 0:
+        lim["yahoo"] = _RateLimiter(settings.yahoo_rate_per_sec)
+    return lim
+
+
+_limiters = _build_limiters()  # provider → limiter (absent = unthrottled)
+
+
 def _breaker_open(provider: str) -> bool:
     st = _breaker.get(provider)
     if not st or st[0] < _BREAK_AFTER:
@@ -47,6 +79,9 @@ async def _get_with_retry(provider: str, url: str, *, params: dict | None, heade
     """GET with bounded backoff on transient statuses + the provider circuit breaker."""
     if _breaker_open(provider):
         raise upstream_error(provider, f"upstream cooling down after repeated errors (≤{int(_BREAK_SECONDS)}s) for {url}")
+    limiter = _limiters.get(provider)   # CR-9/ME-11: per-provider client-side rate cap
+    if limiter is not None:
+        await limiter.acquire()
     last: httpx.Response | None = None
     for i, delay in enumerate((0.0,) + _BACKOFFS):
         if delay:
@@ -102,8 +137,10 @@ async def fetch_text(
 async def fetch_bytes(
     provider: str, url: str, *, params: dict | None = None, headers: dict | None = None
 ) -> bytes:
+    # ME-11: route byte downloads (DART zips/docs) through the same retry + circuit breaker +
+    # per-provider token bucket as fetch_json/fetch_text (previously a bare client.get → no retry).
     try:
-        resp = await get_client().get(url, params=params, headers=headers)
+        resp = await _get_with_retry(provider, url, params=params, headers=headers)
         resp.raise_for_status()
         return resp.content
     except httpx.HTTPStatusError as exc:

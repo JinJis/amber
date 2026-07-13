@@ -95,6 +95,13 @@ class Settings(BaseSettings):
     redis_url: str = ""
     cache_ttl_seconds: int = 900
     http_timeout_seconds: float = 30.0
+    # CR-9/ME-11 / SC-1.5: bound upstream load. A short shared TTL cache on Yahoo chart fetches
+    # (single-flight collapses N concurrent users on one ticker → 1 upstream call); a fan-out
+    # concurrency cap on market snapshots; a per-provider client-side rate limit (SEC ~10 req/s).
+    yahoo_price_cache_ttl_seconds: int = 45   # YAHOO_PRICE_CACHE_TTL_SECONDS
+    price_fanout_concurrency: int = 8         # PRICE_FANOUT_CONCURRENCY
+    sec_edgar_rate_per_sec: int = 10          # SEC_EDGAR_RATE_PER_SEC (EDGAR guideline)
+    yahoo_rate_per_sec: int = 0               # YAHOO_RATE_PER_SEC (0 = unthrottled; bounds burst if set)
     # ING-1: the RAG-ingest client budget scales with doc count (a large filing embeds hundreds
     # of chunks). read = min(base + per_doc × docs, max). With the swap atomic, an over-budget
     # request is only wasted spend (never corruption), and the one retry re-confirms for ~free.
