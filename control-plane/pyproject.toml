@@ -15,7 +15,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "respx>=0.21"]
+redis = ["redis>=5.0"]                                    # SC-2.4: shared rate-limit counter (opt-in)
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "respx>=0.21", "fakeredis>=2.20"]
 
 [build-system]
 requires = ["hatchling"]

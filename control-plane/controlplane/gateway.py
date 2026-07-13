@@ -264,8 +264,9 @@ async def gateway(full_path: str, request: Request) -> Response:
     # 2) entitlement (only catalog-governed paths)
     connector_id, cost, base_url, extra_headers = _resolve_entitlement(project_id, key_id, method, path, market)
 
-    # 3) rate limit (plan-tiered backstop — None plan keeps the global default)
-    if not _limiter.allow(key_id, _rate_limit_for(project_id)):
+    # 3) rate limit (plan-tiered backstop — None plan keeps the global default). SC-2.4: shared across
+    # replicas when REDIS_URL is set, else per-replica in-process.
+    if not await _limiter.allow_async(key_id, _rate_limit_for(project_id)):
         raise HTTPException(429, "Rate limit exceeded.")
 
     # 4) proxy + meter + audit

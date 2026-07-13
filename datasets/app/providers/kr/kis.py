@@ -16,7 +16,11 @@ from app.http import fetch_json
 
 # KIS tokens last ~24h; cache for 23h (less a 60s margin). The shared TTLCache is single-flight per
 # key, so concurrent callers issue exactly one token request — KIS limits issuance to ~1/min (RF-06).
-_token_cache = TTLCache(23 * 3600 - 60)
+# SC-2.4: redis_ns shares the token across replicas when REDIS_URL is set — otherwise every replica
+# issues its own (N× the ~1/min ceiling → hard failures). The token is a plain str → default JSON
+# serde. (A cold-start burst where all replicas miss at once is bounded by replica count; steady
+# state issues once per cluster window.)
+_token_cache = TTLCache(23 * 3600 - 60, redis_ns="kis")
 
 
 def _creds() -> tuple[str, str]:
@@ -60,7 +64,7 @@ async def _get(path: str, tr_id: str, params: dict, output_key: str = "output") 
         # server-side) — drop the cache and retry ONCE with a freshly issued token.
         msg = str(exc)
         if "401" in msg or "403" in msg:
-            _token_cache.clear()
+            await _token_cache.invalidate("kis:token")   # SC-2.4: drop it cluster-wide, then re-issue
             data = await _call()
         else:
             raise

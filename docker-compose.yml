@@ -162,6 +162,23 @@ services:
     environment:
       MCP_GATEWAY_URL: "http://control-plane:8001"
 
+  # SC-2.4: optional shared-state store for horizontal scaling. Off by default (profile "scale") —
+  # the stack is single-node correct without it. Bring it up only when running >1 replica AND set
+  # REDIS_URL=redis://redis:6379/0 (env/app.env):  docker compose --profile scale up -d redis
+  redis:
+    logging: *default-logging
+    image: redis:7-alpine
+    profiles: ["scale"]
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb",
+              "--maxmemory-policy", "allkeys-lru"]   # ephemeral cache — no persistence, LRU evict
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
   postgres:
     logging: *default-logging
     image: pgvector/pgvector:pg16   # Postgres + pgvector preinstalled
