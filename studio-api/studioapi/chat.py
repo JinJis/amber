@@ -113,7 +113,11 @@ async def drive_run(run: Run, user: User, conv_id: str, payload: dict) -> None:
     audit: dict | None = None
     cancelled = False
     try:
-      async with httpx.AsyncClient(timeout=None) as client:
+      # HI-9: bound the stream so a stalled agent-engine (no chunk arriving) can't hang the run
+      # forever — the read timeout is between-chunks, generous enough for long generation; the run
+      # deadline watchdog is the outer backstop.
+      async with httpx.AsyncClient(
+          timeout=httpx.Timeout(settings.http_timeout_seconds, connect=10.0)) as client:
         async with client.stream(
             "POST", f"{settings.agent_engine_url}/agent/chat",
             json=payload,

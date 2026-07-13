@@ -13,9 +13,12 @@ across a server restart — the pragmatic 80% of "like a normal LLM service".
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+
+from studioapi.config import settings
 
 _MAX_RUNS = 200  # cap retained runs; prune oldest finished ones beyond this
 
@@ -31,6 +34,7 @@ class Run:
     base: int = 0
     cond: asyncio.Condition = field(default_factory=asyncio.Condition)
     task: asyncio.Task | None = None
+    deadline: float = 0.0  # HI-9: monotonic; past this the watchdog force-cancels a hung driver
 
 
 class RunManager:
@@ -64,10 +68,39 @@ class RunManager:
         for r in finished[: len(self._runs) - _MAX_RUNS]:
             self._runs.pop(r.id, None)
 
+    def _running(self) -> list[Run]:
+        return [r for r in self._runs.values() if r.status == "running"]
+
+    def _enforce_cap(self) -> None:
+        """HI-9: bound concurrent background runs — a flood of turns can't spawn unbounded detached
+        tasks. When at the cap, cancel the oldest (soonest-deadline) running runs to make room; the
+        cancel flows through the driver's cleanup + finish (never left 'running')."""
+        running = self._running()
+        excess = len(running) - settings.run_max_concurrent + 1   # +1 to make room for the incoming
+        if excess <= 0:
+            return
+        for r in sorted(running, key=lambda r: r.deadline)[:excess]:
+            if r.task and not r.task.done():
+                r.task.cancel()
+
+    def sweep_expired(self) -> int:
+        """HI-9 watchdog: cancel running runs past their deadline. A hung driver (e.g. an upstream
+        call that never returns) otherwise stays 'running' forever — blocking prune and pinning the
+        buffer. Cancelling surfaces as CancelledError in the driver's await → its finally finishes it."""
+        now = time.monotonic()
+        n = 0
+        for r in self._running():
+            if r.deadline and now > r.deadline and r.task and not r.task.done():
+                r.task.cancel()
+                n += 1
+        return n
+
     def start(self, conversation_id: str, driver: Callable[[Run], Awaitable[None]]) -> Run:
         """Create a run (seeded with a ``run`` event so a tail learns its id + conv id first)
         and launch its driver as a detached background task."""
-        run = Run(id=uuid.uuid4().hex, conversation_id=conversation_id)
+        self._enforce_cap()   # HI-9: never spawn unbounded background tasks
+        run = Run(id=uuid.uuid4().hex, conversation_id=conversation_id,
+                  deadline=time.monotonic() + settings.run_deadline_seconds)
         run.events.append({"type": "run", "run_id": run.id, "conversation_id": conversation_id})
         self._runs[run.id] = run
         self._active[conversation_id] = run.id
@@ -77,6 +110,16 @@ class RunManager:
             try:
                 await driver(run)
                 await self.finish(run, "done")
+            except asyncio.CancelledError:
+                # HI-9: the watchdog/cap eviction cancelled us and the driver did NOT swallow it
+                # (a hung await) → finish so the run is never left 'running', then re-raise per the
+                # asyncio contract. (A graceful driver that catches its own cancel returns normally
+                # above and finishes 'done' — this only fires for a genuinely stuck driver.)
+                try:
+                    await self.finish(run, "error")
+                except Exception:  # noqa: BLE001 — finish must not mask the cancellation
+                    pass
+                raise
             except Exception:  # noqa: BLE001 — never leave a run stuck "running"
                 await self.append(run, {"type": "token", "text": "답변 생성 중 문제가 발생했어요."})
                 await self.finish(run, "error")

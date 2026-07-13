@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     agent_engine_url: str = "http://127.0.0.1:8003"      # AGENT_ENGINE_URL
     database_url: str = "sqlite:///./studio.db"          # DATABASE_URL
     http_timeout_seconds: float = 120.0
+    # HI-9: background chat runs (studioapi/runs.py). A global concurrency cap so a flood of turns
+    # can't spawn unbounded detached tasks, a per-run deadline + watchdog that force-finishes a run
+    # whose driver hangs (an upstream call that never returns) so it can't stay 'running' forever.
+    run_max_concurrent: int = 96                         # RUN_MAX_CONCURRENT
+    run_deadline_seconds: float = 300.0                  # RUN_DEADLINE_SECONDS
+    run_watchdog_interval_seconds: float = 30.0          # RUN_WATCHDOG_INTERVAL_SECONDS
     # M-SHARE: the public base URL share links point at (the web app) + per-user active-share cap.
     public_base_url: str = "http://localhost:3000"       # PUBLIC_BASE_URL
     shares_per_user_cap: int = 200                        # SHARES_PER_USER_CAP

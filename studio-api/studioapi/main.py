@@ -43,8 +43,22 @@ from studioapi.logging_config import install_request_logging, setup_logging
 setup_logging()
 
 
+async def _run_watchdog() -> None:
+    """HI-9: periodically force-finish background runs whose driver has hung past its deadline."""
+    import asyncio
+
+    while True:
+        await asyncio.sleep(settings.run_watchdog_interval_seconds)
+        try:
+            run_manager.sweep_expired()
+        except Exception:  # noqa: BLE001 — a watchdog error must never take the service down
+            pass
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    import asyncio
+
     from studioapi.config import assert_production_secrets
     assert_production_secrets()  # AUTH-1: production은 dev 기본 토큰으로 기동 불가
     init_db()
@@ -53,6 +67,7 @@ async def lifespan(_: FastAPI):
     tasks: list = []
     scheduler.start(tasks)  # background notification-alert dispatcher
     askfeed_start(tasks)    # ASK-5: 5-minute ask-feed refresher (per-ticker questions + hot trend)
+    tasks.append(asyncio.create_task(_run_watchdog()))  # HI-9: hung-run watchdog
     yield
     for t in tasks:
         t.cancel()
