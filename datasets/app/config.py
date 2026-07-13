@@ -147,6 +147,11 @@ class Settings(BaseSettings):
     # Where sanitized filing HTML is cached (shared by the viewer + filing-text RAG ingest),
     # on the datasets data volume.
     evidence_docs_dir: str = "/data/evidence_docs"
+    # ME-10: the evidence cache grows unbounded (one file per cited URL + decks; version-key bumps
+    # orphan every prior file). A daily worker sweep deletes files past max-age then LRU-evicts by
+    # access time down to the size budget.
+    evidence_docs_budget_bytes: int = 2_000_000_000     # EVIDENCE_DOCS_BUDGET_BYTES (2 GB)
+    evidence_docs_max_age_days: int = 30                 # EVIDENCE_DOCS_MAX_AGE_DAYS
 
     @property
     def accepted_api_keys(self) -> set[str]:

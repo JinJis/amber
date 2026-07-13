@@ -240,8 +240,9 @@ async def test_queue_periodic_schedules_registered():
     assert sched["transcript_text"] == "0 6 * * 1"
     assert sched["kr_earnings"] == "30 6 * * 1"
     assert sched["presentation_text"] == "0 7 * * 1"
+    assert sched["gc_evidence"] == "30 4 * * *"   # ME-10: daily evidence-cache sweep (not a pipeline)
     assert set(sched) == {"news", "prices", "financials", "corp_actions", "filing_text",
-                          "transcript_text", "kr_earnings", "presentation_text"}
+                          "transcript_text", "kr_earnings", "presentation_text", "gc_evidence"}
 
 
 async def test_queue_overview_failsafe_without_db(monkeypatch):

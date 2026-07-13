@@ -139,6 +139,19 @@ async def sweep_prices(timestamp: int) -> None:
     await _sweep("prices")
 
 
+@app.periodic(cron="30 4 * * *")           # daily 04:30 — ME-10: bound the evidence-docs cache on disk
+@app.task(name="gc_evidence", queue="sweep", queueing_lock="gc_evidence")
+async def gc_evidence(timestamp: int) -> None:
+    import asyncio
+
+    from app.store.evidence_gc import sweep_evidence
+    out = await asyncio.to_thread(
+        sweep_evidence, settings.evidence_docs_dir,
+        settings.evidence_docs_budget_bytes, settings.evidence_docs_max_age_days)
+    if out["deleted_age"] or out["deleted_lru"]:
+        logger.info("evidence GC: %s", out)
+
+
 @app.periodic(cron="0 3 * * 1")            # weekly Mon 03:00
 @app.task(name="sweep_financials", queue="sweep", queueing_lock="sweep_financials")
 async def sweep_financials(timestamp: int) -> None:
