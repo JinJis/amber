@@ -36,6 +36,9 @@ class QuotaVerdict:
     reset_at: str | None = None   # ISO(KST) — 다음 충전 시점
     message: str = ""
     extra: dict = field(default_factory=dict)
+    # SC-2.3/CR-1: the TurnUsage row consumed for this turn — start_turn links it to the RunRecord so
+    # a dead run's quota can be refunded. None on blocked (nothing consumed).
+    turn_usage_id: int | None = None
 
     def event(self) -> dict:
         """웹이 그대로 렌더하는 quota SSE 이벤트 페이로드."""
@@ -172,7 +175,8 @@ def check_and_consume(user: User, conversation_id: str | None = None) -> QuotaVe
                     message=(f"이번 달 무료 분석 {monthly_limit}회를 모두 사용했어요. 다음 달 1일에 "
                              "다시 충전돼요 — Pro로 업그레이드하면 지금 바로 이어갈 수 있어요."))
 
-        db.add(TurnUsage(user_email=user.email, conversation_id=conversation_id, day=day, month=month))
+        tu = TurnUsage(user_email=user.email, conversation_id=conversation_id, day=day, month=month)
+        db.add(tu)
         if lifetime_limit is not None:   # 게스트: 세션 카운터도 동기(빠른 잔여 표시용)
             from studioapi.guest import gid_of
             from studioapi.models import GuestSession
@@ -181,11 +185,13 @@ def check_and_consume(user: User, conversation_id: str | None = None) -> QuotaVe
                 db.execute(update(GuestSession).where(GuestSession.id == gid)
                            .values(turns_used=func.coalesce(GuestSession.turns_used, 0) + 1))
         db.commit()
+        turn_usage_id = tu.id   # SC-2.3: link it to the run so a dead run's quota is refundable
 
     if degraded:
         return QuotaVerdict(
             mode="degraded", scope="fair_use", plan=plan, used=monthly_used, limit=monthly_limit,
-            reset_at=_next_month_first(now),
+            reset_at=_next_month_first(now), turn_usage_id=turn_usage_id,
             message=(f"이번 달 Pro 분석 {monthly_limit}회를 넘어서 지금은 표준 모델로 답해요. "
                      "다음 달 1일에 다시 충전돼요."))
-    return QuotaVerdict(mode="ok", plan=plan, used=daily_used + 1, limit=daily_limit)
+    return QuotaVerdict(mode="ok", plan=plan, used=daily_used + 1, limit=daily_limit,
+                        turn_usage_id=turn_usage_id)

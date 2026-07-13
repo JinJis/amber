@@ -219,6 +219,26 @@ class TurnUsage(Base):
     ts: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class RunRecord(Base):
+    """SC-2.3/CR-1: durable lifecycle record for a background chat run. The live SSE buffer stays
+    in-process (runs.py), but this table is the cross-replica truth — so a run whose owning replica
+    DIES mid-flight is recovered (marked ``reaped`` + its consumed quota refunded) instead of counting
+    against the user forever with no answer delivered. Each running replica heartbeats its own rows;
+    a reaper (one replica at a time) refunds+closes rows whose owner stopped heartbeating."""
+
+    __tablename__ = "run_records"
+    id: Mapped[str] = mapped_column(String(48), primary_key=True)   # = Run.id
+    conversation_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_email: Mapped[str] = mapped_column(String(256), index=True)
+    # the TurnUsage row consumed for this turn — deleted (quota refunded) if the run is reaped dead.
+    turn_usage_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(12), default="running")  # running|done|error|reaped
+    owner: Mapped[str] = mapped_column(String(48), index=True)   # the studio-api instance running it
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
     id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: _uid("cnv"))

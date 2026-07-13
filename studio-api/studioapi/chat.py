@@ -196,9 +196,21 @@ def start_turn(user: User, conversation_id: str | None, messages: list[dict], ag
                                     degraded=(verdict.mode == "degraded"))
     notice = verdict.event() if verdict.mode == "degraded" else None
 
+    from studioapi import runstate
+
+    def _register(run: Run) -> None:
+        # SC-2.3/CR-1: durable registry row (owner = this replica) linked to the consumed quota, so a
+        # crash mid-run is reaped + refunded cluster-wide instead of charging the user for nothing.
+        runstate.register(run.id, conv_id, user.email, verdict.turn_usage_id)
+
     async def _drive(run: Run) -> None:
         if notice:
             await manager.append(run, notice)
-        await drive_run(run, user, conv_id, payload)
+        try:
+            await drive_run(run, user, conv_id, payload)
+        except BaseException:   # noqa: BLE001 — incl. CancelledError (watchdog/cap eviction)
+            runstate.mark(run.id, "error")
+            raise
+        runstate.mark(run.id, "done")
 
-    return manager.start(conv_id, _drive)
+    return manager.start(conv_id, _drive, on_register=_register)

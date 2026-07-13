@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     run_max_concurrent: int = 96                         # RUN_MAX_CONCURRENT
     run_deadline_seconds: float = 300.0                  # RUN_DEADLINE_SECONDS
     run_watchdog_interval_seconds: float = 30.0          # RUN_WATCHDOG_INTERVAL_SECONDS
+    # SC-2.3/CR-1: a run whose owning replica stops heartbeating for this long is presumed dead — the
+    # reaper marks it 'reaped' and REFUNDS its consumed quota (the user got no answer). Keep it a few
+    # watchdog intervals so a couple missed beats don't falsely reap a live-but-busy replica.
+    run_heartbeat_stale_seconds: float = 120.0           # RUN_HEARTBEAT_STALE_SECONDS
+    run_record_retention_hours: int = 24                 # RUN_RECORD_RETENTION_HOURS (GC finished rows)
     # M-SHARE: the public base URL share links point at (the web app) + per-user active-share cap.
     public_base_url: str = "http://localhost:3000"       # PUBLIC_BASE_URL
     shares_per_user_cap: int = 200                        # SHARES_PER_USER_CAP

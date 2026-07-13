@@ -95,9 +95,12 @@ class RunManager:
                 n += 1
         return n
 
-    def start(self, conversation_id: str, driver: Callable[[Run], Awaitable[None]]) -> Run:
+    def start(self, conversation_id: str, driver: Callable[[Run], Awaitable[None]],
+              on_register: Callable[[Run], None] | None = None) -> Run:
         """Create a run (seeded with a ``run`` event so a tail learns its id + conv id first)
-        and launch its driver as a detached background task."""
+        and launch its driver as a detached background task. ``on_register`` (SC-2.3) runs
+        synchronously the moment the run exists — before the task is launched — so the durable
+        run registry row is written with no gap where a crash could orphan a run untracked."""
         self._enforce_cap()   # HI-9: never spawn unbounded background tasks
         run = Run(id=uuid.uuid4().hex, conversation_id=conversation_id,
                   deadline=time.monotonic() + settings.run_deadline_seconds)
@@ -105,6 +108,8 @@ class RunManager:
         self._runs[run.id] = run
         self._active[conversation_id] = run.id
         self._prune()
+        if on_register is not None:
+            on_register(run)   # register-before-launch; the callback swallows its own errors
 
         async def _wrap() -> None:
             try:

@@ -44,14 +44,22 @@ setup_logging()
 
 
 async def _run_watchdog() -> None:
-    """HI-9: periodically force-finish background runs whose driver has hung past its deadline."""
+    """HI-9: force-finish in-process runs hung past their deadline. SC-2.3/CR-1: also heartbeat this
+    replica's durable run rows and reap runs whose owning replica died (refunding their quota)."""
     import asyncio
+
+    from studioapi import runstate
 
     while True:
         await asyncio.sleep(settings.run_watchdog_interval_seconds)
         try:
             run_manager.sweep_expired()
         except Exception:  # noqa: BLE001 — a watchdog error must never take the service down
+            pass
+        try:
+            runstate.heartbeat_own()   # prove this replica is alive for its running rows
+            runstate.reap_orphans()    # recover + refund runs abandoned by a crashed replica
+        except Exception:  # noqa: BLE001 — reaper failure must never take the service down
             pass
 
 
