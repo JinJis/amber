@@ -59,9 +59,17 @@ class Settings(BaseSettings):
     guest_turns_max: int = 3                             # GUEST_TURNS_MAX (디바이스당 평생)
     guest_turns_per_ip_day: int = 10                     # GUEST_TURNS_PER_IP_DAY (어뷰즈 백스톱)
     guest_ip_salt: str = "dev-guest-salt"                # GUEST_IP_SALT (ip_hash 솔트)
+    # ME-4: 버려진 게스트 행 GC — 미클레임(claimed_by=NULL) 세션이 이 기간보다 오래되면 정리.
+    # 종속 데이터(대화 등)가 남은 게스트 User 행은 FK RESTRICT로 건너뛴다(유실 방지).
+    guest_session_ttl_days: int = 30                     # GUEST_SESSION_TTL_DAYS
+    guest_gc_interval_seconds: int = 21600               # GUEST_GC_INTERVAL_SECONDS (6h)
     # PLAN-4 롤아웃 스위치: true면 기존 유저도 다음 요청에서 플랜 기준으로 커넥터를 reconcile
     # (free 유저의 fmp/kis 회수 포함). 기본 false — 켜기 전까지 기존 활성화는 건드리지 않는다.
     plan_enforce_connectors: bool = False                # PLAN_ENFORCE_CONNECTORS
+    # ME-2: reconcile version — bump when the default connector set changes so existing users get the
+    # new set activated ONCE (persisted on User.connectors_reconciled_ver, replacing a process-local
+    # set that re-fired the reconcile herd on every replica after a deploy).
+    connectors_reconcile_ver: str = "1"                  # CONNECTORS_RECONCILE_VER
     # AUTH-2: 이메일 OTP 로그인 발송 (Resend). 키 없으면 dev 모드 — 코드가 로그로만 남는다.
     resend_api_key: str = ""                             # RESEND_API_KEY
     email_from: str = "ValueGraph <login@valuegraph.app>"  # EMAIL_FROM (Resend 도메인 인증 필요)

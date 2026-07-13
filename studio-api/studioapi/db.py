@@ -94,6 +94,7 @@ def _add_missing_columns() -> None:
         # 지금까지의 가입 경로는 전부 구글 OAuth라 이메일이 실재한다)
         "plan_updated_at": ts, "bonus_daily_turns": "INTEGER DEFAULT 0", "bonus_turns_until": ts,
         "referral_code": "VARCHAR(16)", "referred_by": "VARCHAR(256)",
+        "connectors_reconciled_ver": "VARCHAR(32)",   # ME-2: persistent reconcile version
         "email_verified": ("BOOLEAN DEFAULT true" if dialect == "postgresql" else "BOOLEAN DEFAULT 1")})
     add_cols("messages", {"artifacts": "TEXT", "audit": "TEXT",   # inline figures + number audit
                           "suggestions": "TEXT",                  # 더 파고들기 chips survive reload

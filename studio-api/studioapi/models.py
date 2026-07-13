@@ -57,6 +57,9 @@ class User(Base):
     # M-DESK: previous visit timestamp — bounds the desk feed's "since last visit" windows
     # (새로 들어온 공시 etc.). Updated each time the feed is served.
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # ME-2: the connector-default reconcile version this user was last reconciled against — persistent,
+    # so a deploy's reconcile fires ONCE per user across the fleet (not once per replica per user).
+    connectors_reconciled_ver: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

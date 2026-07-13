@@ -37,13 +37,12 @@ def setup_module(_module):
 def _mk_user(db, email: str, key: str = "vgk_x") -> User:
     u = db.get(User, email)
     if u is None:
-        u = User(email=email, tenant_id="t1", project_id="p1", api_key=key)
+        # ME-2: stamp the current reconcile version so ensure_user() short-circuits without the
+        # over-the-network default-connector reconcile — keeps these tests offline.
+        u = User(email=email, tenant_id="t1", project_id="p1", api_key=key,
+                 connectors_reconciled_ver=settings.connectors_reconcile_ver)
         db.add(u)
         db.commit()
-    # the user already exists → ensure_user() short-circuits, but still reconciles default
-    # connector activations over the network once — mark done so tests stay offline.
-    import studioapi.provision as prov
-    prov._reconciled.add(email)
     return u
 
 

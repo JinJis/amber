@@ -56,7 +56,7 @@ def _next_month_first(now: datetime) -> str:
 def _guest_ip_turns_today(db, email: str, day: str) -> int | None:
     """같은 IP의 게스트 세션들이 오늘 소비한 턴 합계 — 쿠키를 지워 새 세션을 파는 우회를 막는
     어뷰즈 백스톱. IP를 모르는 세션(ip_hash 없음)은 None(백스톱 미적용)."""
-    from studioapi.guest import gid_of, guest_email
+    from studioapi.guest import gid_of
     from studioapi.models import GuestSession
 
     gid = gid_of(email)
@@ -65,11 +65,16 @@ def _guest_ip_turns_today(db, email: str, day: str) -> int | None:
     sess = db.get(GuestSession, gid)
     if sess is None or not sess.ip_hash:
         return None
-    sibling_ids = db.execute(select(GuestSession.id).where(
-        GuestSession.ip_hash == sess.ip_hash)).scalars().all()
-    emails = [guest_email(s) for s in sibling_ids]
-    return db.execute(select(func.count()).select_from(TurnUsage).where(
-        TurnUsage.user_email.in_(emails), TurnUsage.day == day)).scalar() or 0
+    # ME-4: JOIN turn_usage↔guest_sessions on the derived guest email instead of materializing a
+    # sibling-email IN list — under CGNAT one ip_hash can front thousands of sessions, and a
+    # thousands-entry IN clause blows the query plan (+ statement size). ``||`` is portable (PG/SQLite).
+    from sqlalchemy import literal
+    sess_email = literal("guest_").concat(GuestSession.id).concat(literal("@guest.local"))
+    return db.execute(
+        select(func.count()).select_from(TurnUsage).join(
+            GuestSession, TurnUsage.user_email == sess_email)
+        .where(GuestSession.ip_hash == sess.ip_hash, TurnUsage.day == day)
+    ).scalar() or 0
 
 
 def _daily_limit(user: User, lim: dict, now: datetime) -> int | None:

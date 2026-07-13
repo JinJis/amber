@@ -70,6 +70,12 @@ async def lifespan(_: FastAPI):
     scheduler.start(tasks)  # background notification-alert dispatcher
     askfeed_start(tasks)    # ASK-5: 5-minute ask-feed refresher (per-ticker questions + hot trend)
     tasks.append(asyncio.create_task(_run_watchdog()))  # HI-9: hung-run watchdog
+    # ME-5: provision the dedicated system tenant/key for background feeds — best-effort & detached so
+    # a not-yet-ready control-plane can't block studio boot (feeds fall back to _any_api_key until set).
+    from studioapi.provision import ensure_system_project
+    tasks.append(asyncio.create_task(ensure_system_project()))
+    from studioapi.guest import start_gc
+    start_gc(tasks)         # ME-4: periodic GC of abandoned guest sessions/users (bounded row growth)
     yield
     for t in tasks:
         t.cancel()

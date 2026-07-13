@@ -53,6 +53,14 @@ def _any_api_key(db: Session) -> str | None:
     return db.scalar(select(User.api_key).where(User.api_key.is_not(None)).limit(1))
 
 
+def _bg_api_key(db: Session) -> str | None:
+    """ME-5: the key that background/system feed generation meters against — prefer the dedicated system
+    tenant key (stable, not tied to any user's lifecycle) and only fall back to an arbitrary user's key
+    while the system project is still provisioning."""
+    from studioapi.provision import system_api_key_cached
+    return system_api_key_cached() or _any_api_key(db)
+
+
 def _payload_of(row: AskFeedCache | None) -> dict:
     if row is None:
         return {}
@@ -116,7 +124,7 @@ async def refresh_once() -> dict:
             if is_pg and not bool(db.execute(func.pg_try_advisory_lock(0x76674132)).scalar()):  # 'vgA2'
                 return {"scopes": 0, "refreshed": 0}
             try:
-                key = _any_api_key(db)
+                key = _bg_api_key(db)
                 if not key:
                     return {"scopes": 0, "refreshed": 0}
                 ok = await _refresh_scope(client, db, scope=_NEWS_SCOPE, api_key=key,
@@ -287,7 +295,7 @@ async def refresh_onboarding_once() -> dict:
     """agent-engine의 라이브 쇼케이스를 받아 캐시(스코프 onboarding_showcase)에 저장."""
     async with httpx.AsyncClient(timeout=120) as client:
         with SessionLocal() as db:
-            key = _any_api_key(db)
+            key = _bg_api_key(db)
             if not key:
                 return {"refreshed": False}
             try:

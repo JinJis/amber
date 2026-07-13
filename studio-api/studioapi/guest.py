@@ -21,8 +21,11 @@ import hashlib
 import json
 import logging
 import re
+from datetime import datetime, timedelta
 
 from fastapi import HTTPException
+from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 
 from studioapi.config import settings
 from studioapi.db import SessionLocal
@@ -35,6 +38,7 @@ logger = logging.getLogger(__name__)
 _STATE_KEY = "guest_project"
 _GID_RE = re.compile(r"^[a-f0-9]{16,48}$")   # 쿠키 id = uuid hex (BFF가 발급)
 _lock = asyncio.Lock()
+_GC_LOCK_ID = 0x76674743   # 'vgGC' — one replica GCs at a time
 
 
 def guest_email(gid: str) -> str:
@@ -114,3 +118,57 @@ async def ensure_guest(gid: str, ip: str | None = None) -> User:
         db.merge(user)
         db.commit()
     return user
+
+
+def cleanup_stale_guests(now: datetime | None = None, limit: int = 1000) -> int:
+    """ME-4: GC 버려진 게스트 행 — 게스트 세션/유저 행은 디바이스마다 쌓이므로(크롤러·이탈 트라이얼)
+    상한이 없으면 무한히 증가한다. 미클레임(가입으로 안 이어진) + TTL 초과 세션을 지우고, 종속
+    데이터가 없는 게스트 User 행도 함께 지운다. 대화·워치리스트가 남은 게스트는 FK RESTRICT로
+    건너뛰어(SAVEPOINT) 유실을 막는다. 한 리플리카만 실행(advisory lock)하는 베스트에포트.
+    지운 세션 수를 반환."""
+    now = now or datetime.utcnow()
+    cutoff = now - timedelta(days=settings.guest_session_ttl_days)
+    removed = 0
+    with SessionLocal() as db:
+        is_pg = db.bind.dialect.name == "postgresql"
+        if is_pg and not bool(db.execute(func.pg_try_advisory_lock(_GC_LOCK_ID)).scalar()):
+            return 0
+        try:
+            gids = db.execute(
+                select(GuestSession.id).where(
+                    GuestSession.claimed_by.is_(None), GuestSession.created_at < cutoff
+                ).limit(limit)
+            ).scalars().all()
+            for gid in gids:
+                email = guest_email(gid)
+                try:
+                    # SAVEPOINT: FK RESTRICT가 아직 참조되는 게스트 User 행을 막으면 이 세션만 건너뛰고
+                    # 배치 전체는 살린다 (대화 등 종속 데이터 유실 방지).
+                    with db.begin_nested():
+                        db.execute(delete(User).where(User.email == email))
+                except IntegrityError:
+                    continue
+                db.execute(delete(GuestSession).where(GuestSession.id == gid))
+                removed += 1
+            db.commit()
+        finally:
+            if is_pg:
+                db.execute(func.pg_advisory_unlock(_GC_LOCK_ID))
+                db.commit()
+    return removed
+
+
+async def _gc_loop() -> None:
+    while True:
+        try:
+            n = await asyncio.to_thread(cleanup_stale_guests)
+            if n:
+                logger.info("guest GC removed %d stale sessions", n)
+        except Exception:  # noqa: BLE001 — GC must never crash the worker
+            logger.exception("guest GC failed")
+        await asyncio.sleep(max(60, settings.guest_gc_interval_seconds))
+
+
+def start_gc(tasks: list) -> None:
+    """ME-4: 주기적 게스트 GC 태스크를 라이프사이클에 등록."""
+    tasks.append(asyncio.create_task(_gc_loop()))

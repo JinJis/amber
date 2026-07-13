@@ -14,19 +14,21 @@ function serviceToken(): string {
 
 // GUEST-2: 비로그인이면 게스트 쿠키로 폴백 — studio가 actor(유저 또는 게스트)를 판정한다.
 // 게스트에게 열리지 않은 studio 엔드포인트는 그쪽에서 401이 나므로 BFF는 헤더만 바꿔 낀다.
-function guestHeaders(): Record<string, string> | null {
+// ME-4: 명시적 gid(첫 채팅에서 갓 발급한 세션 id)가 오면 그걸 쓰고, 없으면 기존 쿠키로 폴백한다 —
+// 쿠키는 이제 방문마다가 아니라 첫 채팅에서만 심기므로 그 요청엔 아직 쿠키가 없다.
+function guestHeaders(gid?: string | null): Record<string, string> | null {
   if (process.env.FEATURE_GUEST !== "true") return null;
-  const gid = cookies().get("vg_guest")?.value;
-  if (!gid) return null;
+  const id = gid ?? cookies().get("vg_guest")?.value;
+  if (!id) return null;
   const fwd = headers().get("x-forwarded-for");
   const ip = (fwd ? fwd.split(",")[0] : headers().get("x-real-ip")) ?? "";
-  return { "X-Guest-Id": gid, ...(ip ? { "X-Guest-Ip": ip.trim() } : {}) };
+  return { "X-Guest-Id": id, ...(ip ? { "X-Guest-Ip": ip.trim() } : {}) };
 }
 
 // Server-only helper: call studio-api with the trusted service token + the
 // authenticated user's email (or the guest session id). The platform key stays in
 // studio-api; the browser only ever holds an Auth.js session / an opaque guest cookie.
-export async function studioFetch(path: string, init: RequestInit = {}): Promise<Response | null> {
+export async function studioFetch(path: string, init: RequestInit = {}, guestId?: string): Promise<Response | null> {
   const session = await auth();
   const email = session?.user?.email;
   const base = process.env.STUDIO_API_URL ?? "http://127.0.0.1:8004";
@@ -38,7 +40,7 @@ export async function studioFetch(path: string, init: RequestInit = {}): Promise
   const actor = email
     ? { "X-User-Email": email, "X-User-Name": enc(session?.user?.name), "X-User-Image": enc(session?.user?.image),
         ...(refCode ? { "X-Referral-Code": refCode } : {}) }
-    : guestHeaders();
+    : guestHeaders(guestId);
   if (!actor) return null;
   return fetch(`${base}${path}`, {
     ...init,
@@ -67,8 +69,8 @@ const SSE_HEADERS = { "Content-Type": "text/event-stream", "Cache-Control": "no-
 // proxyStudio, used by the chat + run-resume routes (the only two that bypassed studioFetch).
 // Auth + the service-token/email headers come from studioFetch; we forward the body as
 // text/event-stream (or an error if the caller is unauthorized / the upstream stream is missing).
-export async function streamStudioEvents(path: string, init: RequestInit = {}): Promise<Response> {
-  const r = await studioFetch(path, init);
+export async function streamStudioEvents(path: string, init: RequestInit = {}, guestId?: string): Promise<Response> {
+  const r = await studioFetch(path, init, guestId);
   if (!r) return new Response("unauthorized", { status: 401 });
   if (!r.ok || !r.body) return new Response("upstream stream unavailable", { status: r.status || 502 });
   return new Response(r.body, { headers: SSE_HEADERS });
