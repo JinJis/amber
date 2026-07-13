@@ -204,6 +204,8 @@ async def llm_usage_by_project(days: int = 30) -> dict:
 
 @router.get("/projects/{project_id}/usage", summary="Usage + cost summary")
 async def usage(project_id: str) -> dict:
+    from controlplane.models import UsageRollup
+
     with SessionLocal() as db:
         total_calls = db.scalar(select(func.count()).select_from(UsageEvent).where(UsageEvent.project_id == project_id)) or 0
         total_cost = db.scalar(select(func.coalesce(func.sum(UsageEvent.cost_units), 0)).where(UsageEvent.project_id == project_id)) or 0
@@ -211,10 +213,13 @@ async def usage(project_id: str) -> dict:
             select(UsageEvent.connector_id, func.count(), func.coalesce(func.sum(UsageEvent.cost_units), 0))
             .where(UsageEvent.project_id == project_id).group_by(UsageEvent.connector_id)
         ).all()
+        # HI-13: add the cumulative totals for rows retention has already dropped, so lifetime
+        # calls/cost stay correct after the raw usage_events age out.
+        roll = db.get(UsageRollup, project_id)
         return {
             "project_id": project_id,
-            "total_calls": total_calls,
-            "total_cost_units": int(total_cost),
+            "total_calls": int(total_calls) + (roll.calls if roll else 0),
+            "total_cost_units": int(total_cost) + (roll.cost_units if roll else 0),
             "by_connector": [{"connector_id": c, "calls": n, "cost_units": int(cost)} for c, n, cost in by_conn],
         }
 

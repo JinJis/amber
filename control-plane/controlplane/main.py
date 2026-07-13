@@ -33,10 +33,14 @@ async def lifespan(_: FastAPI):
     await load_catalog_from_datasets()
     # CR-4: background flusher for the batched meter/audit writes.
     flush_task = asyncio.create_task(gateway.usage_flush_loop())
+    # HI-13: daily retention — roll usage into rollup + drop aged usage/audit rows (bounded growth).
+    from controlplane.retention import retention_loop
+    retention_task = asyncio.create_task(retention_loop())
     try:
         yield
     finally:
         flush_task.cancel()
+        retention_task.cancel()
         await gateway.flush_usage()  # final drain so buffered usage/audit rows survive shutdown
 
 

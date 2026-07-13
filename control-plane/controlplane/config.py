@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     # ingest — a 30s proxy cap silently dropped ALL RAG evidence from a turn (502). RAG-bound
     # requests get their own, longer budget.
     rag_http_timeout_seconds: float = 90.0
+    # HI-13: usage_events + audit_log append 2 rows per proxied call (~2.6 GB/day at 100 req/s) on the
+    # OLTP instance. A daily retention job rolls usage_events into cumulative per-project totals
+    # (usage_rollup) then drops the raw rows past this window; audit_log rows are dropped outright.
+    usage_retention_days: int = 90                       # USAGE_RETENTION_DAYS
+    audit_retention_days: int = 30                       # AUDIT_RETENTION_DAYS
+    retention_interval_seconds: int = 86400              # RETENTION_INTERVAL_SECONDS (daily)
 
 
 settings = Settings()

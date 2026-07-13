@@ -107,8 +107,30 @@ def boot_lock():
             conn.commit()
 
 
+def _add_missing_indexes() -> None:
+    """HI-13: create_all only indexes NEW tables — a long-lived usage_events/audit_log predates the
+    composite/ts indexes and needs an explicit CREATE INDEX IF NOT EXISTS. Idempotent both dialects;
+    best-effort (never blocks boot)."""
+    if engine.dialect.name not in ("sqlite", "postgresql"):
+        return
+    from sqlalchemy import text
+
+    stmts = (
+        "CREATE INDEX IF NOT EXISTS ix_usage_events_project_ts ON usage_events (project_id, ts)",
+        "CREATE INDEX IF NOT EXISTS ix_usage_events_ts ON usage_events (ts)",
+        "CREATE INDEX IF NOT EXISTS ix_audit_log_ts ON audit_log (ts)",
+    )
+    for s in stmts:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(s))
+        except Exception:  # noqa: BLE001 — table may not exist yet / build races; never block boot
+            pass
+
+
 def init_db() -> None:
     from controlplane import models  # noqa: F401
 
     Base.metadata.create_all(engine)
     _add_missing_columns()
+    _add_missing_indexes()

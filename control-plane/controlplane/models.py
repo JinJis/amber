@@ -10,7 +10,7 @@ from __future__ import annotations
 import secrets
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from controlplane.db import Base
@@ -63,8 +63,15 @@ class Activation(Base):
 
 class UsageEvent(Base):
     __tablename__ = "usage_events"
+    # HI-13: the settings usage aggregate filters by project_id; retention drops by ts. A composite
+    # (project_id, ts) serves the per-project scan (and its project_id prefix replaces the old single
+    # index) and a ts index serves the retention delete.
+    __table_args__ = (
+        Index("ix_usage_events_project_ts", "project_id", "ts"),
+        Index("ix_usage_events_ts", "ts"),
+    )
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    project_id: Mapped[str] = mapped_column(index=True)
+    project_id: Mapped[str] = mapped_column()
     api_key_id: Mapped[str] = mapped_column(String(40))
     connector_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     method: Mapped[str] = mapped_column(String(8))
@@ -98,9 +105,22 @@ class LlmUsage(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_log"
+    __table_args__ = (Index("ix_audit_log_ts", "ts"),)   # HI-13: retention drop scan
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     project_id: Mapped[str | None] = mapped_column(nullable=True)
     api_key_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
     action: Mapped[str] = mapped_column(String(32))  # access | denied | admin
     detail: Mapped[str] = mapped_column(String(512))
     ts: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class UsageRollup(Base):
+    """HI-13: cumulative per-project totals for usage_events that retention has DROPPED — so the
+    settings usage aggregate still reports lifetime calls/cost after the raw rows age out. Written by
+    the retention job (SUM of the rows it deletes), read by the /usage aggregate alongside live rows."""
+
+    __tablename__ = "usage_rollup"
+    project_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    calls: Mapped[int] = mapped_column(Integer, default=0)
+    cost_units: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
