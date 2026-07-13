@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -40,6 +41,19 @@ _LIB_FLOORS = {
     "pykrx": logging.WARNING,
 }
 
+# SC-0.4: secrets that can leak into logs — upstream API keys ride in URL query params (OpenDART
+# crtfc_key, data.go.kr serviceKey, …) and httpx logs the full request URL; DB DSNs carry a password
+# (postgresql://user:pass@host). Redact both so nothing sensitive lands in `docker logs`.
+_SECRET_PARAM_RE = re.compile(
+    r"((?:crtfc_key|serviceKey|api_?key|apikey|appkey|token|authKey)=)[^&\s\"']+",
+    re.IGNORECASE)
+_DSN_PW_RE = re.compile(r"(://[^:@/\s]+:)[^@/\s]+@")
+
+
+def _redact(msg: str) -> str:
+    return _DSN_PW_RE.sub(r"\1***@", _SECRET_PARAM_RE.sub(r"\1***", msg))
+
+
 logger = logging.getLogger(_PKG)
 
 
@@ -49,7 +63,7 @@ class _SafeFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         try:
-            return super().format(record)
+            return _redact(super().format(record))
         except Exception:  # noqa: BLE001 — logging must not raise
             try:
                 return f"{record.levelname} {record.name}: {record.msg!r} args={record.args!r}"

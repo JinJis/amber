@@ -24,12 +24,18 @@ import uuid
 
 from app.config import settings
 
-# Upstream API keys ride in URL query params (OpenDART crtfc_key, data.go.kr serviceKey, …)
-# and httpx logs the full request URL at INFO — redact the values so keys never land in
-# `docker logs`.
+# SC-0.4: secrets that can leak into logs — upstream API keys ride in URL query params (OpenDART
+# crtfc_key, data.go.kr serviceKey, …) and httpx logs the full request URL at INFO; DB DSNs carry a
+# password (postgresql://user:pass@host). Redact both so nothing sensitive lands in `docker logs`.
 _SECRET_PARAM_RE = re.compile(
     r"((?:crtfc_key|serviceKey|api_?key|apikey|appkey|token|authKey)=)[^&\s\"']+",
     re.IGNORECASE)
+_DSN_PW_RE = re.compile(r"(://[^:@/\s]+:)[^@/\s]+@")
+
+
+def _redact(msg: str) -> str:
+    return _DSN_PW_RE.sub(r"\1***@", _SECRET_PARAM_RE.sub(r"\1***", msg))
+
 
 _PKG = "app"
 _BASE_FMT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -58,7 +64,7 @@ class _SafeFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         try:
-            return _SECRET_PARAM_RE.sub(r"\1***", super().format(record))
+            return _redact(super().format(record))
         except Exception:  # noqa: BLE001 — logging must not raise
             try:
                 return f"{record.levelname} {record.name}: {record.msg!r} args={record.args!r}"

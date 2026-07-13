@@ -4,8 +4,17 @@
 # (every env_file is optional; later files override earlier).
 name: valuegraph-platform
 
+# SC-0.4: cap every container's json-file logs so a chatty/looping service can't fill the host
+# disk (logs share the disk with Postgres). 10 MB x 5 rotated files per container.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   datasets:
+    logging: *default-logging
     build: ./datasets
     image: valuegraph-datasets:latest
     env_file:
@@ -47,6 +56,7 @@ services:
   # datasets web process applies the queue schema at startup; this just runs the worker. Stop it
   # (`docker compose stop worker`) to pause all automatic ingestion.
   worker:
+    logging: *default-logging
     build: ./datasets
     image: valuegraph-datasets:latest
     env_file:
@@ -86,6 +96,7 @@ services:
     restart: unless-stopped
 
   control-plane:
+    logging: *default-logging
     build: ./control-plane
     image: valuegraph-control-plane:latest
     env_file:
@@ -129,6 +140,7 @@ services:
   # MCP server. Not part of the default stack (stdio); `tools` profile so e2e can
   # run it as a one-off on the network: `docker compose run --rm -T mcp python ...`.
   mcp:
+    logging: *default-logging
     build: ./mcp
     image: valuegraph-mcp:latest
     profiles: ["tools"]
@@ -151,6 +163,7 @@ services:
       MCP_GATEWAY_URL: "http://control-plane:8001"
 
   postgres:
+    logging: *default-logging
     image: pgvector/pgvector:pg16   # Postgres + pgvector preinstalled
     environment:
       POSTGRES_USER: rag
@@ -180,6 +193,7 @@ services:
       start_period: 10s
 
   rag:
+    logging: *default-logging
     build: ./rag
     image: valuegraph-rag:latest
     env_file:
@@ -220,6 +234,7 @@ services:
       start_period: 10s
 
   agent-engine:
+    logging: *default-logging
     build: ./agent-engine
     image: valuegraph-agent-engine:latest
     env_file:
@@ -260,6 +275,7 @@ services:
       start_period: 10s
 
   studio-api:
+    logging: *default-logging
     build: ./studio-api
     image: valuegraph-studio-api:latest
     env_file:
@@ -301,6 +317,7 @@ services:
   # Web UI — part of the default stack: `docker compose up` serves it on :3000.
   # (The e2e script brings up only the backend services by name, so it stays fast.)
   web:
+    logging: *default-logging
     build: ./web
     image: valuegraph-web:latest
     env_file:
@@ -330,6 +347,7 @@ services:
   # Admin panel — Django-admin-style CRUD over every service DB (reflected over Postgres) +
   # an ops console. Login via ADMINUI_USERNAME/ADMINUI_PASSWORD.
   admin:
+    logging: *default-logging
     build: ./admin
     image: valuegraph-admin:latest
     env_file:
