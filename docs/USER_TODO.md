@@ -77,12 +77,17 @@
 
 ## 1-11. 스케일링 감사에서 나온 오너 액션 (2026-07-12, [SCALING_AUDIT](./SCALING_AUDIT.md))
 - [ ] **DB 백업 지금 즉시** (CR-11 — 현재 백업 전무, 디스크 1개 유실 = 테넌트·키·빌링 원장 전체 유실):
-  최소한 서버에 야간 `pg_dump` 크론 + 오프호스트(GCS 등) 복사. 프로덕션은 controlplane·studio(빌링)부터
-  PITR 있는 매니지드 DB로
-- [ ] **admin(:8005) 크레덴셜·노출 정리** (CR-10): `ADMINUI_USERNAME/PASSWORD/SECRET`를 강한 값으로
-  설정하고 포트를 외부에 열지 말 것(프라이빗 네트워크/터널만). 코드 가드(SC-0)가 랜딩되기 전엔 이게 유일한 방어예요
-- [ ] **프로덕션 시크릿 전수 교체** (CR-10): 특히 `AUTH_SECRET`(dev 값이면 세션 위조 가능) ·
-  `SERVICE_TOKEN` · `DATASETS_API_KEYS`(미설정이면 아무 키나 통과). 1-2의 목록에 더해 이 3개는 필수
+  최소한 서버에 야간 `pg_dump` 크론 + 오프호스트(GCS 등) 복사. 예를 들어 크론에
+  `docker exec valuegraph-platform-postgres-1 pg_dumpall -U rag | gzip > /backups/pg_$(date +\%F).sql.gz`
+  를 걸고 `gsutil cp`로 GCS에 올리면 돼요. 프로덕션은 controlplane·studio(빌링)부터 PITR 있는 매니지드
+  DB로, rag는 AlloyDB로 분리(1-10). rag 코퍼스는 재생성되지만 재임베딩 비용이 드니 스냅샷도 같이
+- [x] **admin(:8005) 크레덴셜·노출** (CR-10): 코드 가드 랜딩됨(SC-0.2 — 로그인 레이트리밋·IP 허용목록,
+  기본 호스트 바인드가 loopback으로). **남은 오너 액션**: `ADMINUI_USERNAME/PASSWORD/SECRET`를 강한
+  값으로 설정. 외부에서 접근해야 하면 `ADMIN_BIND`/`ADMINUI_IP_ALLOWLIST`로만 열고 공개 `0.0.0.0`은 금지
+- [x] **프로덕션 시크릿 전수 교체** (CR-10): 이제 `ENV=production`이면 dev 기본값으로 기동을 **거부**해요
+  (SC-0.1) — 배포 전 실값으로 안 바꾸면 스택이 아예 안 떠요. 바꿀 목록: `AUTH_SECRET`·`SERVICE_TOKEN`·
+  `ADMIN_TOKEN`·`ADMINUI_*`·`DATASETS_API_KEYS`(+`AUTH_DISABLED=false`)·기본 pg 비번(`rag:rag`)·
+  (게스트 켜면)`GUEST_IP_SALT`·(토스 켜면)`BILLING_ENC_KEY`
 - [ ] **레플리카 증설은 SC-2 완료 전 금지**: studio-api를 2대로 늘리면 지금 코드로는 중복 결제 시도·
   알림 중복 발송·챗 재개 404가 발생해요. 수평 확장해도 되는 티어는 현재 web뿐
 
