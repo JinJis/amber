@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     adminui_username: str = "admin"               # ADMINUI_USERNAME
     adminui_password: str = "admin"               # ADMINUI_PASSWORD
     adminui_secret: str = "dev-adminui-secret-change-me"  # ADMINUI_SECRET (session signing)
+    # SC-0.2: optional source-IP allowlist (comma-separated IPs/CIDRs). Empty = allow all (dev).
+    # When set, requests from other IPs are refused before the login form (defense behind a proxy).
+    adminui_ip_allowlist: str = ""                # ADMINUI_IP_ALLOWLIST
 
     # service databases (SQLite files mounted from each service's volume)
     controlplane_db: str = "sqlite:////dbs/controlplane/controlplane.db"

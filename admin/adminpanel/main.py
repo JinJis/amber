@@ -19,16 +19,18 @@ One session login gates everything (a guard middleware).
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from hmac import compare_digest
 
 import httpx
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from sqlalchemy import text as sa_text
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from adminpanel.clients import _ok, _safe_get
 from adminpanel.config import assert_production_secrets, settings
+from adminpanel.security import LoginThrottle, ip_allowed
 from adminpanel.logging_config import install_request_logging, setup_logging
 # Reflected service-DB state + DB helpers live in state.py (RF-14); re-exported here so importers
 # (and tests) that reference `adminpanel.main.DB_STATUS` keep working.
@@ -74,9 +76,27 @@ app.include_router(db_browser.router)
 
 
 # --- auth -----------------------------------------------------------------
+# SC-0.2/CR-10: brute-force throttle for the single admin credential (in-memory; single process).
+_login_throttle = LoginThrottle()
+
+
+def _client_ip(request: Request) -> str:
+    # Behind a reverse proxy the real client is the first hop of X-Forwarded-For. Only trust this
+    # when the panel actually sits behind a trusted proxy (the operator sets the allowlist to match).
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else ""
+
+
 async def _guard(request: Request, call_next):
     p = request.url.path
-    if p in ("/login", "/logout", "/healthz"):
+    if p == "/healthz":  # container healthcheck (loopback) — never gate it
+        return await call_next(request)
+    # SC-0.2: source-IP allowlist (empty → allow all). Refuse before the login form.
+    if not ip_allowed(_client_ip(request), settings.adminui_ip_allowlist):
+        return PlainTextResponse("forbidden", status_code=403)
+    if p in ("/login", "/logout"):
         return await call_next(request)
     if not request.session.get("authed"):
         return RedirectResponse("/login", status_code=302)
@@ -101,9 +121,21 @@ async def login_form(request: Request):
 
 @app.post("/login")
 async def login(request: Request, username: str = Form(""), password: str = Form("")):
-    if username == settings.adminui_username and password == settings.adminui_password:
+    ip = _client_ip(request)
+    if _login_throttle.locked(ip):
+        return HTMLResponse(
+            login_page("<div class=e>Too many attempts — try again in a few minutes.</div>"),
+            status_code=429,
+        )
+    # timing-safe compare (utf-8 bytes so non-ASCII secrets don't raise)
+    ok = compare_digest(username.encode(), settings.adminui_username.encode()) & compare_digest(
+        password.encode(), settings.adminui_password.encode()
+    )
+    if ok:
+        _login_throttle.clear(ip)
         request.session["authed"] = True
         return RedirectResponse("/", status_code=302)
+    _login_throttle.record_failure(ip)
     return HTMLResponse(login_page("<div class=e>Invalid credentials.</div>"), status_code=401)
 
 

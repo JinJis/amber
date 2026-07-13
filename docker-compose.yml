@@ -354,8 +354,11 @@ services:
       CONTROLPLANE_DB: "postgresql+psycopg://rag:rag@postgres:5432/controlplane"
       STUDIO_DB: "postgresql+psycopg://rag:rag@postgres:5432/studio"
       DATASETS_DB: "postgresql+psycopg://rag:rag@postgres:5432/datasets"
+      ADMINUI_IP_ALLOWLIST: "${ADMINUI_IP_ALLOWLIST:-}"
     ports:
-      - "8005:8005"
+      # SC-0.2/CR-10: bind to loopback by default — this console has CRUD over every service DB, so it
+      # must not sit on 0.0.0.0. Set ADMIN_BIND=0.0.0.0 (or a host IP) only behind a trusted network.
+      - "${ADMIN_BIND:-127.0.0.1}:8005:8005"
     depends_on:
       control-plane:
         condition: service_healthy
