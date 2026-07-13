@@ -83,6 +83,45 @@ def test_first_charge_failure_never_flips_pro(_fake_gateway):
         assert sub.status == "past_due"
 
 
+def _pending_invoice(email: str, order_id: str, status: str = "pending") -> str:
+    from datetime import datetime
+    with SessionLocal() as db:
+        inv = Invoice(user_email=email, subscription_id="sub_cr2", order_id=order_id,
+                      amount=19900, discount=0, credit_applied=0, total=19900,
+                      period_start=datetime.utcnow(), period_end=datetime.utcnow(), status=status)
+        db.add(inv)
+        db.commit()
+        return inv.id
+
+
+def test_cr2_claim_guard_blocks_already_charging_invoice(_fake_gateway):
+    """CR-2/ME-15: an invoice another path already claimed ('charging') is NOT re-charged — the
+    atomic claim (status IN pending/failed → charging) matches 0 rows and _charge_invoice bails."""
+    u = _user("cr2a@u.com")
+    asyncio.run(billing.register_and_subscribe(u, "authkeyCR2a"))
+    inv_id = _pending_invoice(u.email, "cr2_o1", status="charging")
+    n = len(_fake_gateway.charges)
+    assert asyncio.run(billing._charge_invoice(inv_id)) is False    # can't claim → no charge
+    assert len(_fake_gateway.charges) == n                          # gateway was NOT called
+    with SessionLocal() as db:   # don't leave a 'charging' invoice for another test's tick to sweep
+        db.query(Invoice).filter(Invoice.order_id == "cr2_o1").delete(synchronize_session=False)
+        db.commit()
+
+
+def test_cr2_concurrent_charge_is_single(_fake_gateway):
+    """CR-2: two concurrent _charge_invoice on the same invoice → exactly ONE reaches the gateway."""
+    u = _user("cr2b@u.com")
+    asyncio.run(billing.register_and_subscribe(u, "authkeyCR2b"))
+    inv_id = _pending_invoice(u.email, "cr2_o2")
+
+    async def _both():
+        return await asyncio.gather(billing._charge_invoice(inv_id), billing._charge_invoice(inv_id))
+
+    asyncio.run(_both())
+    charges = [c for c in _fake_gateway.charges if c.get("orderId") == "cr2_o2"]
+    assert len(charges) == 1                                        # no double-charge
+
+
 def test_referee_discount_and_referrer_kickback(_fake_gateway):
     referrer = _user("refhost@u.com")
     referee = _user("refguest@u.com", referred_by=referrer.email)

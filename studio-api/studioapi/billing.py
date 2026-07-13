@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 from typing import Protocol
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from studioapi.config import settings
 from studioapi.db import SessionLocal
@@ -213,6 +213,20 @@ async def _charge_invoice(inv_id: str) -> bool:
     if inv.status == "paid":
         return True
 
+    # CR-2/ME-15: atomically CLAIM the invoice before charging — only ONE caller (the tick, a manual
+    # retry, or a concurrent replica) can flip it pending/failed → 'charging'; the others see 0 rows
+    # and never call the gateway. Concurrent same-order_id charges are undefined at Toss and doubly
+    # charged by FakeGateway, so this DB-level claim (not Toss idempotency) is the real guard.
+    with SessionLocal() as db:
+        claimed = db.execute(update(Invoice).where(
+            Invoice.id == inv_id, Invoice.status.in_(("pending", "failed"))
+        ).values(status="charging")).rowcount
+        db.commit()
+    if not claimed:
+        with SessionLocal() as db:   # another path already owns/paid it → do not double-charge
+            row = db.get(Invoice, inv_id)
+            return bool(row and row.status == "paid")
+
     payment_key = None
     if inv.total > 0:
         try:
@@ -353,30 +367,38 @@ async def cancel_at_period_end(user: User) -> dict:
 
 async def billing_tick(now: datetime | None = None) -> int:
     """BILL-3: 시간별 틱 — 기간 만료 구독 갱신·던닝 재시도. 처리 건수 반환.
-    복수 레플리카는 pg_advisory_lock으로 직렬화(SQLite/단일 프로세스는 no-op)."""
+    CR-2: advisory lock을 틱 전체에 유지해 복수 레플리카를 직렬화하고, _charge_invoice의 원자적
+    인보이스 클레임 + Toss 멱등(결정적 order_id)으로 중복 청구를 막는다(SQLite/단일 프로세스는 lock no-op)."""
+    now = now or datetime.utcnow()
+    with SessionLocal() as lock_db:
+        is_pg = lock_db.bind.dialect.name == "postgresql"
+        if is_pg and not bool(lock_db.execute(func.pg_try_advisory_lock(0x76674249)).scalar()):  # 'vgBI'
+            return 0   # 다른 레플리카가 이미 틱 실행 중 — 중복 청구 방지 (락은 틱 전체 동안 유지)
+        try:
+            return await _run_billing_tick(now)
+        finally:
+            if is_pg:
+                lock_db.execute(func.pg_advisory_unlock(0x76674249))
+
+
+async def _run_billing_tick(now: datetime) -> int:
     from studioapi.plans import apply_plan
 
-    now = now or datetime.utcnow()
     processed = 0
     with SessionLocal() as db:
-        locked = True
-        if db.bind.dialect.name == "postgresql":
-            locked = bool(db.execute(
-                func.pg_try_advisory_lock(0x76674249)).scalar())  # 'vgBI'
-        if not locked:
-            return 0
-        try:
-            due = db.execute(select(Subscription).where(
-                Subscription.status.in_(("active", "past_due")),
-                Subscription.current_period_end <= now)).scalars().all()
-            due_ids = [s.id for s in due]
-            retry = db.execute(select(Invoice).where(
-                Invoice.status == "failed", Invoice.next_retry_at.isnot(None),
-                Invoice.next_retry_at <= now)).scalars().all()
-            retry_ids = [i.id for i in retry]
-        finally:
-            if db.bind.dialect.name == "postgresql":
-                db.execute(func.pg_advisory_unlock(0x76674249))
+        # CR-2 복구: 크래시로 'charging'에 멈춘 인보이스를 재시도 대상으로 되돌린다 (결정적 order_id +
+        # Toss 멱등이라 재청구가 실제 이중청구가 되지 않는다).
+        db.execute(update(Invoice).where(Invoice.status == "charging")
+                   .values(status="failed", next_retry_at=now))
+        db.commit()
+        due = db.execute(select(Subscription).where(
+            Subscription.status.in_(("active", "past_due")),
+            Subscription.current_period_end <= now)).scalars().all()
+        due_ids = [s.id for s in due]
+        retry = db.execute(select(Invoice).where(
+            Invoice.status == "failed", Invoice.next_retry_at.isnot(None),
+            Invoice.next_retry_at <= now)).scalars().all()
+        retry_ids = [i.id for i in retry]
 
     for sid in due_ids:
         processed += 1
