@@ -218,12 +218,22 @@ async def stop_run(conversation_id: str, user: User = Depends(current_actor)) ->
 
 
 @app.get("/conversations", tags=["Conversations"], dependencies=[Depends(require_service)])
-async def list_conversations(user: User = Depends(current_actor)) -> dict:
+async def list_conversations(user: User = Depends(current_actor), limit: int = 100, offset: int = 0) -> dict:
+    """HI-10: bounded page (most-recent first) instead of the user's entire history in one scan. The
+    default covers ~every real sidebar; ``offset`` + ``has_more`` drive "load more". Response keeps the
+    ``conversations`` key for the existing client."""
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
     with SessionLocal() as db:
         rows = db.execute(
-            select(Conversation).where(Conversation.user_email == user.email).order_by(Conversation.created_at.desc())
+            select(Conversation).where(Conversation.user_email == user.email)
+            .order_by(Conversation.created_at.desc(), Conversation.id.desc())
+            .offset(offset).limit(limit + 1)   # +1 row → detect has_more without a COUNT
         ).scalars().all()
-        return {"conversations": [{"id": c.id, "title": c.title, "agent_id": c.agent_id} for c in rows]}
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        return {"conversations": [{"id": c.id, "title": c.title, "agent_id": c.agent_id} for c in rows],
+                "has_more": has_more, "next_offset": offset + len(rows)}
 
 
 class ConvPatch(BaseModel):
@@ -260,12 +270,23 @@ async def delete_conversation(conversation_id: str, user: User = Depends(current
 
 
 @app.get("/conversations/{conversation_id}/messages", tags=["Conversations"], dependencies=[Depends(require_service)])
-async def conversation_messages(conversation_id: str, user: User = Depends(current_actor)) -> dict:
+async def conversation_messages(conversation_id: str, user: User = Depends(current_actor),
+                                limit: int = 200, before: int | None = None) -> dict:
+    """HI-10: return the most-recent ``limit`` messages (chronological) rather than the whole thread —
+    each assistant message carries 100s of KB of artifact/audit JSON, so an unbounded thread is a huge
+    payload. The default covers ~every real conversation unchanged; ``before`` + ``has_more`` drive
+    "load earlier" for the rare very long thread."""
+    limit = max(1, min(limit, 500))
     with SessionLocal() as db:
         get_owned(db, Conversation, conversation_id, user.email, "conversation not found")  # SC-0.3/CR-10
+        q = select(Message).where(Message.conversation_id == conversation_id)
+        if before is not None:
+            q = q.where(Message.id < before)   # "load earlier" — messages older than the oldest shown
         rows = db.execute(
-            select(Message).where(Message.conversation_id == conversation_id).order_by(Message.id)
+            q.order_by(Message.id.desc()).limit(limit + 1)   # most-recent slice; +1 → detect has_more
         ).scalars().all()
+        has_more = len(rows) > limit          # older messages exist before this page
+        rows = list(reversed(rows[:limit]))   # back to chronological (ascending id) for rendering
         return {"messages": [
             {"role": m.role, "content": m.content,
              "citations": json.loads(m.citations) if m.citations else [],
@@ -274,7 +295,7 @@ async def conversation_messages(conversation_id: str, user: User = Depends(curre
              "hook": m.hook,
              "suggestions": json.loads(m.suggestions) if m.suggestions else []}
             for m in rows
-        ]}
+        ], "has_more": has_more, "oldest_id": rows[0].id if rows else None}
 
 
 @app.post("/chat/stream", tags=["Chat"], dependencies=[Depends(require_service)])

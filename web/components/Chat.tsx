@@ -119,6 +119,9 @@ export default function Chat({ name, email, image, features, guest = false, prov
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [convs, setConvs] = useState<{ id: string; title: string }[]>([]);
   const [convQuery, setConvQuery] = useState("");   // UXQ-4: 레일 대화 검색
+  // HI-10: a long thread loads its recent tail; `more.has` gates a "load earlier" button that
+  // fetches messages older than `more.oldest` and prepends them.
+  const [msgMore, setMsgMore] = useState<{ has: boolean; oldest: number | null }>({ has: false, oldest: null });
   // UXQ-3: ⌘K 커맨드 팔레트
   const [paletteOpen, setPaletteOpen] = useState(false);
   useEffect(() => {
@@ -131,10 +134,45 @@ export default function Chat({ name, email, image, features, guest = false, prov
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // HI-10: one place that maps a persisted message row → Msg, reused by initial load + "load earlier".
+  type RawMsg = { role: string; content: string; citations?: Citation[]; artifacts?: Artifact[];
+                  audit?: Msg["audit"]; hook?: string | null; suggestions?: string[] };
+  function toMsg(m: RawMsg): Msg {
+    return {
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: m.content,
+      citations: m.citations ?? [],
+      artifacts: m.artifacts ?? [],   // persisted → inline {{figure:N}} cards survive reload
+      audit: m.audit ?? undefined,    // persisted → 판정 + 본문 수치 하이라이트 survive reload
+      hook: m.hook ?? undefined,
+      suggestions: m.suggestions ?? [],  // persisted → 더 파고들기 chips survive reload
+      // 인용/참고 구분은 인용 JSON 안의 per-citation `used` 플래그로 복원한다 — 전체 index를
+      // used로 승격하면 재열람 시 '참고만 한 출처' 접힘이 사라지고 출처 수가 부풀려진다.
+      used: (() => {
+        const flagged = (m.citations ?? []).filter((c) => c.used && c.index != null).map((c) => c.index!);
+        return flagged.length ? flagged
+          : (m.citations ?? []).map((c) => c.index).filter((n): n is number => n != null);
+      })(),
+    };
+  }
+
   async function loadHistory() {
     try {
       const r = await fetch("/api/conversations");
       if (r.ok) setConvs((await r.json()).conversations ?? []);
+    } catch {}
+  }
+  async function loadEarlier() {
+    const id = viewConvRef.current;
+    if (!id || msgMore.oldest == null) return;
+    try {
+      const r = await fetch(`/api/conversations/${id}/messages?before=${msgMore.oldest}`);
+      if (!r.ok) return;
+      const data = await r.json();
+      const older = ((data.messages ?? []) as RawMsg[]).map(toMsg);
+      if (viewConvRef.current !== id) return;   // view changed mid-fetch → drop
+      setMessages((prev) => [...older, ...prev]);   // prepend the earlier page
+      setMsgMore({ has: !!data.has_more, oldest: data.oldest_id ?? msgMore.oldest });
     } catch {}
   }
   async function openConversation(id: string) {
@@ -147,25 +185,10 @@ export default function Chat({ name, email, image, features, guest = false, prov
     try {
       const r = await fetch(`/api/conversations/${id}/messages`);
       if (!r.ok) { setLoadError(id); return; }  // IMP-5: silent blank thread → visible banner
-      const msgs = ((await r.json()).messages ?? []) as
-        { role: string; content: string; citations?: Citation[]; artifacts?: Artifact[]; audit?: Msg["audit"];
-          suggestions?: string[] }[];
-      setMessages(msgs.map((m) => ({
-        role: m.role === "assistant" ? "assistant" : "user",
-        content: m.content,
-        citations: m.citations ?? [],
-        artifacts: m.artifacts ?? [],   // persisted → inline {{figure:N}} cards survive reload
-        audit: m.audit ?? undefined,    // persisted → 판정 + 본문 수치 하이라이트 survive reload
-        hook: (m as { hook?: string | null }).hook ?? undefined,
-        suggestions: m.suggestions ?? [],  // persisted → 더 파고들기 chips survive reload
-        // 인용/참고 구분은 인용 JSON 안의 per-citation `used` 플래그로 복원한다 — 전체 index를
-        // used로 승격하면 재열람 시 '참고만 한 출처' 접힘이 사라지고 출처 수가 부풀려진다.
-        used: (() => {
-          const flagged = (m.citations ?? []).filter((c) => c.used && c.index != null).map((c) => c.index!);
-          return flagged.length ? flagged
-            : (m.citations ?? []).map((c) => c.index).filter((n): n is number => n != null);
-        })(),
-      })));
+      const data = await r.json();
+      const msgs = (data.messages ?? []) as RawMsg[];
+      setMessages(msgs.map(toMsg));
+      setMsgMore({ has: !!data.has_more, oldest: data.oldest_id ?? null });   // HI-10: "load earlier"
       // resume an in-flight answer: if this conversation is still generating, tail its run live
       const ar = await fetch(`/api/conversations/${id}/active-run`);
       const runId = ar.ok ? (await ar.json()).run_id : null;
@@ -176,6 +199,7 @@ export default function Chat({ name, email, image, features, guest = false, prov
   function newChat() {
     viewConvRef.current = null;
     setMessages([]); setConversationId(null); setInput("");
+    setMsgMore({ has: false, oldest: null });   // HI-10
     setView("explore");
     setBusy(false);
     setFocusIdx(null);
@@ -586,6 +610,9 @@ export default function Chat({ name, email, image, features, guest = false, prov
                   대화를 불러오지 못했어요.
                   <button className="chip" onClick={() => openConversation(loadError)}>다시 시도</button>
                 </div>
+              )}
+              {msgMore.has && (   // HI-10: long thread — the recent tail is shown; fetch older on demand
+                <button className="chip load-earlier" onClick={loadEarlier}>이전 메시지 더 보기</button>
               )}
               {messages.map((m, i) => (
                 <div key={i} className={`msg ${m.role} ${m.role === "assistant" && panelIdx === i ? "focused" : ""}`}>
