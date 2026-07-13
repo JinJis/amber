@@ -4,9 +4,13 @@
 // value → anyone can impersonate the BFF). Next.js calls register() once at server startup.
 export async function register() {
   // register() also runs in the Edge runtime (middleware); the secret check + hard-exit only make
-  // sense in the Node server process. NODE_ENV!=production stays on the dev fallbacks silently.
+  // sense in the Node server process.
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  if (process.env.NODE_ENV !== "production") return;
+  // Gate on the platform ENV deploy flag (matching each python service's assert_production_secrets),
+  // NOT NODE_ENV: a Next.js production BUILD sets NODE_ENV=production even for the LOCAL dev stack
+  // (`next start`), so keying off NODE_ENV would refuse the dev defaults locally and crash-loop.
+  // ENV=production is the operator's explicit "this is a real deploy" signal.
+  if (process.env.ENV !== "production") return;
 
   const leaked: string[] = [];
   const authSecret = process.env.AUTH_SECRET;
