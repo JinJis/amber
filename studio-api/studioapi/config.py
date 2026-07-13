@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     # Agent engine (chat).
     agent_engine_url: str = "http://127.0.0.1:8003"      # AGENT_ENGINE_URL
     database_url: str = "sqlite:///./studio.db"          # DATABASE_URL
+    # HI-1: size the Postgres pool + pre-ping (default QueuePool 5+10=15 with pre_ping off → stale-
+    # connection errors + exhaustion under concurrency). SQLite (unit tests) keeps its default.
+    db_pool_size: int = 10                               # DB_POOL_SIZE
+    db_pool_max_overflow: int = 20                       # DB_POOL_MAX_OVERFLOW
+    db_pool_recycle_seconds: int = 1800                  # DB_POOL_RECYCLE_SECONDS
     http_timeout_seconds: float = 120.0
     # HI-9: background chat runs (studioapi/runs.py). A global concurrency cap so a flood of turns
     # can't spawn unbounded detached tasks, a per-run deadline + watchdog that force-finishes a run

@@ -16,6 +16,11 @@ class Settings(BaseSettings):
 
     # Control-plane store (tenants, keys, activations, usage, audit).
     database_url: str = "sqlite:///./controlplane.db"
+    # HI-1: this DB backs the GATEWAY (every entitlement/meter/audit) — size it LARGEST + pre-ping.
+    # (default QueuePool 5+10=15 with pre_ping off is the tightest bottleneck under load.)
+    db_pool_size: int = 20                             # DB_POOL_SIZE
+    db_pool_max_overflow: int = 40                     # DB_POOL_MAX_OVERFLOW
+    db_pool_recycle_seconds: int = 1800               # DB_POOL_RECYCLE_SECONDS
     # The backend services this gateway fronts (chosen per connector via its manifest `service`).
     datasets_url: str = "http://127.0.0.1:8000"
     rag_url: str = "http://127.0.0.1:8002"

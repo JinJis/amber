@@ -45,7 +45,14 @@ def _ensure_database(url: str) -> None:
 def _make_engine():
     url = settings.database_url
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-    return create_engine(url, connect_args=connect_args, future=True)
+    kwargs: dict = dict(connect_args=connect_args, future=True)
+    if url.startswith("postgresql"):
+        # HI-1: pre-ping + recycle + a sized pool. The default QueuePool (5+10=15) with pre_ping off
+        # raises on a stale/recycled connection and exhausts under concurrency (worsened by sessions
+        # held across LLM/gateway I/O). SQLite (unit tests) keeps its default.
+        kwargs.update(pool_pre_ping=True, pool_recycle=settings.db_pool_recycle_seconds,
+                      pool_size=settings.db_pool_size, max_overflow=settings.db_pool_max_overflow)
+    return create_engine(url, **kwargs)
 
 
 _ensure_database(settings.database_url)  # self-create the Postgres DB if missing (no init script needed)
