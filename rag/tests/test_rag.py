@@ -178,6 +178,7 @@ async def test_search_applies_reranker_order(monkeypatch):
     base = [h.provenance["ticker"] for h in await search(q, top_k=3)]
     monkeypatch.setattr(rag.search.settings, "reranker_backend", "gcp")
     monkeypatch.setattr(rag.search, "get_reranker", lambda: _ReverseReranker())
+    rag.search._result_cache.clear()  # HI-8: reranker config changed mid-test → re-run the funnel
     reranked = [h.provenance["ticker"] for h in await search(q, top_k=3)]
     assert reranked == base[::-1]  # reranker order won, end to end
 

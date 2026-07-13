@@ -78,6 +78,12 @@ class Settings(BaseSettings):
     # common tokens can match ~10% of the corpus → seconds/leg). AND-pass runs first unbounded.
     lexical_candidate_limit: int = 4000
     http_timeout_seconds: float = 60.0
+    # HI-8: repeat (query, filters, top_k) searches (feed refreshes, repeated turns) skip the whole
+    # embed→retrieve→rerank funnel (short TTL, bounded LRU); repeated query/variant TEXT skips the
+    # embedding API (hash→vector LRU). Both are per-process, best-effort.
+    search_cache_ttl_seconds: int = 30       # RAG_SEARCH_CACHE_TTL_SECONDS (0 = off)
+    search_cache_max: int = 512              # RAG_SEARCH_CACHE_MAX
+    embed_cache_max: int = 1024              # RAG_EMBED_CACHE_MAX
 
 
 settings = Settings()

@@ -9,7 +9,11 @@ never recover anything dense retrieval hadn't already surfaced.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
+import time
+from collections import OrderedDict
 
 from rag.config import settings
 from rag.embeddings import get_embedder
@@ -20,6 +24,43 @@ from rag.store import get_store
 logger = logging.getLogger(__name__)
 
 _RRF_K = 60  # standard RRF constant — rank 0 scores 1/60, decays gently
+
+# HI-8: two per-process caches. A short-TTL result cache (whole-funnel skip for repeat searches) and
+# a hash→vector embed cache (a repeated query/variant text never re-hits the embedding API). Both are
+# bounded LRU. Cleared between tests via tests/conftest.py so mocked corpora don't leak across tests.
+_result_cache: "OrderedDict[tuple, tuple[float, list]]" = OrderedDict()
+_embed_cache: "OrderedDict[str, list]" = OrderedDict()
+
+
+def _result_key(query: str, top_k: int, filters: dict | None) -> tuple:
+    # filters carries the tenant + doc_type/ticker/market, so the key is tenant-scoped (no leak).
+    return (query or "", top_k, tuple(sorted((filters or {}).items())))
+
+
+def _cache_put(ck: tuple, result: list) -> list:
+    if settings.search_cache_ttl_seconds > 0:
+        _result_cache[ck] = (time.monotonic() + settings.search_cache_ttl_seconds, result)
+        _result_cache.move_to_end(ck)
+        while len(_result_cache) > settings.search_cache_max:
+            _result_cache.popitem(last=False)
+    return result
+
+
+async def _embed_cached(q: str) -> list:
+    """HI-8: hash→vector cache around embed_query so a repeated query/variant text isn't re-embedded
+    (an external model API). Keeps the per-leg wait_for budget of the caller's original call."""
+    h = hashlib.sha1((q or "").encode()).hexdigest()
+    v = _embed_cache.get(h)
+    if v is not None:
+        _embed_cache.move_to_end(h)
+        return v
+    v = await asyncio.wait_for(get_embedder().embed_query(q),
+                               timeout=settings.embed_query_timeout_seconds)
+    _embed_cache[h] = v
+    _embed_cache.move_to_end(h)
+    while len(_embed_cache) > settings.embed_cache_max:
+        _embed_cache.popitem(last=False)
+    return v
 
 # --- RQ-3: multi-query expansion ------------------------------------------------------------
 _MQ_PROMPT = ("검색 쿼리 변형 생성. 원쿼리와 같은 의미의 검색용 변형 2개를 한 줄씩만 출력:\n"
@@ -81,8 +122,7 @@ async def _query_legs(store, q: str, candidate_k: int, filters: dict | None) -> 
 
     async def _dense() -> list | None:
         try:
-            qvec = await asyncio.wait_for(get_embedder().embed_query(q),
-                                          timeout=settings.embed_query_timeout_seconds)
+            qvec = await _embed_cached(q)   # HI-8: cached hash→vector (or embed within budget)
             return await store.search(qvec, candidate_k, filters)
         except Exception as exc:  # noqa: BLE001 — degrade to lexical, never fail the search
             logger.warning("dense leg unavailable [%s] — lexical-only for %r: %s",
@@ -104,6 +144,12 @@ async def search(query: str, top_k: int | None = None, filters: dict | None = No
     import asyncio
 
     top_k = top_k or settings.top_k
+    ck = _result_key(query, top_k, filters or None)   # HI-8: whole-funnel result cache
+    if settings.search_cache_ttl_seconds > 0:
+        hit = _result_cache.get(ck)
+        if hit is not None and hit[0] > time.monotonic():
+            _result_cache.move_to_end(ck)
+            return hit[1]
     candidate_k = max(settings.candidate_k, top_k)
     store = get_store()
 
@@ -116,7 +162,7 @@ async def search(query: str, top_k: int | None = None, filters: dict | None = No
     rankings: list[list] = [leg for legs in per_query for leg in legs]
     hits = _rrf_fuse(*rankings) if len(rankings) > 1 else (rankings[0] if rankings else [])
     if not hits:
-        return []
+        return _cache_put(ck, [])
 
     # RQ-6: 신선도 부스트 — 호출자가 명시적으로 doc_type=news를 필터한 검색만(키워드 추론
     # 없음, 인바리언트 준수). RRF 점수에 as_of 지수감쇠 가점을 블렌드: 오늘=+0.5·30일 반감.
@@ -157,5 +203,5 @@ async def search(query: str, top_k: int | None = None, filters: dict | None = No
             # transient API/quota error (self-heals) without spelunking the message (RF-17).
             logger.warning("reranker (%s) failed [%s], falling back to fused order: %s",
                            settings.reranker_backend, type(exc).__name__, exc)
-    return [SearchHit(text=c.text, score=round(s, 4), provenance=c.provenance())
-            for c, s in hits[:top_k]]
+    return _cache_put(ck, [SearchHit(text=c.text, score=round(s, 4), provenance=c.provenance())
+                           for c, s in hits[:top_k]])
