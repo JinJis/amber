@@ -204,14 +204,13 @@ async def analyze_task(task: str, backend: str | None = None, conversation: list
     if (backend or settings.llm_backend) != "gemini":
         return TaskIntake(steps=default)
     try:
-        import asyncio
-        from google import genai
         from google.genai import types
 
-        from agentengine.gemini_io import genai_client
-        client = genai_client()  # bounded request timeout (no infinite SSE hang)
-        resp = await asyncio.to_thread(
-            client.models.generate_content, model=settings.budget_model,
+        from agentengine.gemini_io import generate
+        # CR-5: shared client + per-tier gate + 429 backoff. A rate-limit here otherwise silently
+        # degrades to the default step budget (quality loss under load), so backoff matters.
+        resp = await generate(
+            settings.budget_model,
             contents=_INTAKE_PROMPT.format(task=(task or "")[:800], context=_intake_context(conversation)),
             config=types.GenerateContentConfig(temperature=0, response_mime_type="application/json",
                                                response_schema=_INTAKE_SCHEMA, max_output_tokens=400))

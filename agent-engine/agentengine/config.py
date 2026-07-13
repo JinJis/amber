@@ -44,6 +44,18 @@ class Settings(BaseSettings):
     gemini_enrich_timeout_seconds: float = 25.0
     max_steps: int = 8         # base tool-step budget (raised for multi-source tasks, up to the cap)
     max_steps_cap: int = 14    # hard ceiling for the dynamic budget
+    # CR-5/SC-1.2: Gemini concurrency control. All generate_content calls run on a DEDICATED thread
+    # pool (so they don't contend with the default asyncio executor / block the event loop's other
+    # to_thread work) and pass a PER-MODEL semaphore, so a burst of same-tier calls (planner steps,
+    # follow-up fan-out, chart annotations) can't blow the shared key's RPM. 429/503/RESOURCE_EXHAUSTED
+    # are retried with exponential backoff on the critical path (intake/plan/synthesis).
+    gemini_executor_workers: int = 32     # AGENT_GEMINI_EXECUTOR_WORKERS
+    gemini_max_concurrent_per_model: int = 12  # AGENT_GEMINI_MAX_CONCURRENT_PER_MODEL
+    gemini_max_retries: int = 3           # AGENT_GEMINI_MAX_RETRIES (rate-limit/5xx only)
+    # ME-12: cap each replayed tool RESULT in the planner's context (it re-sends every prior result
+    # on each replan step → quadratic growth). The planner needs signal to pick the next tool, not
+    # the full payload — the full data still reaches the answer via citations/artifacts. 0 disables.
+    gemini_plan_context_max_chars: int = 4000  # AGENT_GEMINI_PLAN_CONTEXT_MAX_CHARS
     http_timeout_seconds: float = 60.0
     # Guardrail: the refuse/allow decision is a JUDGMENT made by the LLM intake
     # (`agent.analyze_task`), not keyword matching (invariant #9). The model scores how

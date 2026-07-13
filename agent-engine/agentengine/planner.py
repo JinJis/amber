@@ -26,6 +26,7 @@ from agentengine.gemini_io import (  # noqa: F401
     _get_text_from_response,
     _schema,
     _to_gemini_contents,
+    generate,
 )
 
 logger = logging.getLogger(__name__)
@@ -201,8 +202,9 @@ class GeminiPlanner:
         contents.append(types.Content(role="user", parts=[types.Part.from_text(text=_SYNTHESIS_PROMPT)]))
         config = types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.3)
         model = synthesis_model or settings.synthesis_model or self.model
-        it = await asyncio.to_thread(self._client.models.generate_content_stream,
-                                     model=model, contents=contents, config=config)
+        # CR-5: the stream OPEN goes through the shared concurrency gate + 429 backoff; per-chunk
+        # polling below stays uncapped so streaming isn't serialized.
+        it = await generate(model, stream=True, contents=contents, config=config)
 
         def _next(gen):
             try:
@@ -243,7 +245,7 @@ class GeminiPlanner:
             )
             # use the dedicated (light) response model, falling back to the planner model.
             model = synthesis_model or settings.synthesis_model or self.model
-            resp = await asyncio.to_thread(self._client.models.generate_content, model=model, contents=contents, config=config)
+            resp = await generate(model, contents=contents, config=config)
             report_usage("synthesis", model, resp)
             return [Decision(final=_get_text_from_response(resp))]
 
@@ -257,7 +259,7 @@ class GeminiPlanner:
             system_instruction=system_instruction,
         )
 
-        resp = await asyncio.to_thread(self._client.models.generate_content, model=self.model, contents=contents, config=config)
+        resp = await generate(self.model, contents=contents, config=config)
         report_usage("plan", self.model, resp)
         calls = getattr(resp, "function_calls", None)
         if calls:

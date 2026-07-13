@@ -14,6 +14,7 @@ import logging
 import re
 
 from agentengine.config import settings
+from agentengine.gemini_io import generate
 from agentengine.usage import report as report_usage
 
 logger = logging.getLogger(__name__)
@@ -224,8 +225,9 @@ async def _followups_one(client, model: str, persona: str, task: str, answer: st
     for i in range(retries):
         try:
             logger.debug("followups[%s/%s]: attempt %d/%d", model, persona, i + 1, retries)
-            resp = await asyncio.to_thread(client.models.generate_content, model=model,
-                                           contents=contents, config=cfg)
+            # CR-5: shared client + per-tier gate; the surrounding loop handles retry/backoff
+            # (incl. parse-error retries), so generate() itself doesn't double-retry (retries=0).
+            resp = await generate(model, retries=0, contents=contents, config=cfg)
             report_usage("followups", model, resp)
             raw = getattr(resp, "text", "") or ""
             logger.debug("followups[%s/%s]: raw response = %s", model, persona, raw[:500])
@@ -405,14 +407,12 @@ async def refine_evidence(task: str, citations: list[dict], model: str,
     ev = "\n".join(lines)
     try:
         import asyncio
-        from google import genai
+
         from google.genai import types
 
-        from agentengine.gemini_io import genai_client
-        client = genai_client()  # bounded request timeout (no infinite SSE hang)
-        # best-effort verify pass — cap it so it can't delay `done` (TimeoutError → except below)
-        resp = await asyncio.wait_for(asyncio.to_thread(
-            client.models.generate_content, model=model,
+        # best-effort verify pass — cap it so it can't delay `done` (TimeoutError → except below).
+        # retries=0: enrichment is time-capped, so a transient error degrades rather than backs off.
+        resp = await asyncio.wait_for(generate(model, retries=0,
             contents=_REFINE_PROMPT.format(task=(task or "")[:400], ev=ev[:4000]),
             config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=1024,
                                                thinking_config=types.ThinkingConfig(thinking_budget=0),
@@ -467,10 +467,7 @@ async def make_hook(task: str, answer: str, backend: str | None = None) -> str |
     try:
         from google.genai import types
 
-        from agentengine.gemini_io import genai_client
-        client = genai_client()
-        resp = await asyncio.wait_for(asyncio.to_thread(
-            client.models.generate_content, model=settings.budget_model,
+        resp = await asyncio.wait_for(generate(settings.budget_model, retries=0,
             contents=_HOOK_PROMPT.format(task=(task or "")[:300], answer=answer[:6000]),
             config=types.GenerateContentConfig(temperature=0.4, max_output_tokens=80,
                                                thinking_config=types.ThinkingConfig(thinking_budget=0))),

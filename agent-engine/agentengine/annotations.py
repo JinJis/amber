@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 
+from agentengine.gemini_io import generate
 from agentengine.usage import report as report_usage
 from agentengine.models import (
     Artifact,
@@ -88,10 +89,8 @@ async def _gemini_annotate(model: str, question: str, digest: str, ticker: str) 
     cfg = types.GenerateContentConfig(system_instruction=_SYSTEM, temperature=0.1,
                                       response_mime_type="application/json", response_schema=_SCHEMA)
     try:
-        from agentengine.gemini_io import genai_client
-        client = genai_client()  # bounded request timeout (no infinite SSE hang)
-        resp = await asyncio.to_thread(
-            client.models.generate_content, model=model,
+        # CR-5: per-chart annotations are a burst source (one per chart) → shared client + gate.
+        resp = await generate(model, retries=0,
             contents=[types.Content(role="user", parts=[types.Part.from_text(text=user)])], config=cfg)
         report_usage("annotations", model, resp)
         return json.loads(resp.text or "{}")
