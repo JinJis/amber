@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-settings>=2.3",
     "numpy>=1.26",
     "google-genai>=1.0",            # Gemini embeddings (gemini-embedding-2) — the only embedder
+    "prometheus-client>=0.20",
 ]
 
 [project.optional-dependencies]

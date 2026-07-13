@@ -21,3 +21,12 @@ def test_request_id_is_minted_when_absent():
     r = client.get("/conversations", headers={"X-Service-Token": "dev-service-token"})
     rid = r.headers.get("X-Request-ID")
     assert rid and len(rid) == 8   # a fresh uuid4 hex[:8]
+
+
+def test_metrics_endpoint_exposes_request_counts():
+    """HI-11: the per-request middleware records Prometheus counters/histograms, served at /metrics."""
+    client.get("/conversations", headers={"X-Service-Token": "dev-service-token"})  # generate a data point
+    r = client.get("/metrics")
+    assert r.status_code == 200
+    assert "http_requests_total" in r.text
+    assert "http_request_duration_seconds" in r.text

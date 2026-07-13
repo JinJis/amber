@@ -19,6 +19,7 @@ dependencies = [
     # chunks (Phase 2). Lazy-imported + opt-in (needs a processor); absent → the deck feature is dark.
     "google-cloud-documentai>=2.20",
     "pypdf>=4.0",
+    "prometheus-client>=0.20",
 ]
 
 [project.optional-dependencies]

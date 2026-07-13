@@ -116,10 +116,32 @@ def setup_logging() -> None:
     logger.info("logging configured: level=%s service=%s", logging.getLevelName(level), _PKG)
 
 
+# HI-11: minimal Prometheus exporter. Optional dep (prometheus-client) — guarded so an image built
+# before this landed still runs; /metrics is dark until the dep is installed. Labels are method+status
+# only (never the raw path) so per-conversation/token ids can't explode series cardinality.
+try:
+    from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+
+    _M_REQS = Counter("http_requests_total", "HTTP requests by method and status", ["method", "status"])
+    _M_DUR = Histogram("http_request_duration_seconds", "HTTP request latency (s) by method", ["method"])
+
+    def _record_metric(method: str, status: int, dt_ms: float) -> None:
+        _M_REQS.labels(method, str(status)).inc()
+        _M_DUR.labels(method).observe(dt_ms / 1000.0)
+
+    _METRICS_OK = True
+except Exception:  # noqa: BLE001 — prometheus-client not installed → metrics stay dark, never crash
+    _METRICS_OK = False
+
+    def _record_metric(method: str, status: int, dt_ms: float) -> None:
+        pass
+
+
 def install_request_logging(app) -> None:
     """Trace every HTTP request: a → line on entry, a ← line with status + duration on exit, a
     short request id to correlate the two, and a full traceback on any unhandled error. At DEBUG
-    the entry line also carries the query string."""
+    the entry line also carries the query string. HI-11: also records Prometheus request metrics and
+    serves them at /metrics."""
 
     @app.middleware("http")
     async def _trace(request, call_next):  # noqa: ANN001
@@ -133,9 +155,18 @@ def install_request_logging(app) -> None:
         except Exception:
             dt = (time.perf_counter() - t0) * 1000
             logger.exception("✗ %s %s rid=%s after %.1fms — unhandled", request.method, path, rid, dt)
+            _record_metric(request.method, 500, dt)
             raise
         dt = (time.perf_counter() - t0) * 1000
         lvl = logging.WARNING if resp.status_code >= 400 else logging.INFO
         logger.log(lvl, "← %s %s %d %.1fms rid=%s", request.method, path, resp.status_code, dt, rid)
         resp.headers["X-Request-ID"] = rid
+        _record_metric(request.method, resp.status_code, dt)
         return resp
+
+    if _METRICS_OK:
+        from starlette.responses import Response as _MetricsResp
+
+        @app.get("/metrics", include_in_schema=False)
+        async def _prometheus_metrics():  # noqa: ANN202
+            return _MetricsResp(generate_latest(), media_type=CONTENT_TYPE_LATEST)
