@@ -42,11 +42,15 @@ export async function studioFetch(path: string, init: RequestInit = {}, guestId?
         ...(refCode ? { "X-Referral-Code": refCode } : {}) }
     : guestHeaders(guestId);
   if (!actor) return null;
+  // HI-11: mint (or honor an inbound) request id at the edge so this turn shares ONE id across hops
+  // that forward it (studio logs + echoes it; the gateway passes it through to the data plane).
+  const requestId = headers().get("x-request-id") || crypto.randomUUID().replace(/-/g, "").slice(0, 16);
   return fetch(`${base}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
       "X-Service-Token": serviceToken(),
+      "X-Request-ID": requestId,
       ...actor,
       ...(init.headers ?? {}),
     },

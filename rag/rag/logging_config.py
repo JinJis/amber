@@ -123,7 +123,7 @@ def install_request_logging(app) -> None:
 
     @app.middleware("http")
     async def _trace(request, call_next):  # noqa: ANN001
-        rid = uuid.uuid4().hex[:8]
+        rid = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:8]  # HI-11: honor an inbound id
         path = request.url.path
         qs = f"?{request.url.query}" if (request.url.query and logger.isEnabledFor(logging.DEBUG)) else ""
         logger.info("→ %s %s%s rid=%s", request.method, path, qs, rid)
