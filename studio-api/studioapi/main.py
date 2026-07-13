@@ -60,10 +60,12 @@ async def lifespan(_: FastAPI):
     import asyncio
 
     from studioapi.config import assert_production_secrets
+    from studioapi.db import boot_lock
     assert_production_secrets()  # AUTH-1: production은 dev 기본 토큰으로 기동 불가
-    init_db()
-    seed_templates()
-    seed_dashboard_templates()
+    with boot_lock():   # ME-3: only one replica migrates+seeds at a time (no boot crash-loop)
+        init_db()
+        seed_templates()
+        seed_dashboard_templates()
     tasks: list = []
     scheduler.start(tasks)  # background notification-alert dispatcher
     askfeed_start(tasks)    # ASK-5: 5-minute ask-feed refresher (per-ticker questions + hot trend)

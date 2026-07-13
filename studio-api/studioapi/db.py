@@ -123,6 +123,30 @@ def _add_missing_indexes() -> None:
             pass
 
 
+from contextlib import contextmanager
+
+
+@contextmanager
+def boot_lock():
+    """ME-3: serialize concurrent replica boots so create_all / seed / ALTER / CREATE INDEX can't
+    IntegrityError-crash-loop when replicas start simultaneously. A blocking pg session advisory lock
+    (the waiter re-runs the idempotent init after the first finishes); a no-op on SQLite (1 process)."""
+    from sqlalchemy import text
+
+    is_pg = engine.dialect.name == "postgresql"
+    if not is_pg:
+        yield
+        return
+    with engine.connect() as conn:
+        conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": 0x7667424B})  # 'vgBK'
+        conn.commit()
+        try:
+            yield
+        finally:
+            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": 0x7667424B})
+            conn.commit()
+
+
 def init_db() -> None:
     from studioapi import models  # noqa: F401
 

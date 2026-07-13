@@ -26,8 +26,10 @@ setup_logging()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     from controlplane.config import assert_production_secrets
+    from controlplane.db import boot_lock
     assert_production_secrets()  # AUTH-1: production은 dev 기본 ADMIN_TOKEN으로 기동 불가
-    init_db()
+    with boot_lock():   # ME-3: only one replica migrates at a time (no boot crash-loop)
+        init_db()
     await load_catalog_from_datasets()
     # CR-4: background flusher for the batched meter/audit writes.
     flush_task = asyncio.create_task(gateway.usage_flush_loop())

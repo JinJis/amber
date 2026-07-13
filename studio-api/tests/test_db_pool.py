@@ -15,3 +15,10 @@ def test_postgres_engine_pool_configured(monkeypatch):
         assert eng.pool._pre_ping is True
     finally:
         eng.dispose()
+
+
+def test_boot_lock_noop_on_sqlite_runs_init():
+    """ME-3: boot_lock serializes migration on Postgres and is a no-op on the SQLite test DB."""
+    from studioapi.db import boot_lock, init_db
+    with boot_lock():
+        init_db()   # runs cleanly under the lock (no-op lock on sqlite)

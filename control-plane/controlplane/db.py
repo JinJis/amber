@@ -85,6 +85,28 @@ def _add_missing_columns() -> None:
     add_cols("llm_usage", {"project_id": "VARCHAR(40)"})     # METER-1: per-user cost attribution
 
 
+from contextlib import contextmanager
+
+
+@contextmanager
+def boot_lock():
+    """ME-3: serialize concurrent replica boots so create_all / ALTER can't crash-loop when replicas
+    start simultaneously. A blocking pg session advisory lock; a no-op on SQLite (single process)."""
+    from sqlalchemy import text
+
+    if engine.dialect.name != "postgresql":
+        yield
+        return
+    with engine.connect() as conn:
+        conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": 0x7667434B})  # 'vgCK'
+        conn.commit()
+        try:
+            yield
+        finally:
+            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": 0x7667434B})
+            conn.commit()
+
+
 def init_db() -> None:
     from controlplane import models  # noqa: F401
 
