@@ -38,6 +38,21 @@ class Settings(BaseSettings):
     # --- vector store ------------------------------------------------------
     vector_store: str = "memory"             # memory | pgvector
     database_url: str = ""                    # pgvector (postgresql://...)
+    # CR-7/SC-1.4: a connection POOL (one per process) replaces the per-query psycopg.connect +
+    # register_vector — a single search fans out to ~6 legs, so a pool amortizes the handshakes.
+    pg_pool_min_size: int = 2                 # RAG_PG_POOL_MIN_SIZE (warm connections)
+    pg_pool_max_size: int = 16               # RAG_PG_POOL_MAX_SIZE (fan-out ceiling)
+    # CR-8: HNSW search tuning, applied per search txn via set_config(..., is_local=true) so it never
+    # leaks to a pooled connection's next borrower. ef_search 0 = auto (max(candidate_k*2, 100)) — the
+    # pgvector default 40 under-returns below LIMIT when a post-filter (tenant/doc_type) prunes the ANN
+    # candidates. iterative_scan '' disables it (needs pgvector >= 0.8). statement_timeout caps a
+    # pathological scan at the DB (strictly larger than the app-side embed/rerank budgets).
+    hnsw_ef_search: int = 0                   # RAG_HNSW_EF_SEARCH (0 = auto)
+    hnsw_iterative_scan: str = "relaxed_order"  # RAG_HNSW_ITERATIVE_SCAN ('' = off)
+    search_statement_timeout_ms: int = 15000  # RAG_SEARCH_STATEMENT_TIMEOUT_MS
+    # CR-8: the pg_trgm lexical leg measured 22s cold / 0 rows on short (≤3-token) queries — the most
+    # common shape — so it's OFF by default (the dense leg carries name-like recall). Flip on to restore.
+    lexical_trgm_enabled: bool = False        # RAG_LEXICAL_TRGM_ENABLED
 
     # --- google cloud (only for the optional gcp Vertex Ranking reranker) -----
     gcp_project: str = ""

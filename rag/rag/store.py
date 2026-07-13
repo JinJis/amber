@@ -168,10 +168,18 @@ class PgVectorStore:
         import psycopg
         from pgvector.psycopg import register_vector
 
+        from rag.config import settings
+
         self._psycopg = psycopg
         self._register = register_vector
         self._dsn = dsn
         self._dim = dim
+        # CR-8: HNSW/timeout tuning applied per search transaction (set_config is_local=true).
+        self._ef_search = settings.hnsw_ef_search or max(settings.candidate_k * 2, 100)
+        self._iterative_scan = settings.hnsw_iterative_scan
+        self._iter_scan_ok = bool(self._iterative_scan)  # flipped off if pgvector rejects it (pre-0.8)
+        self._stmt_timeout_ms = settings.search_statement_timeout_ms
+        self._trgm_enabled = settings.lexical_trgm_enabled
         # bootstrap on a RAW connection — register_vector() (in _connect) needs the `vector` type to
         # already exist, so the extension must be created first, before we ever register the adapter.
         with psycopg.connect(dsn) as conn:
@@ -205,17 +213,18 @@ class PgVectorStore:
                 # search still works (seq FTS), and the next boot retries the index.
                 import logging
                 logging.getLogger(__name__).warning("rag_chunks_tsv index build deferred: %s", exc)
-            # RQ-5: 한국어/이름형 짧은 쿼리용 트라이그램 레그 — 부분어·오탈자에 강함.
-            # (to_tsvector 'simple'은 한글 형태소를 못 쪼개 회사명 부분 매칭이 약하다.)
-            try:
-                conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-                conn.execute(
-                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS rag_chunks_trgm ON rag_chunks "
-                    "USING gin (text gin_trgm_ops)"
-                )
-            except Exception as exc:  # noqa: BLE001 — 미지원/권한 부족 → FTS 단독으로 동작
-                import logging
-                logging.getLogger(__name__).warning("rag_chunks_trgm index deferred: %s", exc)
+            # RQ-5/CR-8: the pg_trgm short-query leg is OFF by default (22s cold / 0 rows measured) —
+            # only build its (multi-GB) index when the leg is actually enabled.
+            if self._trgm_enabled:
+                try:
+                    conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+                    conn.execute(
+                        "CREATE INDEX CONCURRENTLY IF NOT EXISTS rag_chunks_trgm ON rag_chunks "
+                        "USING gin (text gin_trgm_ops)"
+                    )
+                except Exception as exc:  # noqa: BLE001 — 미지원/권한 부족 → FTS 단독으로 동작
+                    import logging
+                    logging.getLogger(__name__).warning("rag_chunks_trgm index deferred: %s", exc)
             # ING-1: an expression index on meta->>'accession' so replace-by-accession
             # (delete_where / replace_scope) is an index scan, not a full-corpus seq scan —
             # per-accession prunes on an 800k+-row corpus are otherwise O(table) each.
@@ -230,10 +239,37 @@ class PgVectorStore:
             finally:
                 conn.autocommit = False
 
+        # CR-7: ONE pooled, vector-registered connection set for every data-plane operation, instead
+        # of a fresh connect + register_vector per query (a single search fans out to ~6 legs).
+        from psycopg_pool import ConnectionPool
+        self._pool = ConnectionPool(
+            dsn, min_size=settings.pg_pool_min_size, max_size=settings.pg_pool_max_size,
+            configure=self._register, open=True, name="rag_pg",
+        )
+
     def _connect(self):
+        # RAW connection — used only for the __init__ bootstrap (extension + CONCURRENTLY index
+        # builds that must run before the pool / outside a pooled transaction). Data-plane ops use
+        # the pool below.
         conn = self._psycopg.connect(self._dsn)
         self._register(conn)
         return conn
+
+    def _tune(self, conn) -> None:
+        """CR-8: apply the search-path GUCs to the CURRENT transaction only (is_local=true), so they
+        never leak to this pooled connection's next borrower. ef_search lifts the ANN candidate pool
+        above LIMIT (default 40 under-returns behind post-filters); statement_timeout caps a runaway
+        scan at the DB; iterative_scan keeps scanning under filters until LIMIT is filled (pgvector
+        ≥0.8 — degrades gracefully if unsupported)."""
+        conn.execute("SELECT set_config('statement_timeout', %s, true)", (str(self._stmt_timeout_ms),))
+        conn.execute("SELECT set_config('hnsw.ef_search', %s, true)", (str(self._ef_search),))
+        if self._iter_scan_ok:
+            try:
+                conn.execute("SELECT set_config('hnsw.iterative_scan', %s, true)", (self._iterative_scan,))
+            except Exception as exc:  # noqa: BLE001 — pre-0.8 pgvector has no such GUC → stop trying
+                self._iter_scan_ok = False
+                import logging
+                logging.getLogger(__name__).warning("hnsw.iterative_scan unsupported, disabled: %s", exc)
 
     async def upsert(self, chunks, vectors):
         # tenant lives in meta (reserved key) for filtering, but is excluded from
@@ -241,7 +277,7 @@ class PgVectorStore:
         rows = self._rows_for(chunks, vectors)
 
         def _run() -> None:
-            with self._connect() as conn:
+            with self._pool.connection() as conn:
                 conn.cursor().executemany(
                     "INSERT INTO rag_chunks (id, text, meta, embedding) VALUES (%s,%s,%s,%s) "
                     "ON CONFLICT (id) DO UPDATE SET text=EXCLUDED.text, meta=EXCLUDED.meta, embedding=EXCLUDED.embedding",
@@ -256,7 +292,7 @@ class PgVectorStore:
             return {}
 
         def _run():
-            with self._connect() as conn:
+            with self._pool.connection() as conn:
                 return conn.execute("SELECT id, text FROM rag_chunks WHERE id = ANY(%s)", (list(ids),)).fetchall()
 
         rows = await asyncio.to_thread(_run)
@@ -274,7 +310,8 @@ class PgVectorStore:
         args = [qv, *filter_params, qv, top_k]
 
         def _run():
-            with self._connect() as conn:
+            with self._pool.connection() as conn:
+                self._tune(conn)   # CR-8: ef_search + iterative_scan + statement_timeout (txn-local)
                 return conn.execute(sql, args).fetchall()
 
         rows = await asyncio.to_thread(_run)  # blocking psycopg off the event loop
@@ -309,7 +346,8 @@ class PgVectorStore:
 
         def _run(tsquery: str, bound: int):
             def _q():
-                with self._connect() as conn:
+                with self._pool.connection() as conn:
+                    self._tune(conn)   # CR-8: statement_timeout caps the OR-pass at the DB
                     return conn.execute(_ranked_sql(),
                                         [tsquery, *filter_params, bound, tsquery, top_k]).fetchall()
             return _q
@@ -323,9 +361,9 @@ class PgVectorStore:
             rows = await asyncio.to_thread(_run(or_query, bound))
         hits = self._rows_to_hits(rows)
 
-        # RQ-5: 이름형 짧은 쿼리(≤3토큰)는 트라이그램 유사도 레그 병행 — '삼전'·'하이닉스'류
-        # 부분어가 FTS prefix를 비껴가는 경우를 회수. 인덱스(%% 연산자) 기반이라 저비용.
-        if len(toks) <= 3 and len(query.strip()) >= 2:
+        # RQ-5/CR-8: 이름형 짧은 쿼리(≤3토큰) 트라이그램 유사도 레그 — 기본 OFF(짧은 쿼리 22s/0행 측정).
+        # RAG_LEXICAL_TRGM_ENABLED=true로 켜면 복원. dense 레그가 이름형 회수를 담당한다.
+        if self._trgm_enabled and len(toks) <= 3 and len(query.strip()) >= 2:
             tsql = (
                 "SELECT id, text, meta, similarity(text, %s) AS score FROM rag_chunks "
                 f"WHERE text %% %s {('AND ' + where[len('WHERE '):]) if where else ''} "
@@ -334,7 +372,8 @@ class PgVectorStore:
             targs = [query, query, *filter_params, top_k]
 
             def _trun():
-                with self._connect() as conn:
+                with self._pool.connection() as conn:
+                    self._tune(conn)
                     return conn.execute(tsql, targs).fetchall()
 
             try:
@@ -366,7 +405,7 @@ class PgVectorStore:
         sql = "DELETE FROM rag_chunks WHERE " + " AND ".join(conds)
 
         def _run():
-            with self._connect() as conn:
+            with self._pool.connection() as conn:
                 cur = conn.execute(sql, params)
                 conn.commit()
                 return cur.rowcount or 0
@@ -402,7 +441,7 @@ class PgVectorStore:
         rows = self._rows_for(chunks, vectors)
 
         def _run():
-            with self._connect() as conn:
+            with self._pool.connection() as conn:
                 # all in ONE transaction (lock → prune stale → upsert new → commit)
                 conn.execute("SELECT pg_advisory_xact_lock(%s)", (lock_id,))
                 pruned = conn.execute(del_sql, [*params, list(keep_ids)]).rowcount or 0
