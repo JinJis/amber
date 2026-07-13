@@ -768,3 +768,14 @@ def test_production_refuses_dev_default_tokens(monkeypatch):
         assert_production_secrets()
     monkeypatch.setattr(cfg, "admin_token", "real-admin")
     assert_production_secrets()  # 둘 다 실 토큰 → 통과
+    # SC-0: 게스트 퍼널이 켜졌으면 dev ip 솔트도 거부 (꺼져 있으면 무해)
+    monkeypatch.setattr(cfg, "feature_guest", True)
+    monkeypatch.setattr(cfg, "guest_ip_salt", "dev-guest-salt")
+    with pytest.raises(RuntimeError, match="GUEST_IP_SALT"):
+        assert_production_secrets()
+    monkeypatch.setattr(cfg, "guest_ip_salt", "real-salt")
+    assert_production_secrets()  # 실 솔트 → 통과
+    # SC-0: 기본 pg 비밀번호(rag:rag)도 프로덕션에선 거부
+    monkeypatch.setattr(cfg, "database_url", "postgresql+psycopg://rag:rag@postgres:5432/studio")
+    with pytest.raises(RuntimeError, match="DATABASE_URL"):
+        assert_production_secrets()

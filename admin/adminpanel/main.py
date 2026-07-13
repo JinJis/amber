@@ -18,6 +18,8 @@ One session login gates everything (a guard middleware).
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 import httpx
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from sqlalchemy import text as sa_text
@@ -26,7 +28,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from adminpanel.clients import _ok, _safe_get
-from adminpanel.config import settings
+from adminpanel.config import assert_production_secrets, settings
 from adminpanel.logging_config import install_request_logging, setup_logging
 # Reflected service-DB state + DB helpers live in state.py (RF-14); re-exported here so importers
 # (and tests) that reference `adminpanel.main.DB_STATUS` keep working.
@@ -57,7 +59,14 @@ from adminpanel.views import (
 
 setup_logging()
 
-app = FastAPI(title="ValueGraph Admin")
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI):
+    assert_production_secrets()  # SC-0/CR-10: production은 dev 크레덴셜·세션 시크릿으로 기동 불가
+    yield
+
+
+app = FastAPI(title="ValueGraph Admin", lifespan=_lifespan)
 install_request_logging(app)
 
 from adminpanel import db_browser  # noqa: E402

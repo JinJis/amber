@@ -75,6 +75,11 @@ def assert_production_secrets() -> None:
         ("SERVICE_TOKEN", settings.service_token, "dev-service-token"),
         ("ADMIN_TOKEN", settings.admin_token, "dev-admin-token"),
     ) if value == dev_default]
+    # 게스트 퍼널을 켰다면 ip_hash 솔트도 실값이어야 한다 (dev 솔트는 재식별 가능).
+    if settings.feature_guest and settings.guest_ip_salt == "dev-guest-salt":
+        leaked.append("GUEST_IP_SALT")
+    if "rag:rag@" in (settings.database_url or ""):
+        leaked.append("DATABASE_URL(pg 기본 비밀번호 rag:rag)")
     if leaked:
         raise RuntimeError(f"production requires real secrets for: {', '.join(leaked)}")
     # BILL: 실키 결제를 켰다면 빌링키 암호화 키·웹훅 시크릿도 실값이어야 한다

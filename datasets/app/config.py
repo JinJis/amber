@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     # Read the shared platform env first, then any service-local .env override.
     model_config = SettingsConfigDict(env_file=("../.env", ".env"), env_file_encoding="utf-8", extra="ignore")
 
+    # Deployment environment (dev|production). production refuses to start on dev-default secrets.
+    env: str = "dev"
+
     # --- this service's own auth -------------------------------------------
     auth_disabled: bool = False
     # Comma-separated list of client keys accepted via the X-API-KEY header.
@@ -143,3 +146,20 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+
+def assert_production_secrets() -> None:
+    """SC-0/AUTH-1: ENV=production에서 데이터 플레인이 무인증이거나 기본 pg 비번이면 기동 거부.
+    데이터셋은 8000에 공개되므로 프로덕션에선 반드시 키가 있어야 하고(미설정이면 아무 키나 통과,
+    CR-10), auth_disabled=true로 열려 있어선 안 된다."""
+    if settings.env.lower() not in ("production", "prod"):
+        return
+    leaked: list[str] = []
+    if settings.auth_disabled:
+        leaked.append("AUTH_DISABLED(=true는 프로덕션 금지)")
+    elif not settings.datasets_api_keys.strip():
+        leaked.append("DATASETS_API_KEYS(미설정이면 아무 키나 통과)")
+    if "rag:rag@" in (settings.database_url or ""):
+        leaked.append("DATABASE_URL(pg 기본 비밀번호 rag:rag)")
+    if leaked:
+        raise RuntimeError(f"production requires real secrets for: {', '.join(leaked)}")

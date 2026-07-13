@@ -50,6 +50,9 @@ setup_logging()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    from app.config import assert_production_secrets
+
+    assert_production_secrets()  # SC-0: production은 무인증/dev 기본 pg 비번으로 기동 불가
     init_db()
     # Open the Procrastinate connector + apply its schema (idempotent), so manual admin runs can
     # defer jobs and the admin Queue console can read app.job_manager. The `worker` compose service

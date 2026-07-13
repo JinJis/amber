@@ -34,12 +34,17 @@ settings = Settings()
 
 
 def assert_production_secrets() -> None:
-    """AUTH-1: ENV=production에서 admin 토큰이 dev 기본값이면 기동 거부 — /admin은 테넌트·키·
-    엔타이틀먼트 전체를 쥐고 있어 잘 알려진 토큰으로는 절대 열어둘 수 없다."""
+    """AUTH-1 / SC-0: ENV=production에서 잘 알려진 dev 기본값이 남아 있으면 기동 거부 — /admin은
+    테넌트·키·엔타이틀먼트 전체를 쥐고 있어 잘 알려진 토큰으로는 절대 열어둘 수 없다."""
     if settings.env.lower() not in ("production", "prod"):
         return
-    if settings.admin_token == "dev-admin-token":
-        raise RuntimeError("production requires a real ADMIN_TOKEN (dev default refused)")
+    leaked = [name for name, value, dev_default in (
+        ("ADMIN_TOKEN", settings.admin_token, "dev-admin-token"),
+    ) if value == dev_default]
+    if "rag:rag@" in (settings.database_url or ""):
+        leaked.append("DATABASE_URL(pg 기본 비밀번호 rag:rag)")
+    if leaked:
+        raise RuntimeError(f"production requires real secrets for: {', '.join(leaked)}")
 
 
 # Cost units charged per request, by the matched connector's cost tier.

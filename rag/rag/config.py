@@ -6,6 +6,8 @@ Embeddings are Gemini-only: ``gemini-embedding-2`` (latest) via the Gemini API w
 
 from __future__ import annotations
 
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -64,3 +66,17 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def assert_production_secrets() -> None:
+    """SC-0/AUTH-1: ENV=production에서 dev 기본 텔레메트리 토큰·기본 pg 비번이 남아 있으면 기동 거부.
+    (RAG_ 프리픽스 설정이라 배포 공통 플래그 ENV는 os.environ에서 직접 읽는다.)"""
+    if os.environ.get("ENV", "dev").lower() not in ("production", "prod"):
+        return
+    leaked: list[str] = []
+    if settings.admin_token == "dev-admin-token":
+        leaked.append("RAG_ADMIN_TOKEN")
+    if "rag:rag@" in (settings.database_url or ""):
+        leaked.append("RAG_DATABASE_URL(pg 기본 비밀번호 rag:rag)")
+    if leaked:
+        raise RuntimeError(f"production requires real secrets for: {', '.join(leaked)}")

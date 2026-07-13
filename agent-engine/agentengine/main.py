@@ -7,6 +7,7 @@ call through the gateway, so entitlement + metering apply to agent activity too.
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import FastAPI, Header, HTTPException
@@ -15,7 +16,7 @@ from fastapi.responses import StreamingResponse
 from agentengine.agent import refresh_artifact, run_agent
 from agentengine.chat import stream_chat
 from agentengine.client import PlatformClient
-from agentengine.config import settings
+from agentengine.config import assert_production_secrets, settings
 from agentengine.askfeed import AskFeedRequest, build_ask_feed
 from agentengine.deskfeed import DeskFeedRequest, build_desk_feed
 from agentengine.logging_config import install_request_logging, setup_logging
@@ -29,9 +30,17 @@ from agentengine.models import (
 
 setup_logging()
 
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI):
+    assert_production_secrets()  # SC-0: production은 dev 기본 토큰으로 기동 불가
+    yield
+
+
 app = FastAPI(
     title="Platform Agent Engine", version="0.1.0",
     description="Run agents over activated connectors + RAG, via the gateway, with provenance + guardrails.",
+    lifespan=_lifespan,
 )
 install_request_logging(app)
 

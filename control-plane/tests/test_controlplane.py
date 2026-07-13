@@ -260,6 +260,10 @@ def test_production_refuses_dev_admin_token(monkeypatch):
         assert_production_secrets()
     monkeypatch.setattr(settings, "admin_token", "real-token-xyz")
     assert_production_secrets()  # 실 토큰 → 통과
+    # SC-0: 기본 pg 비밀번호(rag:rag)도 프로덕션에선 거부
+    monkeypatch.setattr(settings, "database_url", "postgresql+psycopg://rag:rag@postgres:5432/controlplane")
+    with _pytest.raises(RuntimeError, match="DATABASE_URL"):
+        assert_production_secrets()
 
 
 def test_plan_rate_limit_tiers(monkeypatch):

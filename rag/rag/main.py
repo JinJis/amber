@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 
-from rag.config import settings
+from rag.config import assert_production_secrets, settings
 from rag.ingest import ingest_docs
 from rag.logging_config import install_request_logging, setup_logging
 from rag.models import IngestRequest, SearchRequest
@@ -23,6 +23,7 @@ setup_logging()
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    assert_production_secrets()  # SC-0: production은 dev 기본 토큰/pg 비번으로 기동 불가
     # Warm the query embedder in the background: the OSS backends load their model lazily on
     # the FIRST search, which can exceed the gateway's HTTP timeout — that turn's rag__search
     # then 502'd and the answer silently lost its RAG evidence. Best-effort: a warmup failure

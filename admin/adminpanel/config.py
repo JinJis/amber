@@ -10,6 +10,8 @@ class Settings(BaseSettings):
 
     # App log verbosity (DEBUG|INFO|WARNING|…); a bare shared `LOG_LEVEL` env overrides it.
     log_level: str = "INFO"
+    # Deployment environment (dev|production). production refuses to start on dev-default secrets.
+    env: str = "dev"
 
     # login (single credential; change in production)
     adminui_username: str = "admin"               # ADMINUI_USERNAME
@@ -32,6 +34,24 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def assert_production_secrets() -> None:
+    """SC-0/AUTH-1/CR-10: ENV=production에서 admin 콘솔이 dev 크레덴셜·세션 시크릿·토큰으로 남아
+    있으면 기동 거부. 이 패널은 모든 서비스 DB에 대한 CRUD를 쥐고 있어 잘 알려진 값으로는 절대 열 수
+    없다. 세션 시크릿이 dev면 쿠키 위조가 가능하다."""
+    if settings.env.lower() not in ("production", "prod"):
+        return
+    leaked = [name for name, value, dev_default in (
+        ("ADMINUI_USERNAME", settings.adminui_username, "admin"),
+        ("ADMINUI_PASSWORD", settings.adminui_password, "admin"),
+        ("ADMINUI_SECRET", settings.adminui_secret, "dev-adminui-secret-change-me"),
+        ("ADMIN_TOKEN", settings.admin_token, "dev-admin-token"),
+        ("SERVICE_TOKEN", settings.service_token, "dev-service-token"),
+    ) if value == dev_default]
+    if leaked:
+        raise RuntimeError(f"production requires real secrets for: {', '.join(leaked)}")
+
 
 # (key, display title, sqlalchemy url)
 DATABASES = [
