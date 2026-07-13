@@ -107,6 +107,9 @@ async def activate(project_id: str, body: ActivationIn) -> dict:
             act = Activation(project_id=project_id, connector_id=body.connector_id, enabled=body.enabled, byo_credentials=body.byo_credentials)
             db.add(act)
             db.commit()
+        # CR-4: the gateway caches the project's activation set — invalidate so this change is live now.
+        from controlplane.gateway import invalidate_entitlement
+        invalidate_entitlement(project_id)
         return {"id": act.id, "project_id": project_id, "connector_id": act.connector_id, "enabled": act.enabled}
 
 

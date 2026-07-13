@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     admin_token: str = "dev-admin-token"
     rate_limit_per_minute: int = 120
     http_timeout_seconds: float = 30.0
+    # CR-4/SC-1.3: the gateway hot path did 4 sync DB round-trips per proxied call (auth SELECT +
+    # entitlement SELECT + meter INSERT+COMMIT + audit INSERT+COMMIT), blocking the event loop and
+    # capping throughput at ~50-100 req/s. Cache auth+entitlement (TTL) and batch meter/audit writes.
+    gateway_auth_cache_ttl_seconds: float = 30.0        # GATEWAY_AUTH_CACHE_TTL_SECONDS
+    gateway_entitlement_cache_ttl_seconds: float = 30.0  # GATEWAY_ENTITLEMENT_CACHE_TTL_SECONDS
+    gateway_flush_interval_seconds: float = 2.0          # GATEWAY_FLUSH_INTERVAL_SECONDS (meter/audit)
+    gateway_queue_max: int = 20000                       # GATEWAY_QUEUE_MAX (drop-oldest backstop)
     # RAG search embeds the query via an external model API and can run long under concurrent
     # ingest — a 30s proxy cap silently dropped ALL RAG evidence from a turn (502). RAG-bound
     # requests get their own, longer budget.

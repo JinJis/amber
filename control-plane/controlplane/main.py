@@ -7,6 +7,7 @@ meta routes match first.
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -28,7 +29,13 @@ async def lifespan(_: FastAPI):
     assert_production_secrets()  # AUTH-1: production은 dev 기본 ADMIN_TOKEN으로 기동 불가
     init_db()
     await load_catalog_from_datasets()
-    yield
+    # CR-4: background flusher for the batched meter/audit writes.
+    flush_task = asyncio.create_task(gateway.usage_flush_loop())
+    try:
+        yield
+    finally:
+        flush_task.cancel()
+        await gateway.flush_usage()  # final drain so buffered usage/audit rows survive shutdown
 
 
 app = FastAPI(

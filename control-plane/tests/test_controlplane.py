@@ -101,6 +101,7 @@ def test_gateway_entitlement_and_metering():
     assert r.status_code == 200 and r.json()["ticker"] == "AAPL"
     assert r.headers.get("x-connector") == "yahoo"
 
+    gateway.flush_usage_sync()  # CR-4: meter/audit are batched — flush before asserting
     usage = client.get(f"/admin/projects/{pid}/usage", headers=ADMIN).json()
     assert usage["total_calls"] >= 1
     assert client.get(f"/admin/projects/{pid}/usage").status_code == 401  # admin token required
@@ -178,6 +179,7 @@ def test_gateway_audit_log_and_activation_listing():
     assert any(a["connector_id"] == "yahoo" and a["enabled"] for a in acts["activations"])
     # a successful call is written to the audit log
     client.get("/prices?ticker=AAPL&market=US", headers={"X-API-KEY": key})
+    gateway.flush_usage_sync()  # CR-4: ACCESS audits are batched — flush before asserting
     audit = client.get(f"/admin/projects/{pid}/audit", headers=ADMIN).json()
     assert audit["audit"]  # at least one audited action recorded
     assert any("yahoo" in (e.get("detail") or "") for e in audit["audit"])
@@ -192,7 +194,29 @@ def test_usage_accumulates_across_calls():
     H = {"X-API-KEY": key}
     for _ in range(3):
         client.get("/prices?market=US", headers=H)
+    gateway.flush_usage_sync()  # CR-4: batched meter — flush before asserting
     assert client.get(f"/admin/projects/{pid}/usage", headers=ADMIN).json()["total_calls"] >= 3
+
+
+@respx.mock
+def test_cr4_meter_audit_batched_then_flushed():
+    """CR-4/SC-1.3: a proxied call queues its meter/audit rows (no per-call COMMIT); they land in
+    the DB only after a flush. The auth+entitlement caches keep the hot path DB-free between flushes."""
+    catalog_index.set_catalog(CATALOG)
+    respx.route(method="GET", url__regex=_PRICES).mock(return_value=httpx.Response(200, json={}))
+    pid, key = _make_project("Batched")
+    client.post(f"/admin/projects/{pid}/activations", json={"connector_id": "yahoo"}, headers=ADMIN)
+    H = {"X-API-KEY": key}
+    gateway.flush_usage_sync()  # drain anything queued by earlier tests
+    n0 = client.get(f"/admin/projects/{pid}/usage", headers=ADMIN).json()["total_calls"]
+
+    client.get("/prices?market=US", headers=H)
+    # the metered row is still in the QUEUE — not yet committed
+    assert len(gateway._meter_q) >= 1
+    assert client.get(f"/admin/projects/{pid}/usage", headers=ADMIN).json()["total_calls"] == n0
+
+    gateway.flush_usage_sync()
+    assert client.get(f"/admin/projects/{pid}/usage", headers=ADMIN).json()["total_calls"] == n0 + 1
 
 
 def test_two_keys_resolve_independently():
