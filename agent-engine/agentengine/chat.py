@@ -166,10 +166,14 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
         yield {"type": "thinking", "phase": "plan", "text": "밸류체인(공급망 구조)으로 정리할게요…"}
         system = ((system or "") + _VALUE_CHAIN_GUIDE).strip()
     planner = get_planner(bk)
-    # PLAN-3: plan-tier synthesis override (free/guest → flash) — resource config from the
-    # spec studio-api merged per turn; the planner instance is per-turn, so no cross-talk.
-    if spec and getattr(spec, "synthesis_model", None) and hasattr(planner, "synthesis_override"):
-        planner.synthesis_override = spec.synthesis_model
+    # PLAN-3/CR-6: plan-tier synthesis model (free/guest → flash), from the spec studio-api merged
+    # per turn. Passed as a call ARGUMENT to every synthesis call — the planner is a process-wide
+    # singleton, so storing it on the instance raced across concurrent users' tiers (a free turn
+    # could downgrade a concurrent pro turn's synthesis).
+    synth_model = getattr(spec, "synthesis_model", None) if spec else None
+    # Forward the override only when set — None means "use the configured default synthesis model",
+    # so passing it is redundant. Spread into each synthesis call via **synth_kw.
+    synth_kw = {"synthesis_model": synth_model} if synth_model else {}
     from agentengine.planner import resolve_ticker
     history: list = []
     citations: list[dict] = []
@@ -245,7 +249,7 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
             ns = AnchorStream()
             async for delta in planner.stream_final(task, tools_arg, history_arg, system_arg,
                                                      conversation=messages, sources=sources,
-                                                     figures=figures):
+                                                     figures=figures, **synth_kw):
                 got = True
                 out = ns.feed(delta)
                 if out:
@@ -262,7 +266,7 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
         else:
             dec = await planner.plan(task, tools_arg, history_arg, system_arg,
                                      conversation=messages, force_final=True, sources=sources,
-                                     figures=figures)
+                                     figures=figures, **synth_kw)
             from agentengine.anchors import normalize_anchor_groups
             for ch in _chunks(normalize_anchor_groups(dec.final or fallback_answer(citations))):
                 final_text += ch
@@ -304,6 +308,8 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
     try:
         async def _plan_batch(force_final: bool) -> list:
             kw = dict(conversation=messages, force_final=force_final, sources=number_sources(citations))
+            if force_final and synth_model:  # CR-6: synthesis step → forward the per-turn tier
+                kw["synthesis_model"] = synth_model
             if hasattr(planner, "plan_batch"):
                 return await planner.plan_batch(task, tools, history, system, **kw)
             return [await planner.plan(task, tools, history, system, **kw)]

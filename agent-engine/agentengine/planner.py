@@ -113,24 +113,26 @@ class GeminiPlanner:
         self._genai = genai
         self._client = genai_client()  # bounded request timeout (no infinite SSE hang)
         self.model = model
-        # PLAN-3: per-turn synthesis tier override (set from AgentSpec by the chat loop —
-        # a fresh planner is built per turn, so this never leaks across users/requests).
-        self.synthesis_override: str | None = None
+        # CR-6/SC-1.1: the planner is a PROCESS-WIDE singleton (@cache), so per-turn synthesis
+        # tier must be passed as a call argument — never stored on self (that raced across
+        # concurrent users: a free-tier flash override downgraded a concurrent pro user's synthesis).
 
     async def plan(self, task: str, tools: dict, history: list, system: str | None = None,
                    conversation: list | None = None, force_final: bool = False,
-                   sources: str | None = None, figures: str | None = None) -> Decision:
+                   sources: str | None = None, figures: str | None = None,
+                   synthesis_model: str | None = None) -> Decision:
         # single-decision view (run_agent / callers that don't fan out): the first call.
         decisions = await self._run(task, tools, history, system, conversation, force_final,
-                                    sources, figures)
+                                    sources, figures, synthesis_model=synthesis_model)
         return decisions[0]
 
     async def plan_batch(self, task: str, tools: dict, history: list, system: str | None = None,
                          conversation: list | None = None, force_final: bool = False,
-                         sources: str | None = None) -> list[Decision]:
+                         sources: str | None = None, synthesis_model: str | None = None) -> list[Decision]:
         # ALL of the model's parallel function calls this step (fanned out concurrently by the
         # caller), or a single final Decision. This is what enables parallel multi-source gather.
-        return await self._run(task, tools, history, system, conversation, force_final, sources)
+        return await self._run(task, tools, history, system, conversation, force_final, sources,
+                               synthesis_model=synthesis_model)
 
     def _build_system_instruction(self, system: str | None, sources: str | None,
                                   figures: str | None = None) -> str:
@@ -187,7 +189,7 @@ class GeminiPlanner:
 
     async def stream_final(self, task: str, tools: dict, history: list, system: str | None = None,
                            conversation: list | None = None, sources: str | None = None,
-                           figures: str | None = None):
+                           figures: str | None = None, synthesis_model: str | None = None):
         """REAL token streaming of the final synthesis (responder model). Yields text deltas
         as Gemini generates them — so the answer appears incrementally, not all at once. Each
         `next()` on the sync stream is offloaded so the event loop stays free."""
@@ -198,7 +200,7 @@ class GeminiPlanner:
         contents = _to_gemini_contents(conversation, history, task)
         contents.append(types.Content(role="user", parts=[types.Part.from_text(text=_SYNTHESIS_PROMPT)]))
         config = types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.3)
-        model = self.synthesis_override or settings.synthesis_model or self.model
+        model = synthesis_model or settings.synthesis_model or self.model
         it = await asyncio.to_thread(self._client.models.generate_content_stream,
                                      model=model, contents=contents, config=config)
 
@@ -222,7 +224,8 @@ class GeminiPlanner:
 
     async def _run(self, task: str, tools: dict, history: list, system: str | None = None,
                    conversation: list | None = None, force_final: bool = False,
-                   sources: str | None = None, figures: str | None = None) -> list[Decision]:
+                   sources: str | None = None, figures: str | None = None,
+                   synthesis_model: str | None = None) -> list[Decision]:
         import asyncio
         from google.genai import types
 
@@ -239,7 +242,7 @@ class GeminiPlanner:
                 temperature=0.3,   # finance: grounded + accurate over flowery (still natural prose)
             )
             # use the dedicated (light) response model, falling back to the planner model.
-            model = self.synthesis_override or settings.synthesis_model or self.model
+            model = synthesis_model or settings.synthesis_model or self.model
             resp = await asyncio.to_thread(self._client.models.generate_content, model=model, contents=contents, config=config)
             report_usage("synthesis", model, resp)
             return [Decision(final=_get_text_from_response(resp))]
