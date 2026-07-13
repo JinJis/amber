@@ -27,6 +27,16 @@ def _gen() -> str:
     return "".join(secrets.choice(_ALPHABET) for _ in range(8))
 
 
+def referral_code_of(email: str) -> str | None:
+    """ME-6: READ-ONLY 추천 코드 조회 — 절대 쓰지 않는다. 공개 공유 읽기(고트래픽·비로그인)가
+    매 뷰마다 코드를 lazy 발급(write-on-read)하면 read replica로 못 넘기고 write 부하가 는다.
+    발급은 create_share(작성자 인증 요청)에서 1회 하고, 읽기는 이걸로 조회만 한다."""
+    if not email or email.endswith("@guest.local"):
+        return None
+    with SessionLocal() as db:
+        return db.scalar(select(User.referral_code).where(User.email == email))
+
+
 def ensure_referral_code(email: str) -> str | None:
     """유저의 추천 코드 — 없으면 발급(유니크 충돌 시 재시도). 게스트/미존재 유저는 None."""
     if not email or email.endswith("@guest.local"):

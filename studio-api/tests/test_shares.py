@@ -206,3 +206,34 @@ def test_view_beacon_counts_and_skips_revoked(monkeypatch):
     assert next(s for s in mine if s["token"] == tok)["views"] == 2
     client.delete(f"/shares/{tok}", headers=_hdr("vw@u.com"))
     assert client.post(f"/shares/{tok}/view", headers={"X-Service-Token": SVC}).json()["ok"] is False
+
+
+@respx.mock
+def test_share_read_path_is_write_free(monkeypatch):
+    """ME-6: a public share view must NOT perform a write. The sharer's referral code is ensured at
+    CREATE (an authenticated request); the high-traffic public read looks it up read-only and never
+    mints one — so the read can be served by a replica."""
+    from studioapi.config import settings
+    from studioapi.db import SessionLocal
+    from studioapi.models import User
+    monkeypatch.setattr(settings, "control_plane_url", "http://cp.test")
+    _cp()
+    tok = client.post("/shares", headers=_hdr("refshare@u.com"),
+                      json={"kind": "artifact", "title": "t", "payload": ART,
+                            "audit": {"checked": 1, "unsupported": []}}).json()["token"]
+    with SessionLocal() as db:
+        code = db.get(User, "refshare@u.com").referral_code
+    assert code   # ensured at CREATE, not on read
+
+    pub = client.get(f"/shares/{tok}", headers={"X-Service-Token": SVC}).json()
+    assert pub["referral_code"] == code
+
+    # a read for a user whose code is missing must NOT mint one
+    with SessionLocal() as db:
+        u = db.get(User, "refshare@u.com")
+        u.referral_code = None
+        db.commit()
+    pub2 = client.get(f"/shares/{tok}", headers={"X-Service-Token": SVC}).json()
+    assert pub2["referral_code"] is None
+    with SessionLocal() as db:
+        assert db.get(User, "refshare@u.com").referral_code is None   # the read wrote nothing
