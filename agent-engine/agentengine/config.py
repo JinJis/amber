@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     gemini_enrich_timeout_seconds: float = 25.0
     max_steps: int = 8         # base tool-step budget (raised for multi-source tasks, up to the cap)
     max_steps_cap: int = 14    # hard ceiling for the dynamic budget
+    # HI-5: one shared httpx client for all gateway traffic (catalog + ~8 tool calls/turn) instead of
+    # a fresh pool/TLS per call; and TTL-cache the near-static global /catalog (fetched every turn).
+    catalog_cache_ttl_seconds: int = 120     # AGENT_CATALOG_CACHE_TTL_SECONDS
+    httpx_max_connections: int = 100         # AGENT_HTTPX_MAX_CONNECTIONS
+    httpx_max_keepalive: int = 20            # AGENT_HTTPX_MAX_KEEPALIVE
     # CR-5/SC-1.2: Gemini concurrency control. All generate_content calls run on a DEDICATED thread
     # pool (so they don't contend with the default asyncio executor / block the event loop's other
     # to_thread work) and pass a PER-MODEL semaphore, so a burst of same-tier calls (planner steps,

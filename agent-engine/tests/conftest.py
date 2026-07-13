@@ -14,12 +14,16 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _reset_gemini_singletons():
-    from agentengine import gemini_io, planner
+    from agentengine import client, gemini_io, planner
 
     def _reset():
         gemini_io.genai_client.cache_clear()
         planner._build_planner.cache_clear()
         gemini_io._sems.clear()
+        # HI-5: drop the process-wide catalog cache + shared client so tests that mock different
+        # catalogs / gateways don't leak into each other.
+        client._reset_catalog_cache()
+        client._shared_client = None
 
     _reset()
     yield

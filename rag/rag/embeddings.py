@@ -141,25 +141,13 @@ def get_embedder() -> Embedder:
 # `estimated` — the cost dashboard labels them as such (never presented as an exact figure).
 def _report_usage(model: str, texts: list[str], *, query: bool) -> None:
     try:
-        import asyncio as _aio
-
-        import httpx as _hx
+        from rag.telemetry import report_usage   # HI-5: shared telemetry client
 
         chars = sum(len(t or "") for t in texts)
         if not chars:
             return
-        payload = {"service": "rag", "kind": "embed_query" if query else "embed_docs",
-                   "model": model, "input_tokens": max(1, chars // 4), "output_tokens": 0,
-                   "calls": 1, "estimated": True}
-
-        async def _post() -> None:
-            try:
-                async with _hx.AsyncClient(timeout=3.0) as c:
-                    await c.post(f"{settings.control_plane_url}/admin/llm-usage", json=payload,
-                                 headers={"X-Admin-Token": settings.admin_token})
-            except Exception:  # noqa: BLE001 — telemetry never fails a search/ingest
-                pass
-
-        _aio.get_running_loop().create_task(_post())
-    except Exception:  # noqa: BLE001 — incl. no running loop (sync tests)
+        report_usage({"service": "rag", "kind": "embed_query" if query else "embed_docs",
+                      "model": model, "input_tokens": max(1, chars // 4), "output_tokens": 0,
+                      "calls": 1, "estimated": True})
+    except Exception:  # noqa: BLE001 — telemetry never fails a search/ingest
         pass

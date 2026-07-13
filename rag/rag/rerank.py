@@ -53,24 +53,11 @@ class VertexReranker:
 def _report_rerank_usage(model: str) -> None:
     """METER-3: Vertex Ranking은 요청당 과금인데 지금까지 원가 대시보드에 보이지 않았다 —
     calls=1(토큰 없음, estimated)로 llm_usage에 남긴다. 임베딩 텔레메트리와 동일하게
-    fire-and-forget; 실패해도 검색을 절대 방해하지 않는다."""
-    import httpx
+    fire-and-forget; 실패해도 검색을 절대 방해하지 않는다. HI-5: 공유 텔레메트리 클라 경유."""
+    from rag.telemetry import report_usage
 
-    payload = {"service": "rag", "kind": "rerank", "model": model or "vertex-ranking",
-               "input_tokens": 0, "output_tokens": 0, "calls": 1, "estimated": True}
-
-    async def _post() -> None:
-        try:
-            async with httpx.AsyncClient(timeout=3.0) as c:
-                await c.post(f"{settings.control_plane_url}/admin/llm-usage", json=payload,
-                             headers={"X-Admin-Token": settings.admin_token})
-        except Exception:  # noqa: BLE001 — 텔레메트리는 검색을 방해하지 않는다
-            pass
-
-    try:
-        asyncio.get_running_loop().create_task(_post())
-    except RuntimeError:
-        pass
+    report_usage({"service": "rag", "kind": "rerank", "model": model or "vertex-ranking",
+                  "input_tokens": 0, "output_tokens": 0, "calls": 1, "estimated": True})
 
 
 @cache

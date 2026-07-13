@@ -6,9 +6,38 @@ metering + audit (the agent can only use what the tenant activated).
 
 from __future__ import annotations
 
+import asyncio
+import time
+
 import httpx
 
 from agentengine.config import settings
+
+# HI-5: ONE shared client + connection pool for all gateway traffic (catalog + ~8 tool calls/turn)
+# instead of a fresh AsyncClient (new pool + TLS handshake) per call.
+_shared_client: httpx.AsyncClient | None = None
+
+
+def _client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(
+            timeout=settings.http_timeout_seconds,
+            limits=httpx.Limits(max_connections=settings.httpx_max_connections,
+                                max_keepalive_connections=settings.httpx_max_keepalive))
+    return _shared_client
+
+
+# HI-5: /catalog is global (no tenant key) and near-static, yet re-fetched EVERY turn (with 3
+# retries). Cache it process-wide for a short TTL — entitlement is still enforced per tool CALL.
+_catalog_cache: tuple[float, dict[str, dict]] | None = None
+_catalog_lock = asyncio.Lock()
+
+
+def _reset_catalog_cache() -> None:
+    """Test seam: drop the cached catalog (tests mock different catalogs per test)."""
+    global _catalog_cache
+    _catalog_cache = None
 
 
 class PlatformClient:
@@ -16,20 +45,29 @@ class PlatformClient:
         self.api_key = api_key
 
     async def fetch_tools(self) -> dict[str, dict]:
-        import asyncio
+        global _catalog_cache
+        if _catalog_cache is not None and _catalog_cache[0] > time.monotonic():
+            return _catalog_cache[1]
+        async with _catalog_lock:
+            if _catalog_cache is not None and _catalog_cache[0] > time.monotonic():
+                return _catalog_cache[1]   # another caller populated it while we waited
+            tools = await self._fetch_tools_uncached()
+            _catalog_cache = (time.monotonic() + settings.catalog_cache_ttl_seconds, tools)
+            return tools
 
+    async def _fetch_tools_uncached(self) -> dict[str, dict]:
         last_exc: Exception | None = None
         connectors = None
-        async with httpx.AsyncClient(timeout=settings.http_timeout_seconds) as client:
-            for attempt in range(3):  # tolerate a transient gateway blip under load
-                try:
-                    resp = await client.get(f"{settings.gateway_url}/catalog")
-                    resp.raise_for_status()
-                    connectors = resp.json().get("connectors", [])
-                    break
-                except Exception as e:  # noqa: BLE001
-                    last_exc = e
-                    await asyncio.sleep(0.5 * (attempt + 1))
+        client = _client()
+        for attempt in range(3):  # tolerate a transient gateway blip under load
+            try:
+                resp = await client.get(f"{settings.gateway_url}/catalog")
+                resp.raise_for_status()
+                connectors = resp.json().get("connectors", [])
+                break
+            except Exception as e:  # noqa: BLE001
+                last_exc = e
+                await asyncio.sleep(0.5 * (attempt + 1))
         if connectors is None:
             raise last_exc if last_exc else RuntimeError("catalog unavailable")
         tools: dict[str, dict] = {}
@@ -56,8 +94,6 @@ class PlatformClient:
         return tools
 
     async def call_tool(self, tool: dict, args: dict) -> dict:
-        import asyncio
-
         args = dict(args or {})
         # The gateway routes by the `market` query param, so a single-market tool
         # (e.g. ECOS=KR, FRED=US) must carry its market or it can misroute to the
@@ -71,22 +107,22 @@ class PlatformClient:
         # read-only data pulls, so a retry is safe — and a single gateway/upstream blip must
         # not cost the turn its evidence. Anything else returns as-is (honest status).
         resp = None
-        async with httpx.AsyncClient(timeout=settings.http_timeout_seconds) as client:
-            for attempt in range(2):
-                try:
-                    if tool["method"] == "GET":
-                        resp = await client.get(url, params=args, headers=headers)
-                    else:
-                        resp = await client.request(tool["method"], url, json=args, headers=headers)
-                except httpx.HTTPError:
-                    if attempt == 1:
-                        raise
-                    await asyncio.sleep(1.0)
-                    continue
-                if resp.status_code in (502, 503, 504) and attempt == 0:
-                    await asyncio.sleep(1.0)
-                    continue
-                break
+        client = _client()
+        for attempt in range(2):
+            try:
+                if tool["method"] == "GET":
+                    resp = await client.get(url, params=args, headers=headers)
+                else:
+                    resp = await client.request(tool["method"], url, json=args, headers=headers)
+            except httpx.HTTPError:
+                if attempt == 1:
+                    raise
+                await asyncio.sleep(1.0)
+                continue
+            if resp.status_code in (502, 503, 504) and attempt == 0:
+                await asyncio.sleep(1.0)
+                continue
+            break
         assert resp is not None  # loop always sets or raises
         try:
             data = resp.json()
