@@ -152,6 +152,9 @@ class Settings(BaseSettings):
     # access time down to the size budget.
     evidence_docs_budget_bytes: int = 2_000_000_000     # EVIDENCE_DOCS_BUDGET_BYTES (2 GB)
     evidence_docs_max_age_days: int = 30                 # EVIDENCE_DOCS_MAX_AGE_DAYS
+    # ME-16: the news corpus has no retention (doc_id=url upserts never delete old rows) — old chunks
+    # live in the RAG hybrid indexes forever. A daily worker sweep prunes news chunks older than this.
+    news_retention_days: int = 90                        # NEWS_RETENTION_DAYS
 
     @property
     def accepted_api_keys(self) -> set[str]:

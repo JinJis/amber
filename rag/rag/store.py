@@ -57,6 +57,12 @@ class VectorStore(Protocol):
         including None → unscoped). Used by ingest's replace-by-accession so a re-chunked
         filing never piles up stale duplicates."""
         ...
+    async def delete_older_than(self, filters: dict, before_as_of: str) -> int:
+        """ME-16 age-out: delete chunks matching every `filters` key AND whose `as_of` is present and
+        lexically before `before_as_of` (ISO date strings sort chronologically). REFUSES an empty
+        `filters` (never an unscoped by-age purge) — the news corpus otherwise grows forever because
+        doc_id=url upserts never remove old rows; the recency boost only hides them from ranking."""
+        ...
     async def replace_scope(self, filters: dict, keep_ids: list[str],
                             chunks: list[Chunk], vectors: list[list[float]]) -> int:
         """ONE atomic operation: delete rows matching `filters` whose id is NOT in `keep_ids`,
@@ -142,6 +148,18 @@ class MemoryStore:
 
     async def delete_where(self, filters):
         kept = [(c, v) for c, v in zip(self._chunks, self._matrix) if not self._matches(c, filters)]
+        removed = len(self._chunks) - len(kept)
+        self._chunks = [c for c, _ in kept]
+        self._matrix = [v for _, v in kept]
+        self._pos = {c.id: i for i, c in enumerate(self._chunks)}
+        return removed
+
+    async def delete_older_than(self, filters, before_as_of):
+        if not filters:
+            return 0   # safety: never an unscoped by-age purge
+        cutoff = str(before_as_of)
+        kept = [(c, v) for c, v in zip(self._chunks, self._matrix)
+                if not (self._matches(c, filters) and c.as_of and str(c.as_of) < cutoff)]
         removed = len(self._chunks) - len(kept)
         self._chunks = [c for c, _ in kept]
         self._matrix = [v for _, v in kept]
@@ -236,6 +254,16 @@ class PgVectorStore:
             except Exception as exc:  # noqa: BLE001 — a deferred/again build never blocks boot
                 import logging
                 logging.getLogger(__name__).warning("rag_chunks_accession index deferred: %s", exc)
+            # ME-16: a (doc_type, as_of) index so the daily news age-out prune is an index scan, not a
+            # full-corpus seq scan on an 800k+-row store.
+            try:
+                conn.execute(
+                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS rag_chunks_doctype_asof ON rag_chunks "
+                    "((meta->>'doc_type'), (meta->>'as_of'))"
+                )
+            except Exception as exc:  # noqa: BLE001 — a deferred/again build never blocks boot
+                import logging
+                logging.getLogger(__name__).warning("rag_chunks_doctype_asof index deferred: %s", exc)
             finally:
                 conn.autocommit = False
 
@@ -402,6 +430,23 @@ class PgVectorStore:
         conds, params = self._exact_conds(filters)
         if not conds:
             return 0
+        sql = "DELETE FROM rag_chunks WHERE " + " AND ".join(conds)
+
+        def _run():
+            with self._pool.connection() as conn:
+                cur = conn.execute(sql, params)
+                conn.commit()
+                return cur.rowcount or 0
+
+        return await asyncio.to_thread(_run)
+
+    async def delete_older_than(self, filters, before_as_of):
+        conds, params = self._exact_conds(filters)
+        if not conds:
+            return 0   # safety: never an unscoped by-age purge (would sweep filings/decks too)
+        conds.append("meta->>'as_of' IS NOT NULL")
+        conds.append("meta->>'as_of' < %s")   # ISO date strings compare chronologically
+        params.append(str(before_as_of))
         sql = "DELETE FROM rag_chunks WHERE " + " AND ".join(conds)
 
         def _run():

@@ -619,3 +619,44 @@ async def test_concurrent_embedding_preserves_positional_order(monkeypatch):
         monkeypatch.setattr(E.settings, "embed_concurrency", conc)
         out = await _make().embed(texts)
         assert out == expected, f"positional order broke at concurrency={conc}"
+
+
+# --- ME-16 / SC-3.4: news age-out prune -------------------------------------------------------
+async def test_delete_older_than_is_scoped_and_dated():
+    _reset()
+    await ingest_docs([
+        IngestDoc(text="Old headline about chips", doc_id="u1", source="Reuters", doc_type="news",
+                  ticker="AAPL", market="US", as_of="2025-01-01"),
+        IngestDoc(text="Fresh headline about chips", doc_id="u2", source="Reuters", doc_type="news",
+                  ticker="AAPL", market="US", as_of="2026-07-01"),
+        IngestDoc(text="An old filing passage", doc_id="f1", source="SEC EDGAR", doc_type="filing",
+                  ticker="AAPL", market="US", as_of="2025-01-01"),
+        IngestDoc(text="Undated news blurb", doc_id="u3", source="Reuters", doc_type="news", as_of=None),
+    ])
+    st = store.get_store()
+    n = await st.delete_older_than({"doc_type": "news"}, "2026-01-01")
+    assert n == 1                                        # only the OLD dated news chunk
+    texts = {c.text for c in st._chunks}
+    assert "Old headline about chips" not in texts       # aged out
+    assert "Fresh headline about chips" in texts         # recent news kept
+    assert "An old filing passage" in texts              # other doc_type untouched (scoped)
+    assert "Undated news blurb" in texts                 # undated never aged out
+
+
+async def test_delete_older_than_refuses_empty_filter():
+    _reset()
+    await ingest_docs([IngestDoc(text="x", doc_id="a", doc_type="news", as_of="2000-01-01")])
+    st = store.get_store()
+    assert await st.delete_older_than({}, "2026-01-01") == 0   # no scope → never an unscoped purge
+    assert len(st._chunks) == 1
+
+
+def test_prune_endpoint_ages_out_old_news():
+    _reset()
+    client.post("/rag/ingest", json={"documents": [
+        {"text": "old news", "doc_id": "n1", "doc_type": "news", "as_of": "2020-01-01"},
+        {"text": "new news", "doc_id": "n2", "doc_type": "news", "as_of": "2026-07-01"},
+    ]})
+    r = client.post("/rag/prune", json={"filters": {"doc_type": "news"}, "before_as_of": "2025-01-01"})
+    assert r.status_code == 200 and r.json()["deleted"] == 1
+    assert client.post("/rag/prune", json={"filters": {}, "before_as_of": "2100-01-01"}).json()["deleted"] == 0

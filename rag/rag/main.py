@@ -15,7 +15,7 @@ from fastapi import FastAPI, Request
 from rag.config import assert_production_secrets, settings
 from rag.ingest import ingest_docs
 from rag.logging_config import install_request_logging, setup_logging
-from rag.models import IngestRequest, SearchRequest
+from rag.models import IngestRequest, PruneRequest, SearchRequest
 from rag.search import search as run_search
 
 setup_logging()
@@ -91,6 +91,22 @@ async def ingest(body: IngestRequest, request: Request) -> dict:
         len(body.documents), res["chunks"], res["skipped"], res["pruned"],
         (replace or {}).get("accession") or bool(replace), (time.perf_counter() - t0) * 1000)
     return {"chunks": res["chunks"], "pruned": res["pruned"], "skipped": res["skipped"]}
+
+
+@app.post("/rag/prune", tags=["RAG"], summary="Age-out delete: drop scoped chunks older than a cutoff")
+async def prune(body: PruneRequest) -> dict:
+    """ME-16: the news corpus has no retention (doc_id=url upserts never remove old rows), so old
+    chunks live in the hybrid indexes forever. The datasets worker calls this daily with
+    {filters: {"doc_type": "news"}, before_as_of: <cutoff>}. An empty filter is refused (never an
+    unscoped purge)."""
+    import logging
+
+    from rag.store import get_store
+    if not body.filters:
+        return {"deleted": 0}
+    n = await get_store().delete_older_than(body.filters, body.before_as_of)
+    logging.getLogger(__name__).info("prune scope=%s before=%s → %d chunks", body.filters, body.before_as_of, n)
+    return {"deleted": n}
 
 
 @app.post("/rag/search", tags=["RAG"], summary="Retrieve passages with provenance")

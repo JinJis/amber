@@ -51,6 +51,13 @@ class IngestRequest(BaseModel):
     replace: dict[str, str] | None = None
 
 
+class PruneRequest(BaseModel):
+    # ME-16 age-out: delete chunks matching every `filters` key AND older than `before_as_of` (ISO
+    # date). `filters` MUST be non-empty (e.g. {"doc_type": "news"}) — never an unscoped by-age purge.
+    filters: dict[str, str]
+    before_as_of: str
+
+
 class SearchRequest(BaseModel):
     query: str
     top_k: int | None = None

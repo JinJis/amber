@@ -241,8 +241,9 @@ async def test_queue_periodic_schedules_registered():
     assert sched["kr_earnings"] == "30 6 * * 1"
     assert sched["presentation_text"] == "0 7 * * 1"
     assert sched["gc_evidence"] == "30 4 * * *"   # ME-10: daily evidence-cache sweep (not a pipeline)
+    assert sched["gc_news"] == "0 5 * * *"        # ME-16: daily news age-out (not a pipeline)
     assert set(sched) == {"news", "prices", "financials", "corp_actions", "filing_text",
-                          "transcript_text", "kr_earnings", "presentation_text", "gc_evidence"}
+                          "transcript_text", "kr_earnings", "presentation_text", "gc_evidence", "gc_news"}
 
 
 async def test_queue_overview_failsafe_without_db(monkeypatch):

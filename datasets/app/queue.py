@@ -152,6 +152,26 @@ async def gc_evidence(timestamp: int) -> None:
         logger.info("evidence GC: %s", out)
 
 
+@app.periodic(cron="0 5 * * *")            # daily 05:00 — ME-16: age out old news chunks in the RAG store
+@app.task(name="gc_news", queue="sweep", queueing_lock="gc_news")
+async def gc_news(timestamp: int) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    import httpx
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=settings.news_retention_days)).strftime("%Y-%m-%d")
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{settings.rag_url.rstrip('/')}/rag/prune",
+                json={"filters": {"doc_type": "news"}, "before_as_of": cutoff})
+            resp.raise_for_status()
+            out = resp.json()
+        if out.get("deleted"):
+            logger.info("news age-out: dropped %d chunks older than %s", out["deleted"], cutoff)
+    except Exception as exc:  # noqa: BLE001 — a prune failure never crashes the worker
+        logger.warning("news age-out failed: %s", exc)
+
+
 @app.periodic(cron="0 3 * * 1")            # weekly Mon 03:00
 @app.task(name="sweep_financials", queue="sweep", queueing_lock="sweep_financials")
 async def sweep_financials(timestamp: int) -> None:
