@@ -20,6 +20,8 @@ log = logging.getLogger("app.redisstate")
 
 _client = None
 _resolved = False
+_sync_client = None
+_sync_resolved = False
 
 
 def client():
@@ -43,8 +45,33 @@ def client():
     return _client
 
 
+def sync_client():
+    """A cached synchronous ``redis.Redis`` client when ``REDIS_URL`` is set, else ``None``. For the
+    few sync call sites (OpenDART daily-quota key blocks) that have many sync callers + tests and
+    would otherwise force an async ripple. The ops are tiny (MGET/SET) and infrequent (per DART call /
+    only on a 020), so blocking the loop briefly is acceptable."""
+    global _sync_client, _sync_resolved
+    if _sync_resolved:
+        return _sync_client
+    _sync_resolved = True
+    url = (getattr(settings, "redis_url", "") or "").strip()
+    if not url:
+        _sync_client = None
+        return None
+    try:
+        import redis
+
+        _sync_client = redis.from_url(url, decode_responses=True)
+    except Exception as exc:  # noqa: BLE001 — dep missing / bad URL → degrade to in-process
+        log.warning("REDIS_URL set but Redis unavailable (%s) — using in-process state", exc)
+        _sync_client = None
+    return _sync_client
+
+
 def reset() -> None:
-    """Test hook: forget the cached client so a monkeypatched REDIS_URL is re-read."""
-    global _client, _resolved
+    """Test hook: forget the cached clients so a monkeypatched REDIS_URL is re-read."""
+    global _client, _resolved, _sync_client, _sync_resolved
     _client = None
     _resolved = False
+    _sync_client = None
+    _sync_resolved = False

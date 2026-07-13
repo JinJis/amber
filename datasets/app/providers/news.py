@@ -12,6 +12,7 @@ from __future__ import annotations
 from email.utils import parsedate_to_datetime
 from xml.etree import ElementTree
 
+from app.cache import TTLCache
 from app.http import fetch_text
 from app.models.generated import News
 from app.symbols import Market
@@ -90,6 +91,22 @@ class GoogleNewsProvider:
 _NEWS_CACHE_TTL = 120.0
 
 
+def _dumps_news(v: object) -> str:
+    import json
+    return json.dumps([n.model_dump(mode="json") for n in v])  # type: ignore[union-attr]
+
+
+def _loads_news(s: str) -> object:
+    import json
+    return [News.model_validate(d) for d in json.loads(s)]
+
+
+# SC-2.4: a dedicated Redis-namespaced cache (not the shared heterogeneous `cache`) so the 2-min
+# dedup window is shared across replicas when REDIS_URL is set — otherwise each replica makes its own
+# upstream call per window. News are pydantic models → explicit model_dump/model_validate serde.
+_news_cache = TTLCache(int(_NEWS_CACHE_TTL), redis_ns="news", dumps=_dumps_news, loads=_loads_news)
+
+
 class AutoNewsProvider:
     """Market-routed real-time news with a keyless fallback (mirrors the prices auto chain):
       KR → Naver Search API (native, best KR coverage) · US → Finnhub (real-time, keyed)
@@ -98,10 +115,8 @@ class AutoNewsProvider:
     and becomes the safety net. A 2-min dedup cache keeps freshness while absorbing user scale."""
 
     async def news(self, market: Market, ticker: str | None, limit: int) -> list[News]:
-        from app.cache import cache
-
         key = f"news:{getattr(market, 'value', market)}:{ticker or '_'}:{limit}"
-        return await cache.get_or_set(
+        return await _news_cache.get_or_set(
             key, lambda: self._fetch(market, ticker, limit), ttl_seconds=_NEWS_CACHE_TTL)
 
     async def _fetch(self, market: Market, ticker: str | None, limit: int) -> list[News]:

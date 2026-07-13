@@ -115,16 +115,46 @@ def _seconds_to_kst_midnight() -> float:
     return (nxt - kst_now).total_seconds() + 60.0   # +60s safety past the reset
 
 
+# SC-2.4: the daily quota is a per-KEY OpenDART limit shared across ALL replicas — so a key spent on
+# one replica must be treated as spent everywhere, else the others keep burning calls against it (020)
+# and the evidence viewer that shares the quota starves. When REDIS_URL is set the block lives in Redis
+# (auto-expiring at the KST reset); unset → the in-process dict, single-node correct.
+def _block_key(k: str) -> str:
+    return f"opendart:block:{k}"
+
+
 def available_keys() -> list[str]:
+    ks = _keys()
+    from app import redisstate
+    r = redisstate.sync_client()
+    if r is not None:
+        try:
+            if not ks:
+                return []
+            flags = r.mget([_block_key(k) for k in ks])   # one round-trip for the whole pool
+            return [k for k, blocked in zip(ks, flags) if not blocked]
+        except Exception:  # noqa: BLE001 — redis down → in-process
+            pass
     now = time.monotonic()
-    return [k for k in _keys() if _blocked_keys.get(k, 0.0) <= now]
+    return [k for k in ks if _blocked_keys.get(k, 0.0) <= now]
 
 
 def mark_quota_blocked(key: str | None = None) -> None:
     """Block ``key`` (or, with no argument, every configured key) until the KST-midnight quota
     reset, so consumers fail fast / rotate instead of burning calls against a spent key."""
+    targets = ([key] if key else _keys()) or ["_unconfigured_"]
+    from app import redisstate
+    r = redisstate.sync_client()
+    if r is not None:
+        try:
+            ttl = int(_seconds_to_kst_midnight())
+            for k in targets:
+                r.set(_block_key(k), "1", ex=ttl)
+            return
+        except Exception:  # noqa: BLE001 — redis down → in-process
+            pass
     until = time.monotonic() + _seconds_to_kst_midnight()
-    for k in ([key] if key else _keys()) or ["_unconfigured_"]:
+    for k in targets:
         _blocked_keys[k] = until
 
 
@@ -135,8 +165,16 @@ def quota_blocked() -> bool:
 
 
 def reset_quota_blocks() -> None:
-    """Test hook — clear the per-key block state."""
+    """Test hook — clear the per-key block state (in-process AND, if configured, Redis)."""
     _blocked_keys.clear()
+    from app import redisstate
+    r = redisstate.sync_client()
+    if r is not None:
+        try:
+            keys = [_block_key(k) for k in (_keys() or [])] + [_block_key("_unconfigured_")]
+            r.delete(*keys)
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
 
 
 async def _record_call(key: str, n: int = 1) -> None:

@@ -25,13 +25,13 @@ from app.symbols import Market
 
 @pytest.fixture(autouse=True)
 def _clear_news_cache():
-    """AutoNewsProvider dedups through the module-global cache — clear it so the ~2-min TTL
-    doesn't leak a prior test's result into the next (identical market:ticker:limit key)."""
-    from app.cache import cache
+    """AutoNewsProvider dedups through its dedicated ``_news_cache`` (SC-2.4) — clear it so the
+    ~2-min TTL doesn't leak a prior test's result into the next (identical market:ticker:limit key)."""
+    from app.providers.news import _news_cache
 
-    cache.clear()
+    _news_cache.clear()
     yield
-    cache.clear()
+    _news_cache.clear()
 
 
 # --- Finnhub (US) --------------------------------------------------------------

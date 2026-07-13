@@ -55,7 +55,16 @@ def _build_limiters() -> dict[str, _RateLimiter]:
 _limiters = _build_limiters()  # provider → limiter (absent = unthrottled)
 
 
-def _breaker_open(provider: str) -> bool:
+async def _breaker_open(provider: str) -> bool:
+    # SC-2.4/HI-2: share the breaker across replicas when REDIS_URL is set — otherwise each replica
+    # independently burns _BREAK_AFTER failures against a down upstream before tripping (N× hammering).
+    from app import redisstate
+    r = redisstate.client()
+    if r is not None:
+        try:
+            return bool(await r.exists(f"breaker:{provider}:open"))
+        except Exception:  # noqa: BLE001 — redis down → per-replica in-process breaker
+            pass
     st = _breaker.get(provider)
     if not st or st[0] < _BREAK_AFTER:
         return False
@@ -65,7 +74,21 @@ def _breaker_open(provider: str) -> bool:
     return True
 
 
-def _breaker_note(provider: str, ok: bool) -> None:
+async def _breaker_note(provider: str, ok: bool) -> None:
+    from app import redisstate
+    r = redisstate.client()
+    if r is not None:
+        try:
+            if ok:
+                await r.delete(f"breaker:{provider}:open", f"breaker:{provider}:fails")
+            else:
+                fails = await r.incr(f"breaker:{provider}:fails")
+                await r.expire(f"breaker:{provider}:fails", int(_BREAK_SECONDS))  # stale failures decay
+                if int(fails) >= _BREAK_AFTER:
+                    await r.set(f"breaker:{provider}:open", "1", ex=int(_BREAK_SECONDS))
+            return
+        except Exception:  # noqa: BLE001 — redis down → in-process
+            pass
     if ok:
         _breaker.pop(provider, None)
         return
@@ -77,7 +100,7 @@ def _breaker_note(provider: str, ok: bool) -> None:
 
 async def _get_with_retry(provider: str, url: str, *, params: dict | None, headers: dict | None):
     """GET with bounded backoff on transient statuses + the provider circuit breaker."""
-    if _breaker_open(provider):
+    if await _breaker_open(provider):
         raise upstream_error(provider, f"upstream cooling down after repeated errors (≤{int(_BREAK_SECONDS)}s) for {url}")
     limiter = _limiters.get(provider)   # CR-9/ME-11: per-provider client-side rate cap
     if limiter is not None:
@@ -88,10 +111,10 @@ async def _get_with_retry(provider: str, url: str, *, params: dict | None, heade
             await asyncio.sleep(delay)
         resp = await get_client().get(url, params=params, headers=headers)
         if resp.status_code not in _RETRY_STATUSES:
-            _breaker_note(provider, ok=resp.is_success)
+            await _breaker_note(provider, ok=resp.is_success)
             return resp
         last = resp
-    _breaker_note(provider, ok=False)
+    await _breaker_note(provider, ok=False)
     return last
 
 _client: httpx.AsyncClient | None = None
