@@ -392,7 +392,9 @@ services:
       ADMINUI_IP_ALLOWLIST: "${ADMINUI_IP_ALLOWLIST:-}"
     ports:
       # SC-0.2/CR-10: bind to loopback by default — this console has CRUD over every service DB, so it
-      # must not sit on 0.0.0.0. Set ADMIN_BIND=0.0.0.0 (or a host IP) only behind a trusted network.
+      # must not sit on 0.0.0.0. To expose it, set ADMIN_BIND in the ROOT .env (or shell) — NOT
+      # env/*.env (compose reads ${...} interpolation only from root .env/shell) — then recreate:
+      # `docker compose up -d admin`. Prefer restricting source IPs at your cloud firewall.
       - "${ADMIN_BIND:-127.0.0.1}:8005:8005"
     depends_on:
       control-plane:
