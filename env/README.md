@@ -24,11 +24,26 @@ bash scripts/split_env.sh          # reads .env → writes env/*.env by topic
 
 The real `env/*.env` files are gitignored (only the `*.example` templates are committed).
 
-## Back-compat
+## Migrating from a root `.env`
 
-A single root `.env` **still works** — compose reads it too (all files are `required: false`).
-So an existing deployment keeps running unchanged; migrate to `env/` whenever you like. If both
-a value in `.env` and in an `env/*.env` file exist, the `env/*.env` value wins.
+The root `.env` is **no longer read** by docker compose (2026-07-14) — the `- path: .env` entries
+were removed from every service, so all config must live in these `env/*.env` files. If you still
+have a monolithic `.env`, split it in one shot:
 
-The full annotated reference of every variable lives in the `*.example` files here (and the old
-monolithic list is preserved in the repo-root `.env.example`, which now just points here).
+```bash
+bash scripts/split_env.sh          # reads .env → writes env/*.env by topic
+```
+
+## env_file vs. `${...}` interpolation (important)
+
+These files are `env_file:` entries — they're injected **into the containers**. They are **invisible**
+to docker compose's `${VAR}` **interpolation** in the compose file itself (ports, etc.), which compose
+reads **only from the shell/CLI**. There is exactly one such var: the admin console's host port bind,
+`${ADMIN_BIND}` (defaults to loopback `127.0.0.1`, SC-0.2). To expose the admin console you pass it on
+the command line — it cannot come from an `env/*.env` file:
+
+```bash
+ADMIN_BIND=0.0.0.0 docker compose up -d admin
+```
+
+The full annotated reference of every variable lives in the `*.example` files here.

@@ -18,10 +18,9 @@ services:
     build: ./datasets
     image: valuegraph-datasets:latest
     env_file:
-      # split config (env/README.md); a single root .env still works too — all optional,
-      # later files override earlier. Missing files are skipped (required: false).
-      - path: .env
-        required: false
+      # split config by topic (env/README.md) — all optional, later files override earlier, missing
+      # ones skipped. These are env_file (injected INTO the container); compose ${...} interpolation
+      # (e.g. the admin host port) does NOT read them — that's shell/CLI only.
       - path: env/app.env
         required: false
       - path: env/gemini.env
@@ -60,10 +59,9 @@ services:
     build: ./datasets
     image: valuegraph-datasets:latest
     env_file:
-      # split config (env/README.md); a single root .env still works too — all optional,
-      # later files override earlier. Missing files are skipped (required: false).
-      - path: .env
-        required: false
+      # split config by topic (env/README.md) — all optional, later files override earlier, missing
+      # ones skipped. These are env_file (injected INTO the container); compose ${...} interpolation
+      # (e.g. the admin host port) does NOT read them — that's shell/CLI only.
       - path: env/app.env
         required: false
       - path: env/gemini.env
@@ -100,10 +98,9 @@ services:
     build: ./control-plane
     image: valuegraph-control-plane:latest
     env_file:
-      # split config (env/README.md); a single root .env still works too — all optional,
-      # later files override earlier. Missing files are skipped (required: false).
-      - path: .env
-        required: false
+      # split config by topic (env/README.md) — all optional, later files override earlier, missing
+      # ones skipped. These are env_file (injected INTO the container); compose ${...} interpolation
+      # (e.g. the admin host port) does NOT read them — that's shell/CLI only.
       - path: env/app.env
         required: false
       - path: env/gemini.env
@@ -145,10 +142,9 @@ services:
     image: valuegraph-mcp:latest
     profiles: ["tools"]
     env_file:
-      # split config (env/README.md); a single root .env still works too — all optional,
-      # later files override earlier. Missing files are skipped (required: false).
-      - path: .env
-        required: false
+      # split config by topic (env/README.md) — all optional, later files override earlier, missing
+      # ones skipped. These are env_file (injected INTO the container); compose ${...} interpolation
+      # (e.g. the admin host port) does NOT read them — that's shell/CLI only.
       - path: env/app.env
         required: false
       - path: env/gemini.env
@@ -214,10 +210,9 @@ services:
     build: ./rag
     image: valuegraph-rag:latest
     env_file:
-      # split config (env/README.md); a single root .env still works too — all optional,
-      # later files override earlier. Missing files are skipped (required: false).
-      - path: .env
-        required: false
+      # split config by topic (env/README.md) — all optional, later files override earlier, missing
+      # ones skipped. These are env_file (injected INTO the container); compose ${...} interpolation
+      # (e.g. the admin host port) does NOT read them — that's shell/CLI only.
       - path: env/app.env
         required: false
       - path: env/gemini.env
@@ -255,10 +250,9 @@ services:
     build: ./agent-engine
     image: valuegraph-agent-engine:latest
     env_file:
-      # split config (env/README.md); a single root .env still works too — all optional,
-      # later files override earlier. Missing files are skipped (required: false).
-      - path: .env
-        required: false
+      # split config by topic (env/README.md) — all optional, later files override earlier, missing
+      # ones skipped. These are env_file (injected INTO the container); compose ${...} interpolation
+      # (e.g. the admin host port) does NOT read them — that's shell/CLI only.
       - path: env/app.env
         required: false
       - path: env/gemini.env
@@ -270,14 +264,11 @@ services:
       - path: env/secrets.env
         required: false
     environment:
-      AGENT_GATEWAY_URL: "http://control-plane:8001"
-      # Planner backend + model + key — overridable from the shell (falls back to
-      # .env, then to the stub planner). Lets `scripts/e2e_live.sh` flip to Gemini.
-      AGENT_LLM_BACKEND: "${AGENT_LLM_BACKEND:-stub}"
-      AGENT_MODEL: "${AGENT_MODEL:-gemini-flash-latest}"
-      # the genai SDK accepts either GOOGLE_API_KEY or GEMINI_API_KEY
-      GOOGLE_API_KEY: "${GOOGLE_API_KEY:-}"
-      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      AGENT_GATEWAY_URL: "http://control-plane:8001"   # compose-internal service URL (literal)
+      # AGENT_LLM_BACKEND · AGENT_MODEL come from env/app.env; GOOGLE_API_KEY from env/gemini.env —
+      # all via env_file now (no ${...} interpolation, so nothing depends on a root .env / shell).
+      # (These were previously interpolated with :- defaults, which SILENTLY OVERRODE the env_file
+      # value to "" when unset in the shell — a latent key-blanking bug, now removed.)
     ports:
       - "8003:8003"
     depends_on:
@@ -296,10 +287,9 @@ services:
     build: ./studio-api
     image: valuegraph-studio-api:latest
     env_file:
-      # split config (env/README.md); a single root .env still works too — all optional,
-      # later files override earlier. Missing files are skipped (required: false).
-      - path: .env
-        required: false
+      # split config by topic (env/README.md) — all optional, later files override earlier, missing
+      # ones skipped. These are env_file (injected INTO the container); compose ${...} interpolation
+      # (e.g. the admin host port) does NOT read them — that's shell/CLI only.
       - path: env/app.env
         required: false
       - path: env/gemini.env
@@ -338,10 +328,9 @@ services:
     build: ./web
     image: valuegraph-web:latest
     env_file:
-      # split config (env/README.md); a single root .env still works too — all optional,
-      # later files override earlier. Missing files are skipped (required: false).
-      - path: .env
-        required: false
+      # split config by topic (env/README.md) — all optional, later files override earlier, missing
+      # ones skipped. These are env_file (injected INTO the container); compose ${...} interpolation
+      # (e.g. the admin host port) does NOT read them — that's shell/CLI only.
       - path: env/app.env
         required: false
       - path: env/gemini.env
@@ -368,10 +357,9 @@ services:
     build: ./admin
     image: valuegraph-admin:latest
     env_file:
-      # split config (env/README.md); a single root .env still works too — all optional,
-      # later files override earlier. Missing files are skipped (required: false).
-      - path: .env
-        required: false
+      # split config by topic (env/README.md) — all optional, later files override earlier, missing
+      # ones skipped. These are env_file (injected INTO the container); compose ${...} interpolation
+      # (e.g. the admin host port) does NOT read them — that's shell/CLI only.
       - path: env/app.env
         required: false
       - path: env/gemini.env
@@ -383,18 +371,19 @@ services:
       - path: env/secrets.env
         required: false
     environment:
-      ADMINUI_USERNAME: "${ADMINUI_USERNAME:-admin}"
-      ADMINUI_PASSWORD: "${ADMINUI_PASSWORD:-admin}"
+      # ADMINUI_USERNAME · ADMINUI_PASSWORD · ADMINUI_IP_ALLOWLIST come from env/secrets.env
+      # (env_file) now — not ${...} interpolation, so no root .env dependency.
       # browse the service DBs over Postgres (no more mounted SQLite files)
       CONTROLPLANE_DB: "postgresql+psycopg://rag:rag@postgres:5432/controlplane"
       STUDIO_DB: "postgresql+psycopg://rag:rag@postgres:5432/studio"
       DATASETS_DB: "postgresql+psycopg://rag:rag@postgres:5432/datasets"
-      ADMINUI_IP_ALLOWLIST: "${ADMINUI_IP_ALLOWLIST:-}"
     ports:
-      # SC-0.2/CR-10: bind to loopback by default — this console has CRUD over every service DB, so it
-      # must not sit on 0.0.0.0. To expose it, set ADMIN_BIND in the ROOT .env (or shell) — NOT
-      # env/*.env (compose reads ${...} interpolation only from root .env/shell) — then recreate:
-      # `docker compose up -d admin`. Prefer restricting source IPs at your cloud firewall.
+      # SC-0.2/CR-10: loopback by default — this console has CRUD over every service DB, so it must
+      # not sit on 0.0.0.0. This host port publish is the ONE thing docker can't take from env_file
+      # (it's compose-level, not a container var). To expose it, pass ADMIN_BIND on the command line:
+      #     ADMIN_BIND=0.0.0.0 docker compose up -d admin
+      # then gate it at your cloud firewall + ADMINUI_IP_ALLOWLIST + a strong ADMINUI_PASSWORD.
+      # (Want it always-on for your deployment? change the default here to  ${ADMIN_BIND:-0.0.0.0} .)
       - "${ADMIN_BIND:-127.0.0.1}:8005:8005"
     depends_on:
       control-plane:
