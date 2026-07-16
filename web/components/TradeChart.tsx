@@ -27,6 +27,10 @@ const MARKER_SHAPE: Record<string, "circle" | "arrowUp" | "arrowDown" | "square"
 
 const LINE_COLORS = ["#4f8cff", "#9aa7bd", "#1FA463", "#D9A300"];
 const RANGES: [string, number][] = [["1M", 30], ["3M", 90], ["6M", 180], ["1Y", 365], ["5Y", 1825], ["MAX", 0]];
+// The default "auto" window: fit the agent's own narrow candles (the exact as-of window the evidence
+// is about). Not one of RANGES, so no range button is highlighted and clicking MAX stays a real
+// "zoom to full history" action.
+const AUTO = "auto";
 
 // Normalize a period label to a 'YYYY-MM-DD' the chart accepts; null = unplottable.
 function toTime(x: string): string | null {
@@ -67,8 +71,9 @@ export function TradeChart(
   const isCandle = candleData.length > 0;
   const lineCount = lineData.length;
   const overlays = a.overlays ?? [];
-  const [range, setRange] = useState("MAX");  // default to all available data (fitContent) — a short
-  //                                              window looks empty/ugly when the series is sparse
+  // default to the AUTO point-in-time window (fit the agent's own candles); no range button is
+  // highlighted until the user picks one, and MAX stays a real "zoom to full history" action.
+  const [range, setRange] = useState(AUTO);
   const [logScale, setLogScale] = useState(false);
   const [underwater, setUnderwater] = useState(false);   // HL-8(a): drawdown % sub-pane toggle
   const [rebase, setRebase] = useState(false);   // line mode only: index each series to 100
@@ -389,13 +394,28 @@ export function TradeChart(
       }
     }
 
-    // apply the selected range (MAX → fit all)
+    // Apply the visible window. Deterministic — no view state to lose when the effect re-runs after
+    // the async `bars` history lands (that data-only rebuild was the "resets to MAX a few seconds
+    // later" bug: with range="MAX"→fitContent, the chart re-fit to the full ~8y history the moment
+    // `bars` replaced the agent's narrow candles).
     const days = RANGES.find(([k]) => k === range)?.[1] ?? 0;
+    // AUTO (default): the point-in-time window = the agent's OWN candle span (a.candles, NOT the
+    // generous fetched `bars`), so it's stable across the bars-load rebuild. The right edge extends
+    // to the latest loaded bar so freshly-fetched newer bars aren't scrolled off-screen on a
+    // reopened/pinned card. Only for candlestick charts; financials/overlay charts (no a.candles)
+    // fall through to fitContent so a wider fetched series (finSeries) still shows its full range.
+    const anchorFrom = range === AUTO && (a.candles?.length ?? 0) > 0 ? toTime(a.candles![0].time) : null;
     if (days && lastTime) {
+      // a fixed lookback preset (1M/3M/6M/1Y/5Y) ending at the latest bar
       try {
         chart.timeScale().setVisibleRange({ from: daysBefore(lastTime, days) as Time, to: lastTime as Time });
       } catch { chart.timeScale().fitContent(); }
+    } else if (anchorFrom && lastTime) {
+      try {
+        chart.timeScale().setVisibleRange({ from: anchorFrom as Time, to: lastTime as Time });
+      } catch { chart.timeScale().fitContent(); }
     } else {
+      // MAX (explicit), or AUTO with no candle span → fit everything available
       chart.timeScale().fitContent();
     }
 
