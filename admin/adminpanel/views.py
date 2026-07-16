@@ -22,21 +22,24 @@ def _load(name: str) -> str:
 STYLE = _load("style")        # <style>…</style>
 _LOGIN = _load("login")       # standalone login page (its own minimal style)
 
-# left-nav information architecture (operator job-to-be-done order)
-NAV = [
-    ("/", "Overview", "▦"),
-    ("/catalog", "Catalog", "◈"),
-    ("/pipelines", "Pipelines", "⏣"),
-    ("/runs", "Runs", "🗂"),
-    ("/queue", "Queue", "⚙"),
-    ("/upstream", "Upstream", "📡"),
-    ("/costs", "Costs", "💸"),
-    ("/billing", "Billing", "💳"),
-    ("/shares", "Shares", "🔗"),
-    ("/data", "Data", "▤"),
-    ("/users", "Users", "⚇"),
-    ("/db", "DB browser", "🗄"),
+# left-nav information architecture: 5 sections with depth (was 12 flat tabs). Each route handler
+# still calls page('/its-route', ...); page() derives the active child AND its parent section from
+# that one string, so sub-routes (/runs/{id}, /queue/job/{id}, /db/{table}) light the right section.
+NAV_GROUPS: list[tuple[str, list[tuple[str, str, str]]]] = [
+    ("", [("/", "Overview", "▦")]),
+    ("OPERATIONS", [("/pipelines", "Pipelines", "⏣"), ("/runs", "Runs", "🗂"), ("/queue", "Queue", "⚙")]),
+    ("DATA", [("/catalog", "Catalog", "◈"), ("/data", "Store", "▤"),
+              ("/upstream", "Upstream", "📡"), ("/db", "DB browser", "🗄")]),
+    ("MONEY", [("/costs", "Costs", "💸"), ("/billing", "Billing", "💳")]),
+    ("ACCOUNTS", [("/users", "Users", "⚇"), ("/shares", "Shares", "🔗")]),
 ]
+
+
+def _nav_active(href: str, active: str) -> bool:
+    """True if `active` (the current page's route) is this nav item or one of its sub-routes."""
+    if href == "/":
+        return active == "/"
+    return active == href or active.startswith(href + "/")
 
 
 def _esc(v) -> str:
@@ -90,11 +93,15 @@ def login_page(err: str = "") -> str:
 
 def page(active: str, title: str, body: str, refresh: bool = False) -> str:
     """Wrap a page body in the console chrome (sidebar nav + topbar)."""
-    nav = "".join(
-        f"<a class='nav {'on' if href == active else ''}' href='{href}'>"
-        f"<span class=i>{ic}</span>{_esc(label)}</a>"
-        for href, label, ic in NAV
-    )
+    nav_parts: list[str] = []
+    for sec_label, items in NAV_GROUPS:
+        if sec_label:
+            nav_parts.append(f"<div class=navsec>{_esc(sec_label)}</div>")
+        for href, label, ic in items:
+            on = " on" if _nav_active(href, active) else ""
+            nav_parts.append(
+                f"<a class='nav{on}' href='{href}'><span class=i>{ic}</span>{_esc(label)}</a>")
+    nav = "".join(nav_parts)
     # Refresh control (replaces the old forced <meta refresh>): a manual ↻ button + an auto
     # interval the operator chooses (Off/5s/10s/1m), persisted in the ?auto= query param so it
     # survives reloads. `refresh` (a page hint that work is live) only sets the DEFAULT interval
