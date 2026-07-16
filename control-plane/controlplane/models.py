@@ -97,6 +97,12 @@ class LlmUsage(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     calls: Mapped[int] = mapped_column(Integer, default=1)
     estimated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # COST-2: usage_metadata breakdowns (subsets of input_tokens/output_tokens, for the dashboard —
+    # NOT re-added to the totals). cached_input = context-cache hits (priced at the cache discount);
+    # tool_input = function-calling prompt tokens; thinking = thoughts (already inside output_tokens).
+    cached_input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    tool_input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    thinking_tokens: Mapped[int] = mapped_column(Integer, default=0)
     # METER-1: which tenant project this call served — per-user cost attribution (unit economics).
     # NULL = shared/background work (feeds, ops) or a pre-attribution row.
     project_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)

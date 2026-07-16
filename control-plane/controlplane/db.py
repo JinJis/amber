@@ -83,6 +83,10 @@ def _add_missing_columns() -> None:
 
     add_cols("projects", {"plan": "VARCHAR(24)"})            # PLAN-2: per-plan gateway rate tier
     add_cols("llm_usage", {"project_id": "VARCHAR(40)"})     # METER-1: per-user cost attribution
+    add_cols("llm_usage", {                                  # COST-2: usage_metadata breakdowns
+        "cached_input_tokens": "INTEGER DEFAULT 0",
+        "tool_input_tokens": "INTEGER DEFAULT 0",
+        "thinking_tokens": "INTEGER DEFAULT 0"})
 
 
 from contextlib import contextmanager

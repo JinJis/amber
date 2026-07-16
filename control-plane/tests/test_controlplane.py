@@ -324,3 +324,29 @@ def test_llm_usage_project_attribution():
     with SessionLocal() as db:
         row = db.execute(select(LlmUsage).where(LlmUsage.project_id == "prj_meter1")).scalars().first()
     assert row is not None and row.input_tokens == 100
+
+
+def test_llm_usage_breakdown_columns():
+    """COST-2: usage_metadata 분해(cached/tool/thinking)가 저장되고, 옛 페이로드(필드 없음)도 0 기본값으로 호환."""
+    from sqlalchemy import select
+
+    from controlplane.db import SessionLocal
+    from controlplane.models import LlmUsage
+    r = client.post("/admin/llm-usage", headers=ADMIN, json={
+        "service": "agent-engine", "kind": "plan", "model": "gemini-2.5-flash",
+        "input_tokens": 800, "output_tokens": 120,
+        "cached_input_tokens": 200, "tool_input_tokens": 10, "thinking_tokens": 20,
+        "project_id": "prj_cost2"})
+    assert r.status_code == 200
+    with SessionLocal() as db:
+        row = db.execute(select(LlmUsage).where(LlmUsage.project_id == "prj_cost2")).scalars().first()
+    assert row is not None
+    assert row.cached_input_tokens == 200 and row.tool_input_tokens == 10 and row.thinking_tokens == 20
+    # old emitter (no new fields) → columns default to 0, not an error
+    r2 = client.post("/admin/llm-usage", headers=ADMIN, json={
+        "service": "rag", "kind": "embed_docs", "model": "gemini-embedding-2",
+        "input_tokens": 5, "project_id": "prj_cost2_old"})
+    assert r2.status_code == 200
+    with SessionLocal() as db:
+        row2 = db.execute(select(LlmUsage).where(LlmUsage.project_id == "prj_cost2_old")).scalars().first()
+    assert row2.cached_input_tokens == 0 and row2.tool_input_tokens == 0 and row2.thinking_tokens == 0

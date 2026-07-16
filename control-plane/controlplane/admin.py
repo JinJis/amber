@@ -129,6 +129,10 @@ class LlmUsageIn(BaseModel):
     calls: int = 1
     estimated: bool = False
     project_id: str | None = None   # METER-1: per-user cost attribution (None = shared/background)
+    # COST-2: usage_metadata breakdowns (optional; old emitters omit them → 0). Subsets of the totals.
+    cached_input_tokens: int = 0
+    tool_input_tokens: int = 0
+    thinking_tokens: int = 0
 
 
 @router.post("/llm-usage", summary="COST-1: record one LLM/embedding call's token usage")
@@ -137,7 +141,10 @@ async def llm_usage_ingest(body: LlmUsageIn) -> dict:
         db.add(LlmUsage(service=body.service[:24], kind=body.kind[:32], model=body.model[:64],
                         input_tokens=max(0, body.input_tokens), output_tokens=max(0, body.output_tokens),
                         calls=max(1, body.calls), estimated=body.estimated,
-                        project_id=(body.project_id or None) and body.project_id[:40]))
+                        project_id=(body.project_id or None) and body.project_id[:40],
+                        cached_input_tokens=max(0, body.cached_input_tokens),
+                        tool_input_tokens=max(0, body.tool_input_tokens),
+                        thinking_tokens=max(0, body.thinking_tokens)))
         db.commit()
     return {"ok": True}
 

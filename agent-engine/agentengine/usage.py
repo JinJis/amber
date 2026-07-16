@@ -18,15 +18,29 @@ from agentengine.config import settings
 log = logging.getLogger(__name__)
 
 
-def _tokens(resp) -> tuple[int, int] | None:
+def _tokens(resp) -> dict | None:
+    """The billable totals (unchanged) + informational breakdowns from usage_metadata.
+
+    input/output stay authoritative: input = prompt_token_count (the full request input; cached and
+    tool-use prompt tokens are already inside it — we do NOT re-add them, to avoid double counting),
+    output = candidates + thoughts (thinking is billed at the output rate). The breakdowns are stored
+    separately so the dashboard can apply the cache discount and show thinking/tool overhead.
+    """
     um = getattr(resp, "usage_metadata", None)
     if um is None:
         return None
-    made_in = getattr(um, "prompt_token_count", None) or 0
-    made_out = (getattr(um, "candidates_token_count", None) or 0) + (getattr(um, "thoughts_token_count", None) or 0)
+    thoughts = int(getattr(um, "thoughts_token_count", None) or 0)
+    made_in = int(getattr(um, "prompt_token_count", None) or 0)
+    made_out = int(getattr(um, "candidates_token_count", None) or 0) + thoughts
     if not made_in and not made_out:
         return None
-    return int(made_in), int(made_out)
+    return {
+        "input_tokens": made_in,
+        "output_tokens": made_out,
+        "cached_input_tokens": int(getattr(um, "cached_content_token_count", None) or 0),
+        "tool_input_tokens": int(getattr(um, "tool_use_prompt_token_count", None) or 0),
+        "thinking_tokens": thoughts,
+    }
 
 
 async def _post(payload: dict) -> None:
@@ -45,8 +59,11 @@ def report(kind: str, model: str, resp) -> None:
     if not got:
         return
     from agentengine.usage_context import current_project
-    payload = {"service": "agent-engine", "kind": kind, "model": model or "unknown",
-               "input_tokens": got[0], "output_tokens": got[1],
+    # COST-2: prefer the RESOLVED model (what `gemini-flash-latest` actually served, e.g.
+    # gemini-2.5-flash) so the cost dashboard prices the real model, not the ambiguous alias.
+    resolved = getattr(resp, "model_version", None) or model or "unknown"
+    payload = {"service": "agent-engine", "kind": kind, "model": resolved,
+               **got,   # input/output + cached/tool/thinking breakdowns
                "project_id": current_project()}   # METER-1: 유저별 원가 귀속 (없으면 None=공용)
     try:
         asyncio.get_running_loop().create_task(_post(payload))
