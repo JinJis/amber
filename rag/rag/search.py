@@ -88,6 +88,7 @@ async def expand_queries(query: str) -> list[str]:
             contents=_MQ_PROMPT.format(q=q[:300]),
             config=types.GenerateContentConfig(temperature=0, max_output_tokens=120)),
             timeout=6.0)
+        _report_mq_usage(settings.multi_query_model, resp)   # COST: 그동안 유일하게 미계측이던 Gemini 콜
         lines = [ln.strip(" -•1234567890.)") for ln in (getattr(resp, "text", "") or "").splitlines()]
         out = [ln for ln in lines if 3 <= len(ln) <= 200 and ln.lower() != q.lower()][:2]
     except Exception as exc:  # noqa: BLE001 — 확장은 보너스, 검색을 절대 막지 않음
@@ -97,6 +98,26 @@ async def expand_queries(query: str) -> list[str]:
         _mq_cache.clear()
     _mq_cache[q] = out
     return out
+
+
+# --- COST: report the multi-query expansion's token usage. It was the ONE Gemini call in rag not
+# reported to the cost store. Real usage_metadata → not estimated. Best-effort; never affects search.
+def _report_mq_usage(model: str, resp) -> None:
+    try:
+        um = getattr(resp, "usage_metadata", None)
+        if um is None:
+            return
+        made_in = int(getattr(um, "prompt_token_count", None) or 0)
+        made_out = int((getattr(um, "candidates_token_count", None) or 0)
+                       + (getattr(um, "thoughts_token_count", None) or 0))
+        if not made_in and not made_out:
+            return
+        from rag.telemetry import report_usage   # HI-5: shared telemetry client
+        report_usage({"service": "rag", "kind": "multi_query", "model": model,
+                      "input_tokens": made_in, "output_tokens": made_out,
+                      "calls": 1, "estimated": False})
+    except Exception:  # noqa: BLE001 — telemetry never fails a search
+        pass
 
 
 def _rrf_fuse(*rankings: list[tuple[Chunk, float]]) -> list[tuple[Chunk, float]]:
