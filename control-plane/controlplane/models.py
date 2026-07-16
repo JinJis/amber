@@ -109,6 +109,18 @@ class LlmUsage(Base):
     ts: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 
+class ProviderUsage(Base):
+    """COST-3: background-sweep upstream call counts per provider (Yahoo/SEC/DART/news…). That sweep
+    layer bypasses the gateway, so these calls were invisible to the cost dashboard; datasets batches
+    per-provider counts and POSTs them here (opt-in). One row per flush; the dashboard sums them."""
+
+    __tablename__ = "provider_usage"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(String(48), index=True)
+    calls: Mapped[int] = mapped_column(Integer, default=0)
+    ts: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
     __table_args__ = (Index("ix_audit_log_ts", "ts"),)   # HI-13: retention drop scan

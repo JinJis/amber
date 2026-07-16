@@ -887,6 +887,20 @@ async def costs_view(request: Request, days: int = 30):
     except Exception as exc:  # noqa: BLE001 — first boot: table may not exist yet
         err = f"{type(exc).__name__}: {exc}"
 
+    # COST-3: background-sweep upstream calls — its own query/except so a not-yet-created table
+    # (control-plane not rebuilt) leaves the section empty instead of breaking the whole page.
+    sweep_rows: list = []
+    try:
+        eng2 = ENGINES.get("controlplane")
+        if eng2 is not None:
+            with eng2.connect() as conn:  # type: ignore[union-attr]
+                sweep_rows = conn.execute(sa_text(
+                    "SELECT provider, SUM(calls) c FROM provider_usage "
+                    "WHERE ts >= :since GROUP BY provider ORDER BY SUM(calls) DESC LIMIT 40"
+                ), {"since": since}).all()
+    except Exception:  # noqa: BLE001 — provider_usage not created yet → section stays empty
+        sweep_rows = []
+
     # --- price the LLM rows (cache-discounted; per-call products dollarize via calls) -----------
     total_usd, unknown_models = 0.0, set()
     by_service: dict[str, float] = {}
@@ -933,6 +947,13 @@ async def costs_view(request: Request, days: int = 30):
         f"<td class=mono style='text-align:right'>{int(cu or 0):,}</td></tr>" for cid, n, cu in conn_rows)
     conn_table = ("<table class=t><tr><th>커넥터</th><th>호출</th><th>내부 코스트 유닛</th></tr>" + conn_tr + "</table>"
                   ) if conn_tr else "<div class=empty>게이트웨이 사용 기록이 없어요.</div>"
+
+    sweep_tr = "".join(
+        f"<tr><td class=mono>{_esc(p)}</td><td class=mono style='text-align:right'>{int(sc or 0):,}</td></tr>"
+        for p, sc in sweep_rows)
+    sweep_table = ("<table class=t><tr><th>상류 제공자</th><th>호출</th></tr>" + sweep_tr + "</table>"
+                   ) if sweep_tr else ("<div class=empty>백그라운드 스윕 계측이 꺼져 있어요 — datasets에 "
+                                       "<code>PROVIDER_USAGE_TELEMETRY=true</code>로 켜면 여기 쌓여요.</div>")
 
     fixed = fixed_costs()
     fixed_total = sum(f["usd"] for f in fixed)
@@ -990,6 +1011,9 @@ async def costs_view(request: Request, days: int = 30):
         + "<h2>게이트웨이 데이터 호출</h2>"
           "<div class=sub>커넥터별 호출량 — 상류 데이터 API는 대부분 무료 티어라 달러 비용은 0, "
           "코스트 유닛은 내부 상대 가중치예요.</div>" + conn_table
+        + "<h2>백그라운드 스윕 상류 호출</h2>"
+          "<div class=sub>게이트웨이를 우회하는 워커 스윕·폴백의 제공자별 호출량 (COST-3, opt-in). "
+          "대부분 무료 API — 호출량 가시성용.</div>" + sweep_table
         + "<h2>고정 구독</h2>" + fixed_table
         + "<h2>요율표 (per 1M tokens · USD)</h2>"
           "<table class=t><tr><th>모델 매칭</th><th>입력</th><th>출력</th><th>캐시 입력</th><th>비고</th></tr>"

@@ -143,6 +143,11 @@ class Settings(BaseSettings):
     # plane rejects it, telemetry silently drops — best-effort, never fails ingest).
     control_plane_url: str = "http://control-plane:8001"
     admin_token: str = "dev-admin-token"
+    # COST-3 (opt-in): meter background-sweep upstream calls (Yahoo/SEC/DART/news…) that bypass the
+    # gateway. Off by default — instruments the hot fetch path; enable to see sweep call volume on
+    # the cost dashboard. Counts are batched in-process and flushed per N calls / seconds.
+    provider_usage_telemetry: bool = False   # PROVIDER_USAGE_TELEMETRY
+    provider_usage_flush_seconds: int = 300  # PROVIDER_USAGE_FLUSH_SECONDS
 
     # --- RAG news-ingestion pipeline (PH-2b) ------------------------------
     # The RAG service the news pipeline indexes into.

@@ -39,3 +39,22 @@ def report_usage(payload: dict) -> None:
         asyncio.get_running_loop().create_task(_post())
     except RuntimeError:  # no running loop (sync context) — skip rather than block
         pass
+
+
+def report_provider_usage(counts: dict) -> None:
+    """COST-3: batched background-sweep upstream call counts {provider: calls} → control-plane."""
+    if not counts:
+        return
+
+    async def _post() -> None:
+        try:
+            await _get_client().post(
+                f"{settings.control_plane_url}/admin/provider-usage",
+                json={"providers": counts}, headers={"X-Admin-Token": settings.admin_token})
+        except Exception:  # noqa: BLE001 — telemetry never fails a fetch
+            pass
+
+    try:
+        asyncio.get_running_loop().create_task(_post())
+    except RuntimeError:
+        pass

@@ -16,7 +16,8 @@ from sqlalchemy import func, select
 from controlplane.auth import generate_key
 from controlplane.config import settings
 from controlplane.db import SessionLocal
-from controlplane.models import Activation, ApiKey, AuditLog, LlmUsage, Project, Tenant, UsageEvent
+from controlplane.models import (
+    Activation, ApiKey, AuditLog, LlmUsage, Project, ProviderUsage, Tenant, UsageEvent)
 
 
 async def require_admin(x_admin_token: Annotated[str | None, Header(alias="X-Admin-Token")] = None) -> None:
@@ -145,6 +146,20 @@ async def llm_usage_ingest(body: LlmUsageIn) -> dict:
                         cached_input_tokens=max(0, body.cached_input_tokens),
                         tool_input_tokens=max(0, body.tool_input_tokens),
                         thinking_tokens=max(0, body.thinking_tokens)))
+        db.commit()
+    return {"ok": True}
+
+
+class ProviderUsageIn(BaseModel):
+    providers: dict[str, int] = {}   # COST-3: {provider: calls} accumulated by a sweep, batched
+
+
+@router.post("/provider-usage", summary="COST-3: record background-sweep upstream call counts")
+async def provider_usage_ingest(body: ProviderUsageIn) -> dict:
+    with SessionLocal() as db:
+        for prov, calls in (body.providers or {}).items():
+            if prov and int(calls) > 0:
+                db.add(ProviderUsage(provider=str(prov)[:48], calls=max(0, int(calls))))
         db.commit()
     return {"ok": True}
 

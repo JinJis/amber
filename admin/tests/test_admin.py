@@ -42,7 +42,12 @@ _make_db(_CP, "create table tenants(id text primary key, name text);"
               "create table usage_events(id integer primary key, connector_id text, cost_units int,"
               " project_id text, ts datetime default (datetime('now')));"
               "insert into usage_events(connector_id,cost_units,project_id,ts) values('prices',5,'prj_1',datetime('now'));"
-              "insert into usage_events(connector_id,cost_units,project_id,ts) values('rag',20,'prj_1',datetime('now'));")
+              "insert into usage_events(connector_id,cost_units,project_id,ts) values('rag',20,'prj_1',datetime('now'));"
+              # COST-3: background-sweep provider call counts
+              "create table provider_usage(id integer primary key, provider text, calls int,"
+              " ts datetime default (datetime('now')));"
+              "insert into provider_usage(provider,calls,ts) values('yahoo',120,datetime('now'));"
+              "insert into provider_usage(provider,calls,ts) values('sec_edgar',40,datetime('now'));")
 _make_db(_ST, "create table users(email text primary key, tenant_id text, api_key text);"
               "insert into users values('a@b.com','ten_1','vgk_x');"
               "create table agents(id text primary key, user_email text, name text);")
@@ -613,6 +618,8 @@ def test_costs_page_prices_usage_with_cache_discount():
     assert "커넥터 호출" in t                    # 유저별 롤업의 커넥터 열
     # 새 컬럼 헤더(캐시·생각) + 추정 배지
     assert "캐시" in t and "생각" in t and "추정" in t
+    # COST-3: 백그라운드 스윕 상류 호출 섹션
+    assert "백그라운드 스윕 상류 호출" in t and "yahoo" in t and "sec_edgar" in t
 
 
 def test_costs_range_selector():

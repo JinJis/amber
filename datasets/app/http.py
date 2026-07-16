@@ -98,10 +98,39 @@ async def _breaker_note(provider: str, ok: bool) -> None:
         st[1] = time.monotonic()
 
 
+# COST-3: per-provider background-sweep call counter (opt-in). The sweep layer bypasses the gateway,
+# so these upstream calls are otherwise invisible to the cost dashboard. Counts accumulate in-process
+# and flush (batched, fire-and-forget) to control-plane every N calls / seconds. Off → zero overhead.
+_provider_calls: dict[str, int] = {}
+_pu_last_flush = 0.0
+_PU_FLUSH_CALLS = 200
+
+
+def _note_provider_call(provider: str) -> None:
+    if not settings.provider_usage_telemetry:
+        return
+    global _pu_last_flush
+    now = time.monotonic()
+    if _pu_last_flush == 0.0:
+        _pu_last_flush = now
+    _provider_calls[provider] = _provider_calls.get(provider, 0) + 1
+    if (sum(_provider_calls.values()) >= _PU_FLUSH_CALLS
+            or (now - _pu_last_flush) >= settings.provider_usage_flush_seconds):
+        _pu_last_flush = now
+        snap = dict(_provider_calls)
+        _provider_calls.clear()
+        try:
+            from app.telemetry import report_provider_usage
+            report_provider_usage(snap)   # detached; never blocks the fetch
+        except Exception:  # noqa: BLE001 — telemetry never fails a fetch
+            pass
+
+
 async def _get_with_retry(provider: str, url: str, *, params: dict | None, headers: dict | None):
     """GET with bounded backoff on transient statuses + the provider circuit breaker."""
     if await _breaker_open(provider):
         raise upstream_error(provider, f"upstream cooling down after repeated errors (≤{int(_BREAK_SECONDS)}s) for {url}")
+    _note_provider_call(provider)   # COST-3: count one logical upstream fetch (not per-retry)
     limiter = _limiters.get(provider)   # CR-9/ME-11: per-provider client-side rate cap
     if limiter is not None:
         await limiter.acquire()

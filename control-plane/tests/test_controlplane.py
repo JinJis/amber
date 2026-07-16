@@ -350,3 +350,19 @@ def test_llm_usage_breakdown_columns():
     with SessionLocal() as db:
         row2 = db.execute(select(LlmUsage).where(LlmUsage.project_id == "prj_cost2_old")).scalars().first()
     assert row2.cached_input_tokens == 0 and row2.tool_input_tokens == 0 and row2.thinking_tokens == 0
+
+
+def test_provider_usage_ingest():
+    """COST-3: 게이트웨이를 우회하는 백그라운드 스윕의 제공자별 호출 수를 저장한다 (빈 이름·0은 무시)."""
+    from sqlalchemy import select
+
+    from controlplane.db import SessionLocal
+    from controlplane.models import ProviderUsage
+    r = client.post("/admin/provider-usage", headers=ADMIN,
+                    json={"providers": {"yahoo": 120, "sec_edgar": 40, "": 5, "zero": 0}})
+    assert r.status_code == 200
+    with SessionLocal() as db:
+        got = dict(db.execute(select(ProviderUsage.provider, ProviderUsage.calls)).all())
+    assert got.get("yahoo") == 120 and got.get("sec_edgar") == 40
+    assert "" not in got and "zero" not in got            # 빈 제공자·0 호출은 저장 안 함
+    assert client.post("/admin/provider-usage", json={"providers": {"x": 1}}).status_code == 401  # 토큰 필수
