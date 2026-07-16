@@ -27,7 +27,7 @@ unit() {
 }
 
 step "Unit tests (in docker — uv image, no host uv)"
-for d in datasets control-plane mcp agent-engine studio-api; do
+for d in datasets control-plane mcp agent-engine studio-api admin; do
   echo "-- $d"; unit "$d" "" || FAIL=1
 done
 echo "-- rag (pipeline on a fake embedder; live semantic skips without GOOGLE_API_KEY)"; unit rag "" || FAIL=1

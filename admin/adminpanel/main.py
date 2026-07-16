@@ -861,7 +861,7 @@ async def costs_view(request: Request):
     total_usd, unknown_models = 0.0, set()
     llm_tr = []
     for s, m, k, i, o, c, e in rows:
-        usd = cost_usd(m, int(i or 0), int(o or 0))
+        usd = cost_usd(m, int(i or 0), int(o or 0), calls=int(c or 0))
         if usd is None:
             unknown_models.add(m)
         else:
@@ -897,11 +897,24 @@ async def costs_view(request: Request):
     fixed_table = ("<table class=t><tr><th>구독</th><th>월 요금</th><th>메모</th></tr>" + fixed_tr + "</table>"
                    ) if fixed_tr else "<div class=empty>고정 구독이 등록되지 않았어요 — .env FIXED_COSTS_JSON에 선언하면 여기 합산돼요.</div>"
 
-    rules_tr = "".join(
-        f"<tr><td class=mono>*{_esc(r.get('match'))}*</td>"
-        f"<td class=mono style='text-align:right'>${float(r.get('in', 0)):,.2f}</td>"
-        f"<td class=mono style='text-align:right'>${float(r.get('out', 0)):,.2f}</td></tr>"
-        for r in reg.get("rules", []))
+    def _rate_row(r: dict) -> str:
+        # request-priced (Vertex Ranking): no per-token cols — show the per-call rate so a $0 in the
+        # usage table reads as "priced differently," not "free."
+        if r.get("per_call") is not None:
+            pc = float(r["per_call"])
+            return (f"<tr><td class=mono>*{_esc(r.get('match'))}*</td>"
+                    "<td class=mono style='text-align:right'>—</td>"
+                    "<td class=mono style='text-align:right'>—</td>"
+                    "<td class=mono style='text-align:right'>—</td>"
+                    f"<td class=sub>콜당 ${pc:,.4f} (≈${pc * 1000:,.2f}/1k 호출)</td></tr>")
+        cin = r.get("cached_in")
+        note = ">200k 프리미엄 요율 있음" if r.get("premium_over_200k") else ""
+        return (f"<tr><td class=mono>*{_esc(r.get('match'))}*</td>"
+                f"<td class=mono style='text-align:right'>${float(r.get('in', 0)):,.2f}</td>"
+                f"<td class=mono style='text-align:right'>${float(r.get('out', 0)):,.2f}</td>"
+                f"<td class=mono style='text-align:right'>{'—' if cin is None else f'${float(cin):,.3f}'}</td>"
+                f"<td class=sub>{note}</td></tr>")
+    rules_tr = "".join(_rate_row(r) for r in reg.get("rules", []))
     unknown_note = (f"<div class=sub>⚠ 요율 미설정 모델: {', '.join(sorted(_esc(u) for u in unknown_models))} — "
                     "PRICING_JSON에 규칙을 추가하세요 (달러 표시는 절대 지어내지 않아요).</div>") if unknown_models else ""
 
@@ -924,7 +937,8 @@ async def costs_view(request: Request):
           "코스트 유닛은 내부 상대 가중치예요.</div>" + conn_table
         + "<h2>고정 구독</h2>" + fixed_table
         + "<h2>요율표 (per 1M tokens · USD)</h2>"
-          "<table class=t><tr><th>모델 매칭</th><th>입력</th><th>출력</th></tr>" + rules_tr + "</table>"
+          "<table class=t><tr><th>모델 매칭</th><th>입력</th><th>출력</th><th>캐시 입력</th><th>비고</th></tr>"
+          + rules_tr + "</table>"
         + _per_project_costs_section(cost_usd)
     )
     return HTMLResponse(page("/costs", "Costs", body, refresh=True))
@@ -954,7 +968,7 @@ def _per_project_costs_section(cost_usd) -> str:
     for pid, tenant, model, i, o, c in rows:
         key = tenant or ("공용/백그라운드" if pid is None else pid)
         agg = per_user.setdefault(key, {"usd": 0.0, "in": 0, "out": 0, "calls": 0, "unknown": False})
-        usd = cost_usd(model, int(i or 0), int(o or 0))
+        usd = cost_usd(model, int(i or 0), int(o or 0), calls=int(c or 0))
         if usd is None:
             agg["unknown"] = True
         else:
