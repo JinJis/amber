@@ -827,12 +827,16 @@ def test_datasets_citation_typed_metric_vs_data():
 
 def test_news_citation_uses_publisher_headline_date():
     # /news must cite each article's publisher + headline + date, not "Google News"
+    # Dates are RELATIVE to today (not hardcoded) so freshness stays "fresh" (<30d) and the test
+    # never rots — a fixed date silently ages into "aging" once >30 days pass.
+    from datetime import date, timedelta
+    d0, d1 = (date.today() - timedelta(days=1)).isoformat(), (date.today() - timedelta(days=2)).isoformat()
     tool = {"name": "google_news__news", "connector": "google_news", "source": "Google News"}
     result = {"status": 200, "data": {"news": [
         {"ticker": "NVDA", "title": "Nvidia chips surge in overnight trading", "source": "Yahoo Finance",
-         "date": "2026-06-15", "url": "https://news.google.com/x"},
+         "date": d0, "url": "https://news.google.com/x"},
         {"ticker": "NVDA", "title": "SpaceX growth lifts Nvidia", "source": "Barron's",
-         "date": "2026-06-14", "url": "https://news.google.com/y"},
+         "date": d1, "url": "https://news.google.com/y"},
     ]}}
     cites = A._citations(tool, result)
     assert {c.source for c in cites} == {"Yahoo Finance", "Barron's"}  # publisher, not "Google News"
