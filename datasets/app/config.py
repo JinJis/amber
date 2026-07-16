@@ -137,6 +137,13 @@ class Settings(BaseSettings):
     # (a ticker with genuinely no matching filings — e.g. an ETF — otherwise re-ingests every search).
     filing_neg_cache_ttl_seconds: int = 900  # FILING_NEG_CACHE_TTL_SECONDS
 
+    # --- COST-2: cost-usage telemetry → control-plane admin API (best-effort) ---
+    # Paid managed calls in the data plane (GCP Document AI, per page) report here so they show up
+    # on the admin cost dashboard. Env: CONTROL_PLANE_URL / ADMIN_TOKEN (dev token → prod control
+    # plane rejects it, telemetry silently drops — best-effort, never fails ingest).
+    control_plane_url: str = "http://control-plane:8001"
+    admin_token: str = "dev-admin-token"
+
     # --- RAG news-ingestion pipeline (PH-2b) ------------------------------
     # The RAG service the news pipeline indexes into.
     rag_url: str = "http://rag:8002"

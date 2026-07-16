@@ -57,6 +57,7 @@ _DEFAULT = {
          "premium_over_200k": {"in": 2.50, "out": 15.00, "cached_in": 0.25}},
         # --- request-priced (per-call) products ---
         {"match": "semantic-ranker", "per_call": 0.001},   # Vertex Ranking ≈ $1 / 1k queries
+        {"match": "document-ai", "per_call": 0.01},        # Document AI Layout Parser $10 / 1k pages
     ],
 }
 

@@ -115,13 +115,40 @@ def _parse_sync(pdf: bytes) -> list[dict]:
     return out
 
 
+def _count_pages(pdf: bytes) -> int:
+    """Page count for cost metering — Document AI Layout Parser bills per page. 0 if pypdf absent."""
+    if pypdf is None:
+        return 0
+    try:
+        import io
+        return len(pypdf.PdfReader(io.BytesIO(pdf)).pages)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _report_docai_pages(pages: int) -> None:
+    """COST-2: report Document AI page usage to the cost dashboard (per-page billed, ~$0.01/page).
+    calls=pages so the per-page price rule dollarizes it. Best-effort; never fails ingest."""
+    if pages <= 0:
+        return
+    try:
+        from app.telemetry import report_usage
+        report_usage({"service": "datasets", "kind": "docai_pages", "model": "document-ai-layout",
+                      "input_tokens": 0, "output_tokens": 0, "calls": pages, "estimated": False})
+    except Exception:  # noqa: BLE001 — telemetry never fails an ingest
+        pass
+
+
 async def parse_pdf(pdf: bytes) -> list[dict] | None:
     """Faithful, layout-aware chunks ``[{text, page, bbox}]`` from a PDF deck — or None if Document
     AI isn't configured / the SDK is absent / the call failed (feature stays dark)."""
     if not configured() or not pdf:
         return None
     try:
-        return await asyncio.to_thread(_parse_sync, pdf)
+        chunks = await asyncio.to_thread(_parse_sync, pdf)
     except Exception as exc:  # noqa: BLE001
         log.warning("document_ai parse failed: %s", exc)
         return None
+    if chunks:   # only meter a call that actually processed the deck (the paid units)
+        _report_docai_pages(_count_pages(pdf))
+    return chunks

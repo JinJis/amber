@@ -143,6 +143,13 @@ def test_is_per_call_flag(pricing):
     assert pricing.is_per_call("unknown") is False
 
 
+def test_docai_per_page_price(pricing):
+    # Document AI Layout Parser: $10 / 1k pages = $0.01/page → 1500 pages = $15.
+    assert pricing.cost_usd("document-ai-layout", calls=1000) == pytest.approx(10.0)
+    assert pricing.cost_usd("document-ai-layout", calls=1500) == pytest.approx(15.0)
+    assert pricing.is_per_call("document-ai-layout") is True
+
+
 # --- registry / fixed_costs env overrides -------------------------------------------------------
 
 def test_pricing_json_overrides_defaults(pricing, monkeypatch):
