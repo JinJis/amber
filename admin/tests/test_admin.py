@@ -26,7 +26,23 @@ _DS = f"{_TMP}/datasets.db"
 _make_db(_CP, "create table tenants(id text primary key, name text);"
               "insert into tenants values('ten_1','Acme Capital');"
               "create table api_keys(id text primary key, project_id text, prefix text);"
-              "insert into api_keys values('k1','prj_1','vgk_aa');")
+              "insert into api_keys values('k1','prj_1','vgk_aa');"
+              "create table projects(id text primary key, tenant_id text, plan text);"
+              "insert into projects values('prj_1','ten_1','pro');"
+              # COST: llm_usage (with COST-2 breakdown cols) + usage_events for the /costs page
+              "create table llm_usage(id integer primary key, service text, model text, kind text,"
+              " input_tokens int, output_tokens int, calls int, estimated int,"
+              " cached_input_tokens int default 0, tool_input_tokens int default 0,"
+              " thinking_tokens int default 0, project_id text, ts datetime default (datetime('now')));"
+              "insert into llm_usage(service,model,kind,input_tokens,output_tokens,calls,estimated,"
+              "cached_input_tokens,thinking_tokens,project_id,ts) values"
+              "('agent-engine','gemini-2.5-flash','plan',1000000,500000,3,0,200000,50000,'prj_1',datetime('now'));"
+              "insert into llm_usage(service,model,kind,input_tokens,output_tokens,calls,estimated,project_id,ts)"
+              " values('rag','gemini-embedding-2','embed_query',400000,0,2,1,'prj_1',datetime('now'));"
+              "create table usage_events(id integer primary key, connector_id text, cost_units int,"
+              " project_id text, ts datetime default (datetime('now')));"
+              "insert into usage_events(connector_id,cost_units,project_id,ts) values('prices',5,'prj_1',datetime('now'));"
+              "insert into usage_events(connector_id,cost_units,project_id,ts) values('rag',20,'prj_1',datetime('now'));")
 _make_db(_ST, "create table users(email text primary key, tenant_id text, api_key text);"
               "insert into users values('a@b.com','ten_1','vgk_x');"
               "create table agents(id text primary key, user_email text, name text);")
@@ -577,3 +593,39 @@ def test_ops_pipelines_run_forwards_mode(monkeypatch):
     # 이상한 값은 델타로 강제 (datasets에 쓰레기 값을 넘기지 않는다)
     client.post("/ops/pipelines/run", data={"preset": "us_mega", "mode": "bogus"}, follow_redirects=False)
     assert captured[-1]["json"]["mode"] == "delta"
+
+
+# --- Costs page (COST-1/2) ------------------------------------------------
+def test_costs_page_prices_usage_with_cache_discount():
+    """/costs가 llm_usage를 캐시 할인 반영해 달러화하고, 유저·서비스·커넥터·요율표·미추적을 렌더."""
+    _login()
+    r = client.get("/costs")
+    assert r.status_code == 200
+    t = r.text
+    # gemini-2.5-flash: 800k@0.30 + 200k캐시@0.03 + 500k출력@2.50 = 0.24+0.006+1.25 = $1.4960
+    # (캐시 할인 없으면 $1.5500 — 이 값이 뜨면 할인이 적용된 것)
+    assert "1.4960" in t and "1.5500" not in t
+    assert "gemini-2.5-flash" in t
+    assert "Acme Capital" in t                 # 유저별 롤업(테넌트 이름)
+    assert "prices" in t and "rag" in t        # 게이트웨이 커넥터
+    assert "<svg" in t                          # 일별 비용 스파크라인
+    assert "요율 기준일" in t                    # 스테일 요율 배너
+    assert "커넥터 호출" in t                    # 유저별 롤업의 커넥터 열
+    # 새 컬럼 헤더(캐시·생각) + 추정 배지
+    assert "캐시" in t and "생각" in t and "추정" in t
+
+
+def test_costs_range_selector():
+    _login()
+    assert client.get("/costs?days=7").status_code == 200
+    assert client.get("/costs?days=90").status_code == 200
+    # 이상한 값은 기본 30일로 강등 (렌더는 계속)
+    assert client.get("/costs?days=999").status_code == 200
+
+
+def test_sparkline_helper():
+    from adminpanel.main import _sparkline
+    assert "데이터 없음" in _sparkline([])
+    assert "<svg" in _sparkline([1.0])          # 1점도 렌더(중복으로 평평)
+    svg = _sparkline([0.0, 1.0, 0.5, 2.0])
+    assert "<polyline" in svg and "<polygon" in svg
