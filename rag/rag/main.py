@@ -116,5 +116,10 @@ async def search(body: SearchRequest, request: Request) -> dict:
     tenant = request.headers.get(_TENANT_HEADER)
     if tenant:
         filters["tenant"] = tenant
+    # METER-3: the X-Tenant-Id value IS the caller's control-plane project_id (gateway-injected);
+    # stamp it so this turn's embed/rerank/multi-query token cost is attributed to that user, not
+    # the anonymous 공용 bucket. contextvar propagates into the awaited search sub-calls.
+    from rag.usage_context import set_project
+    set_project(tenant)
     hits = await run_search(body.query, body.top_k, filters)
     return {"hits": [h.model_dump() for h in hits]}

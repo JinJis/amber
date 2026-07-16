@@ -24,7 +24,13 @@ def _get_client() -> httpx.AsyncClient:
 
 
 def report_usage(payload: dict) -> None:
-    """Fire-and-forget POST of one usage row; swallows everything (incl. no running loop)."""
+    """Fire-and-forget POST of one usage row; swallows everything (incl. no running loop).
+
+    METER-3: attributes the row to the current search request's project_id (embed/rerank/multi-query
+    on the user-facing path) when the caller didn't set one; None (background ingest) = shared cost.
+    """
+    from rag.usage_context import current_project
+    payload.setdefault("project_id", current_project())
 
     async def _post() -> None:
         try:
