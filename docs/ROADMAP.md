@@ -763,6 +763,9 @@ QT-1(compute 엔진)과 정합: compute의 스펙-as-계산근거는 이 카드�
 | METER-1 | LlmUsage.project_id — X-Project-Id → contextvar → 유저별 LLM 원가 귀속 | ✅ 2026-07-10 |
 | METER-2 | `/admin/llm-usage/by-project` 롤업 + admin /costs '유저별 LLM 원가' 섹션 | ✅ 2026-07-11 |
 | METER-3 | Vertex 리랭커 콜 계측 | ✅ 2026-07-10 |
+| COST-1 | 요율표 최신화(2.5/3.x 검증·캐시/프리미엄/콜당 과금) + Costs UX(스파크라인·유저롤업·미추적·기간 선택) + 어드민 IA 5섹션(12탭→Overview·Operations·Data·Money·Accounts) · admin을 test_all.sh 유닛 루프에 편입(admin 68) | ✅ 2026-07-16 |
+| COST-2 | Gemini usage_metadata 분해(캐시/툴/생각 토큰) + 해상 model_version 보고 + llm_usage nullable 컬럼(agent-engine 196·control-plane 30) | ✅ 2026-07-16 |
+| COST-3 | 미계측 콜 전수 계측: rag 멀티쿼리·rag embed/rerank 유저귀속·Document AI 페이지·백그라운드 스윕 상류 호출(opt-in, datasets 383·rag 51) | ✅ 2026-07-16 |
 | BILL-1~4 | 토스 빌링키 스키마·상태기계·등록/첫결제·시간별 갱신·던닝 D+1/3/5·웹훅(멱등·재조회 검증)·해지 예약 — FakeGateway 전수 테스트 | ✅ 2026-07-10 |
 | BILL-5 | admin /billing 화면(구독·인보이스·원장·웹훅) + 재시도/환불/플랜 오버라이드(studio admin API, apply_plan 단일 경유) | ✅ 2026-07-11 |
 | REF-1 | 추천 코드 발급·가입 귀속·14일 소급 입력 | ✅ 2026-07-10 |
