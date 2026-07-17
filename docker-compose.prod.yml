@@ -1,0 +1,99 @@
+# Production override — single GCE VM (32GB), Cloudflare → Caddy → web. See docs/INFRA.md.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# What this changes vs the dev compose:
+#   * Caddy terminates TLS on :80/:443 (Cloudflare Origin CA cert) and reverse-proxies web:3000.
+#   * Every API port is re-bound to 127.0.0.1 (defense-in-depth under the GCP firewall) —
+#     containers still talk over the compose network; only Caddy is world-reachable.
+#   * mem_limit per service so one runaway container can't OOM the whole VM (ME-13).
+#     Budget on a 32GB host: pg 14g · worker 3g · rag 2.5g · datasets 2g · agent 1.5g ·
+#     web 1.5g · cp/studio/admin 1g · caddy 512m ≈ 29.5g + OS ~2g (8GB swapfile as spike buffer).
+#   * worker healthcheck (procrastinate) — a silently-wedged worker now flips unhealthy.
+#   * web build receives NEXT_PUBLIC_TOSS_CLIENT_KEY (inlined at `npm run build`).
+#
+# Reminder: set ENV=production in env/app.env and fill env/secrets.env first — services REFUSE
+# to boot on dev-default secrets (SC-0). DOMAIN comes from the shell or a root .env (compose
+# ${...} interpolation does not read env/*.env).
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      DOMAIN: "${DOMAIN:?set DOMAIN=your.domain on the shell or in a root .env}"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./secrets/origin-cert:/certs:ro   # Cloudflare Origin CA cert + key (gitignored)
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  web:
+    build:
+      context: ./web
+      args:
+        # NEXT_PUBLIC_* is inlined at build time — pass it here (shell or root .env), NOT env/*.env.
+        NEXT_PUBLIC_TOSS_CLIENT_KEY: "${NEXT_PUBLIC_TOSS_CLIENT_KEY:-}"
+    ports: !override
+      - "127.0.0.1:3000:3000"
+    mem_limit: 1.5g
+
+  datasets:
+    ports: !override
+      - "127.0.0.1:8000:8000"
+    mem_limit: 2g
+
+  worker:
+    mem_limit: 3g
+    healthcheck:
+      test: ["CMD", "python", "-m", "procrastinate", "--app=app.queue.app", "healthchecks"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  control-plane:
+    ports: !override
+      - "127.0.0.1:8010:8001"
+    mem_limit: 1g
+
+  rag:
+    ports: !override
+      - "127.0.0.1:8002:8002"
+    mem_limit: 2.5g
+
+  agent-engine:
+    ports: !override
+      - "127.0.0.1:8003:8003"
+    mem_limit: 1.5g
+
+  studio-api:
+    ports: !override
+      - "127.0.0.1:8004:8004"
+    mem_limit: 1g
+
+  admin:
+    # Force loopback in production REGARDLESS of ADMIN_BIND (a dev .env may set 0.0.0.0).
+    # Access via IAP SSH tunnel:  gcloud compute ssh vg-beta --tunnel-through-iap -- -L 8005:127.0.0.1:8005
+    ports: !override
+      - "127.0.0.1:8005:8005"
+    mem_limit: 1g
+
+  postgres:
+    # 14g leaves room for shared_buffers(2g) + backends + the host page cache holding the
+    # ~8.4GB HNSW index (cgroup v2 attributes page cache to the container).
+    mem_limit: 14g
+
+volumes:
+  caddy_data: {}
+  caddy_config: {}

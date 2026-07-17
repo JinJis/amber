@@ -17,6 +17,7 @@
 > - **Quality plan (RAG/검색/UX 품질 — RQ·UXQ; 턴제로 피드 품질 §D):** [`docs/QUALITY_SPEC.md`](./docs/QUALITY_SPEC.md)
 > - **UX spec (chat-first, all new screens):** [`docs/UX_SPEC.md`](./docs/UX_SPEC.md)
 > - **How the services fit together (current state):** [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
+> - **GCP 배포·운영 (VM·비용·백업·런북):** [`docs/INFRA.md`](./docs/INFRA.md) (+ [`deploy/`](./deploy/))
 > - **Product idea / vision:** [`docs/IDEA.md`](./docs/IDEA.md)
 > - **Data expansion plans:** [`docs/DATA_EXPANSION.md`](./docs/DATA_EXPANSION.md)
 >

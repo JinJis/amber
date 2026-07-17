@@ -1,0 +1,13 @@
+# Fires the nightly backup at 03:30 KST (the VM is provisioned with Asia/Seoul time via
+# vm-setup.sh; if the VM runs UTC this is 18:30 UTC — adjust OnCalendar accordingly).
+# Persistent=true → a missed run (VM off/rebooting) executes at next boot.
+[Unit]
+Description=ValueGraph nightly backup timer
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

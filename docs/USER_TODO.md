@@ -92,6 +92,20 @@
   단일비행으로 해소돼 studio-api·gateway 다중 레플리카가 가능해졌어요. 다만 챗 재개(SSE tail)는 아직
   세션 스티키 라우팅이 필요하니 로드밸런서에서 그 경로만 고정해 주세요(SC-3.3 잔여).
 
+## 1-12. GCP 배포 (2026-07-17, [INFRA](./INFRA.md) — 배포 자산은 `deploy/`에 커밋됨)
+배포 코드는 전부 랜딩(§CR-11 백업 포함) — 아래는 오너가 직접 실행할 것들. 순서는 INFRA §4 런북.
+- [ ] **도메인 → Cloudflare**: 네임서버 이전(무료 플랜), SSL 모드 **Full (strict)**, 프록시 ☁ ON
+- [ ] **Origin CA 인증서 발급**: Cloudflare → SSL/TLS → Origin Server → Create Certificate →
+  VM의 `secrets/origin-cert/{origin.pem,origin-key.pem}`
+- [ ] **`PROJECT=… DOMAIN=… ./deploy/provision.sh` 실행** (VM·고정IP·방화벽·백업 버킷·스냅샷 스케줄)
+  → 출력된 IP를 Cloudflare A 레코드로
+- [ ] **VM에서 `./deploy/vm-setup.sh`** → 체크리스트대로 `env/*.env`·`secrets/` 채우기
+  (`ENV=production`은 dev 기본값 부팅 거부 — 1-2의 시크릿 목록 전부)
+- [ ] **backup 버킷 설정**: `/etc/systemd/system/valuegraph-backup.service`의 `BACKUP_BUCKET` 교체
+  → 수동 1회 실행으로 GCS 업로드 확인 → **월 1회 복원 드릴** (INFRA §4-D)
+- [ ] **비용**: 베타 ~$213–245/mo (온디맨드) — 1개월 안정 후 **1-yr CUD 전환**(~$150–183)
+  + Gemini 토큰 별도(~$150–900/mo, admin Costs로 실측)
+
 ## 2. 바이럴·품질 (선택이지만 효과 큼)
 - [ ] **Kakao JS 키** (V-6 카톡 리치 공유): developers.kakao.com 같은 앱 → JavaScript 키 + Web 플랫폼 도메인 등록 → `NEXT_PUBLIC_KAKAO_JS_KEY` (키가 오면 V-6 구현 착수 가능)
 - [ ] **RAG 코퍼스 재인제스트** (RQ-9 — 검색 품질 최대 지렛대): 유니버스 재인제스트 + transcript US/KR + era news

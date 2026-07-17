@@ -1,0 +1,36 @@
+# Caddy reverse proxy — TLS termination on the VM behind Cloudflare (Full strict).
+# DOMAIN is injected by docker-compose.prod.yml. Cert = Cloudflare Origin CA (15-year, free,
+# no renewal moving parts): create at Cloudflare → SSL/TLS → Origin Server → Create Certificate,
+# save as secrets/origin-cert/origin.pem + origin-key.pem.
+#
+# (Alternative without Cloudflare proxying: delete the `tls` line — Caddy will provision
+#  Let's Encrypt automatically — but behind the orange cloud HTTP-01 breaks; use DNS-01 then.)
+
+{$DOMAIN} {
+	tls /certs/origin.pem /certs/origin-key.pem
+
+	encode gzip zstd   # Caddy skips text/event-stream automatically — SSE stays uncompressed
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		# HSTS is served by Cloudflare at the edge; enabling it here too is harmless:
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	reverse_proxy web:3000 {
+		# SSE: stream every byte immediately — never buffer the event stream.
+		flush_interval -1
+		# Agent turns run ~45s+ (feeds up to 120s); allow slow upstream reads.
+		transport http {
+			read_timeout 300s
+			write_timeout 300s
+		}
+	}
+}
+
+# Anything hitting the raw IP (no SNI/hostname) gets closed — only the domain is served.
+:80 {
+	respond 404
+}
