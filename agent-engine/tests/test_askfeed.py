@@ -7,6 +7,8 @@ the kind allow-lists per scope.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 import agentengine.askfeed as AF
@@ -40,6 +42,20 @@ def test_signature_stable_and_sensitive():
     moved = [_g(1, "yahoo__price_snapshot", {"price": 211.9, "as_of": "2026-07-06"})]
     assert _signature(a) == _signature(same)          # same records → same digest
     assert _signature(a) != _signature(moved)         # new data → new digest
+
+
+def test_signature_detects_change_past_400_chars():
+    """Regression: 서명은 페이로드 앞 400자만 보지 않는다 — 긴 리스트(뉴스 10건·섹션 수십 종목)
+    깊숙이 새 레코드가 들어와도(as_of 동일) 잡아낸다. 예전엔 [:400] 절단으로 놓쳤다."""
+    # 앞부분은 동일하고 400자 이후에서만 갈라지는 두 페이로드 (같은 as_of)
+    base = [{"title": f"headline number {i} about the market and rates", "date": "2026-07-05"}
+            for i in range(20)]
+    changed = [dict(x) for x in base]
+    changed[-1]["title"] = "a brand new late-breaking headline that landed deep in the list"
+    g_base = [_g(1, "google_news__news", {"items": base, "as_of": "2026-07-05"})]
+    g_changed = [_g(1, "google_news__news", {"items": changed, "as_of": "2026-07-05"})]
+    assert len(json.dumps(base, ensure_ascii=False)) > 400   # 실제로 400자를 넘는 페이로드
+    assert _signature(g_base) != _signature(g_changed)
 
 
 class _FakeClient:

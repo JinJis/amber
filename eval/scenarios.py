@@ -1015,6 +1015,19 @@ SCENARIOS = [
         "checks": {"cards_all_cited": True, "expect_status": 200},
     },
     {
+        # ASK-6 (Macro Trends): the entry screen's headline marquee — news+FRED 거시패널에서
+        # 합성된 질문 카드. google_news는 키 없이도 시장 전체 헤드라인을 주므로 실 유니버스와
+        # 무관하게 채워짐 → 인용/무전망을 judge로 실측한다(감사 지적: ask-feed judge 0).
+        "name": "ASK-6: Macro Trends 섹션 → 근거·무전망 질문 카드",
+        "kind": "ask_feed",
+        "scope": "news_feed",
+        "agent": {"name": "-", "data_sources": []},
+        "criteria": ("각 카드 hook은 뉴스/거시지표의 실제 사실 한 줄이고 모두 출처를 인용. kind는 "
+                     "macro/micro/market 중 하나. 방향 예측·조언·'기회'·목표가 표현은 0건 — "
+                     "'이런 데이터가 나왔다'까지만. 단순 시황 중계가 아니라 파볼 만한 질문."),
+        "checks": {"cards_all_cited": True, "expect_status": 200, "judge": True},
+    },
+    {
         # V-8: 어닝 서프라이즈 히스토리 — 컨센서스 vs 실제 + 서프라이즈%가 아티팩트·인용으로.
         "name": "V-8: 어닝 서프라이즈 히스토리 (비트/미스)",
         "agent": {"name": "Eval Research", "model": "gemini", "data_sources": ALL_SOURCES},

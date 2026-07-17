@@ -12,7 +12,8 @@ import respx
 from fastapi.testclient import TestClient
 
 from studioapi.askfeed import (
-    _SECTION_SCOPES, _assemble, _scope_key, refresh_once, refresh_sections_once,
+    _ONB_SCOPE, _SECTION_SCOPES, _assemble, _scope_key, refresh_once,
+    refresh_onboarding_once, refresh_sections_once,
 )
 from studioapi.config import settings
 from studioapi.db import SessionLocal, init_db
@@ -257,6 +258,79 @@ def test_ticker_generation_failure_returns_honest_gap(monkeypatch):
                    headers=_hdr("gap@u.com"))
     assert r.status_code == 200
     assert r.json()["cards"] == []          # a gap, never fabricated content
+
+
+@respx.mock
+def test_ticker_failure_serves_stale_pool_when_present(monkeypatch):
+    """생성 실패라도 이전 풀이 있으면 그걸 서빙(정직한 공백은 캐시가 아예 없을 때만)."""
+    monkeypatch.setattr(settings, "agent_engine_url", "http://ae.test")
+    scope = _scope_key("US", "AMD")
+    stale = datetime.utcnow() - timedelta(seconds=settings.ask_feed_ticker_ttl_seconds + 60)
+    with SessionLocal() as db:
+        _mk_user(db, "sp@u.com")
+        db.merge(AskFeedCache(scope=scope, signature="sig-amd", generated_at=stale,
+                              payload=json.dumps({"cards": TICKER_CARDS["cards"]})))
+        db.commit()
+    respx.post("http://ae.test/agent/ask-feed").mock(return_value=httpx.Response(500))
+    r = client.get("/ask-feed/ticker", params={"market": "US", "ticker": "AMD"},
+                   headers=_hdr("sp@u.com"))
+    assert r.status_code == 200
+    assert r.json()["cards"][0]["kind"] == "filing_deep"     # 실패해도 이전 풀 서빙(공백 아님)
+
+
+@respx.mock
+def test_onboarding_showcase_stores_then_keeps_on_empty(monkeypatch):
+    """ONB-LIVE: refresh_onboarding_once가 라이브 번들을 캐시에 저장하고, 이후 빈/실패 응답엔
+    이전 캐시를 유지(정직 규칙)."""
+    monkeypatch.setattr(settings, "agent_engine_url", "http://ae.test")
+    with SessionLocal() as db:
+        _mk_user(db, "onb@u.com")
+    bundle = {"question": "삼성전자 실적·수급 어때?", "name": "삼성전자", "ticker": "005930",
+              "cards": [{"kind": "fundamental_shift", "question": "재무 변화 볼까요?", "hook": "PER 12.3배",
+                         "citations": [{"source": "SEC EDGAR"}]}],
+              "evidence": [], "followups": ["다음 실적은?"], "signature": "onb-1"}
+    route = respx.post("http://ae.test/agent/onboarding-showcase").mock(
+        return_value=httpx.Response(200, json=bundle))
+    out = asyncio.run(refresh_onboarding_once())
+    assert out["refreshed"] is True and out["cards"] == 1
+    with SessionLocal() as db:
+        assert json.loads(db.get(AskFeedCache, _ONB_SCOPE).payload)["cards"][0]["hook"] == "PER 12.3배"
+
+    route.mock(return_value=httpx.Response(200, json={"cards": []}))   # 빈 응답 → 이전 유지
+    out2 = asyncio.run(refresh_onboarding_once())
+    assert out2["refreshed"] is False
+    with SessionLocal() as db:
+        assert json.loads(db.get(AskFeedCache, _ONB_SCOPE).payload)["cards"]   # 여전히 이전 카드
+
+
+def test_onboarding_endpoint_serves_cache_and_kicks_when_stale(monkeypatch):
+    """GET /ask-feed/onboarding — 캐시만 즉시 반환하고 24h 넘으면 백그라운드 갱신 1회 킥;
+    신선하면 킥 없음."""
+    import studioapi.askfeed as SAF
+    calls = {"n": 0}
+
+    async def fake_refresh():
+        calls["n"] += 1
+        return {"refreshed": False}
+    monkeypatch.setattr(SAF, "refresh_onboarding_once", fake_refresh)
+    SAF._onb_task = None
+    with SessionLocal() as db:
+        _mk_user(db, "onbe@u.com")
+        db.merge(AskFeedCache(scope=_ONB_SCOPE,
+                              generated_at=datetime.utcnow() - timedelta(hours=25),
+                              payload=json.dumps({"cards": [{"kind": "x"}], "name": "삼성전자"})))
+        db.commit()
+    r = client.get("/ask-feed/onboarding", headers=_hdr("onbe@u.com"))
+    assert r.status_code == 200 and r.json()["name"] == "삼성전자"    # 캐시 즉시 반환
+    assert calls["n"] == 1                                            # stale → 킥 1회
+
+    with SessionLocal() as db:                                        # 신선한 캐시 → 킥 없음
+        db.merge(AskFeedCache(scope=_ONB_SCOPE, generated_at=datetime.utcnow(),
+                              payload=json.dumps({"cards": [{"kind": "x"}], "name": "삼성전자"})))
+        db.commit()
+    SAF._onb_task = None
+    client.get("/ask-feed/onboarding", headers=_hdr("onbe@u.com"))
+    assert calls["n"] == 1
 
 
 @respx.mock

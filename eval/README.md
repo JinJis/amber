@@ -58,10 +58,17 @@ primary sources, so it grades *relevance/specificity/tone* — it does **not**
 fact-check fresh numbers (a judge's training cutoff can't, and would wrongly flag
 2025/2026 data as "future").
 
-## Scenarios (current — 17)
+## Scenarios (current — 96; count is authoritative in `scenarios.py`)
 
-US fundamentals → SEC EDGAR · KR fundamentals → OpenDART · US prices → Yahoo ·
-KR prices → Yahoo (.KS) · macro → Bank of Korea ECOS · news → Google News ·
+Most scenarios are chat turns; a few are **non-chat feed scenarios** driven by a `kind`:
+`kind: "desk_feed"` (M-DESK, `GET /desk-feed`) and `kind: "ask_feed"` (ASK-6 홈 마키 섹션 —
+`GET /ask-feed`의 한 스코프; `scope` 로 news_feed/earnings_radar/… 지정, 러너가 해당
+refresh를 먼저 태워 결정적으로 채운다). 시장 전체 공유 캐시라 작은 유니버스에선 비어 있을 수
+있으므로 이 시나리오들은 `expect_min_cards`를 두지 않는다 — 0장은 정직한 갭으로 통과하고,
+출고되는 카드는 `cards_all_cited`(무출처 방지)와 무전망/무조언 rubric으로 검증된다.
+
+Representative chat coverage: US fundamentals → SEC EDGAR · KR fundamentals → OpenDART ·
+US prices → Yahoo · KR prices → Yahoo (.KS) · macro → Bank of Korea ECOS · news → Google News ·
 filings → SEC EDGAR · insider trades → SEC EDGAR (Form 4) · RAG retrieval → cited
 disclosure · valuation metrics → financial-metrics · multi-company comparison ·
 **honesty: no-data → say so, don't fabricate** · data-source restriction honoured ·

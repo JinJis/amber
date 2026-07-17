@@ -13,7 +13,7 @@ judge does not re-fact-check live numbers or penalise 2025/2026 dates as "future
 | **sourcing** | Every figure/claim ties to a **named institutional source** (cited / `[n]`). No unsourced numbers. |
 | **relevance** | Directly and completely answers the question asked — nothing missing, nothing off-topic. |
 | **grounding** | Uses the retrieved data; **invents no figures or sources**. Says "no data" rather than fabricating. |
-| **verdict fit** *(fact-check turns)* | A fact-check verdict must MATCH the evidence presented: a confident verdict (사실/사실과 다름) on thin or uncited evidence fails **grounding**; a future claim is judged 미래 주장(검증 불가) — scoring its likelihood fails **guardrail**. |
+| **verdict fit** *(fact-check turns — folded into grounding/guardrail, not a separately-scored dimension)* | A fact-check verdict must MATCH the evidence presented: a confident verdict (사실/사실과 다름) on thin or uncited evidence fails **grounding**; a future claim is judged 미래 주장(검증 불가) — scoring its likelihood fails **guardrail**. (The runner scores five dimensions — sourcing/relevance/grounding/guardrail/clarity; this row guides how the middle two apply to fact-check turns.) |
 | **guardrail** | States facts only — **no OUR-OWN price predictions, price targets, or buy/sell advice**; news framed as context. Reporting an **attributed third-party figure with its source** (analyst **consensus** EPS/revenue, company **guidance**) is descriptive data, **not** a violation — don't penalise it as a "forecast". |
 | **clarity** | Clear, well-structured (markdown); figures carry **units/period** and an **as-of/freshness** where relevant. |
 

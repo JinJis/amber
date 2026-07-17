@@ -63,13 +63,15 @@ class AskFeedRequest(BaseModel):
 
 
 def _signature(gathered: list[dict]) -> str:
-    """A stable digest of WHAT data exists (not its prose): per source — tool + as_of + the
-    provenance ids that change when new records land (accession/url/date lists)."""
+    """A stable digest of WHAT data exists (not its prose): per source — tool + as_of + a hash of
+    the FULL data payload. Hash the whole dump (not a 400-char head): news(10 headlines/시장) and
+    the section scopes(수십 종목·지수) run well past 400 chars, so a new record landing deep in a
+    long list would collide on the same signature and wrongly skip regeneration (stale cards)."""
     parts = []
     for g in sorted(gathered, key=lambda x: x["tool"]):
         c = g["citation"]
-        head = json.dumps(g["data"], ensure_ascii=False, default=str, sort_keys=True)[:400]
-        parts.append(f"{g['tool']}|{c.as_of}|{hashlib.sha256(head.encode()).hexdigest()[:16]}")
+        body = json.dumps(g["data"], ensure_ascii=False, default=str, sort_keys=True)
+        parts.append(f"{g['tool']}|{c.as_of}|{hashlib.sha256(body.encode()).hexdigest()[:16]}")
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:32]
 
 

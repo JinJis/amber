@@ -122,6 +122,26 @@ def test_desk_feed_degrades_when_engine_down(monkeypatch):
 
 
 @respx.mock
+def test_desk_feed_serves_stale_copy_when_engine_down_but_cache_exists(monkeypatch):
+    """엔진이 죽어도 이전 캐시가 있으면 stale 사본을 서빙(stale:true) — degraded 공백이 아니라."""
+    _cfg(monkeypatch); _mock_control_plane()
+    email = "desk6@u.com"
+    with SessionLocal() as db:
+        db.merge(User(email=email, tenant_id="t", project_id="p", api_key="vgk_x",
+                      connectors_reconciled_ver=settings.connectors_reconcile_ver))
+        db.merge(DeskFeedCache(user_email=email, payload=json.dumps(FEED),
+                               generated_at=datetime.utcnow()
+                               - timedelta(seconds=settings.desk_feed_ttl_seconds + 60)))
+        db.commit()
+    respx.post("http://ae.test/agent/desk-feed").mock(return_value=httpx.Response(503))
+    r = client.get("/desk-feed", headers=_hdr(email))
+    assert r.status_code == 200
+    body = r.json()
+    assert body.get("stale") is True and body.get("degraded") is None
+    assert body["cards"][0]["kind"] == "market_pulse"        # 공백이 아니라 이전 카드
+
+
+@respx.mock
 def test_desk_feed_skips_cache_write_when_watchlist_changed_mid_generation(monkeypatch):
     """IMP-10: an edit during an in-flight generate must not poison the cache with a stale feed."""
     _cfg(monkeypatch); _mock_control_plane()

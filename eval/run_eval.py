@@ -247,7 +247,9 @@ def run_scenario_ask_feed(sc: dict) -> dict:
     scope = sc.get("scope") or "history_lab"
     email = f"eval-ask-{sc['name'].__hash__() & 0xffffff:x}@valuegraph.local"
     _studio_as(email, "POST", "/users/ensure")
-    _request("POST", f"{STUDIO}/ask-feed/refresh-sections", None,
+    # news_feed(Macro Trends)는 뉴스 리프레셔, 섹션은 섹션 리프레셔로 결정적으로 채운다.
+    refresh_path = "/ask-feed/refresh" if scope == "news_feed" else "/ask-feed/refresh-sections"
+    _request("POST", f"{STUDIO}{refresh_path}", None,
              {"X-Service-Token": SVC, "Content-Type": "application/json"})
     code, feed = _studio_as(email, "GET", "/ask-feed")
     section = next((s for s in (feed.get("sections") or []) if s.get("scope") == scope), None)
