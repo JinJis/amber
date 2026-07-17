@@ -95,6 +95,40 @@ def test_healthz_open():
     assert client.get("/healthz").json() == {"status": "ok"}
 
 
+def test_pipelines_shows_home_section_marquee_card():
+    """Pipelines 콘솔에 홈 마키 섹션(어닝·거장·히스토리) 상태 카드 + 수동 갱신 버튼이 뜬다."""
+    c = sqlite3.connect(_ST)
+    c.executescript(
+        "create table if not exists ask_feed_cache(scope text primary key, payload text,"
+        " signature text, generated_at text);"
+        "delete from ask_feed_cache;"
+        "insert into ask_feed_cache(scope,payload,generated_at) values"
+        "('earnings_radar','{\"cards\":[{\"kind\":\"earnings_upcoming\"},{\"kind\":\"earnings_surprise\"}]}',"
+        "'2026-07-17 00:00:00');")
+    c.commit(); c.close()
+    _login()
+    r = client.get("/pipelines")
+    assert r.status_code == 200
+    assert "홈 마키 섹션" in r.text and "어닝 레이더" in r.text
+    assert "카드 <b>2</b>개" in r.text                          # earnings_radar 캐시의 카드 수
+    assert "/ops/askfeed/refresh-sections" in r.text           # '지금 갱신' 버튼이 엔드포인트로 wired
+
+
+def test_ops_refresh_sections_proxies_studio(monkeypatch):
+    """'지금 갱신 ▶' → studio /ask-feed/refresh-sections 프록시 → /pipelines로 메시지 리다이렉트."""
+    import httpx
+
+    async def _fake_post(self, url, **kw):
+        assert url.endswith("/ask-feed/refresh-sections")
+        return httpx.Response(200, json={"scopes": 3, "refreshed": 2,
+                                         "cards_by_scope": {"earnings_radar": 5, "guru_flows": 3,
+                                                            "history_lab": 4}})
+    monkeypatch.setattr(httpx.AsyncClient, "post", _fake_post)
+    _login()
+    r = client.post("/ops/askfeed/refresh-sections", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/pipelines?msg=")
+
+
 # --- console pages (services down → graceful) -----------------------------
 def test_overview_renders_with_nav_and_health():
     _login()

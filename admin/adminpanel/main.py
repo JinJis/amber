@@ -508,6 +508,40 @@ async def pipelines(request: Request, msg: str = ""):
         "<button class=p>지금 갱신 ▶</button></form></div></div>"
     )
 
+    # --- 홈 마키 섹션(어닝·거장·히스토리) 카드: 섹션 캐시 상태 + 수동 갱신 ---
+    sec_rows_html = ""
+    try:
+        eng = ENGINES.get("studio")
+        if eng is not None:
+            import json as _json
+            with eng.connect() as conn:
+                for scope, label in (("earnings_radar", "📅 어닝 레이더"),
+                                     ("guru_flows", "🐘 투자거장·수급"),
+                                     ("history_lab", "🕰️ 히스토리 랩")):
+                    row = conn.execute(sa_text(
+                        "SELECT generated_at, payload FROM ask_feed_cache WHERE scope=:s"),
+                        {"s": scope}).first()
+                    if row:
+                        n = len((_json.loads(row[1]) or {}).get("cards") or [])
+                        meta = f"<span class=pill>{_esc(str(row[0])[:19])}</span>"
+                    else:
+                        n, meta = 0, "<span class=pill>아직 생성 전</span>"
+                    sec_rows_html += (f"<div class=flow><span class=pill>{_esc(label)}</span>"
+                                      f"<span class=pill>카드 <b>{n}</b>개</span>{meta}</div>")
+    except Exception:  # noqa: BLE001 — 첫 부팅엔 테이블이 없을 수 있음
+        pass
+    sections_card = (
+        "<div class=card><h3>🗂️ 홈 마키 섹션 (어닝·거장·히스토리)</h3>"
+        + sec_rows_html +
+        "<div class=sub>탐구 첫 화면의 <b>어닝 레이더·투자거장·수급·히스토리 랩</b> 마키를 만들어요. "
+        "각각 시장 전체 공유 캐시(studio <code>ask_feed_cache</code>, scope=earnings_radar/guru_flows/"
+        "history_lab) — 1시간마다 자동 갱신 + 접속 시 오래됐으면 read-through 킥, 데이터 그대로면(서명 동일) "
+        "LLM 없이 끝나요. 히스토리 랩의 지수 가격 백필(^GSPC·^KS11·^VIX)은 아래 <b>가격(OHLCV)</b> "
+        "파이프라인에 포함돼요.</div>"
+        "<div class=opsrow><form class=ops method=post action=/ops/askfeed/refresh-sections>"
+        "<button class=p>지금 갱신 ▶</button></form></div></div>"
+    )
+
     # --- 회사 로고: 유니버스 자동 채우기(하이브리드 해석기) + 놓친 종목 수동 업로드 ---
     logo_card = (
         "<div class=card><h3>🖼️ 회사 로고</h3>"
@@ -601,7 +635,7 @@ S&amp;P·코스피·코스닥 전체는 직접 입력란에 티커를 붙여넣�
   <div class=card><h3>RAG search</h3><div class=sub>시맨틱 프로브</div>
     <form class=ops method=post action=/ops/rag/search>
       <input name=query placeholder="semantic query" size=22 required><button class=p>Search</button></form></div>"""
-    tools = "<h2>도구</h2><div class=grid>" + macro_card + logo_card + rag_tools + "</div>"
+    tools = "<h2>도구</h2><div class=grid>" + macro_card + sections_card + logo_card + rag_tools + "</div>"
 
     body = (_flash(msg)
             + "<p class=hint>모든 데이터 파이프라인을 한곳에서 — 무엇을 어떤 경로로 수집해 어디에 쌓는지, "
@@ -1608,6 +1642,26 @@ async def ops_askfeed_refresh(request: Request):
                    f"카드 {j.get('cards', '?')}개")
     except Exception as exc:  # noqa: BLE001 — studio 미기동 등
         msg = f"Macro Trends 갱신 실패: {type(exc).__name__}"
+    return RedirectResponse(f"/pipelines?msg={msg.replace(' ', '+')}", status_code=303)
+
+
+@app.post("/ops/askfeed/refresh-sections")
+async def ops_askfeed_refresh_sections(request: Request):
+    """홈 마키 섹션(어닝·거장·히스토리) 수동 갱신 — studio-api의 refresh_sections_once를 즉시 1회
+    실행(각 스코프 서명 동일 시 LLM 스킵)."""
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.post(f"{settings.studio_url}/ask-feed/refresh-sections",
+                             headers={"X-Service-Token": settings.service_token}, timeout=200)
+            j = r.json() if r.status_code == 200 else {}
+        if r.status_code != 200:
+            msg = f"섹션 갱신 실패 (HTTP {r.status_code})"
+        else:
+            by = j.get("cards_by_scope") or {}
+            summary = " · ".join(f"{k} {v}장" for k, v in by.items()) or "카드 없음"
+            msg = f"섹션 갱신 {j.get('refreshed', '?')}/{j.get('scopes', '?')} · {summary}"
+    except Exception as exc:  # noqa: BLE001 — studio 미기동 등
+        msg = f"섹션 갱신 실패: {type(exc).__name__}"
     return RedirectResponse(f"/pipelines?msg={msg.replace(' ', '+')}", status_code=303)
 
 
