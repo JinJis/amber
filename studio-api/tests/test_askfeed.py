@@ -71,7 +71,9 @@ def test_refresh_once_is_news_feed_only(monkeypatch):
     out = asyncio.run(refresh_once())
     assert out == {"scopes": 1, "refreshed": 1}
     assert route.call_count == 1
-    assert json.loads(route.calls[0].request.content)["scope"] == "news_feed"
+    sent = json.loads(route.calls[0].request.content)
+    assert sent["scope"] == "news_feed"
+    assert sent["limit"] == 20            # Macro Trends 마키 — 심층·다양 질문 20장
     with SessionLocal() as db:
         row = db.get(AskFeedCache, "news_feed")
         assert row is not None and row.signature == "sig-1"
@@ -97,6 +99,8 @@ def test_assemble_lists_tickers_without_cards_plus_news():
     with SessionLocal() as db:
         _mk_user(db, "asm@u.com")
         _mk_watch(db, "asm@u.com", "TSLA", name="Tesla")
+        db.add(Watchlist(user_email="asm@u.com", name="빈그룹"))   # 방금 만든 빈 그룹도 보인다
+        db.commit()
         db.merge(AskFeedCache(scope="news_feed",
                               payload=json.dumps({"cards": CARDS["cards"],
                                                   "generated_at": "2026-07-05T00:05:00+00:00"})))
@@ -104,6 +108,11 @@ def test_assemble_lists_tickers_without_cards_plus_news():
         out = _assemble(db, "asm@u.com")
     t = next(x for x in out["tickers"] if x["ticker"] == "TSLA")
     assert t["name"] == "Tesla" and t["groups"] and "cards" not in t
+    # 그룹은 {id, name} — 엔트리 아코디언의 1차 depth + 관심 페이지 딥링크(id)
+    assert all(g["id"] and g["name"] for g in out["groups"])
+    empty = next(g for g in out["groups"] if g["name"] == "빈그룹")
+    assert empty["id"].startswith("wl")
+    assert t["groups"][0] in {g["name"] for g in out["groups"]}
     assert out["news_feed"][0]["kind"] == "macro"
     assert out["news_generated_at"] == "2026-07-05T00:05:00+00:00"
 

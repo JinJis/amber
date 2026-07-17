@@ -1,18 +1,22 @@
 "use client";
 
-// ASK-6/9 탐구 엔트리 (v4). 접속 시 LLM 0회 — 뉴스 질문 피드는 10분 주기 백그라운드 캐시,
-// 종목 분석거리는 사용자가 종목을 "직접 눌렀을 때"만 온디맨드 생성: 소스별 후보 → 다양성
-// 큐레이션으로 3~5개(가격·공시·뉴스 나열이 아니라 밸류·수급·어닝·과거가 섞이게, ASK-9).
-//   · 히어로 — "오늘, 무엇을 분석할까요?" + 신뢰 한 줄(출처[n] · 전망 안 함)
-//   · 2단 레이아웃: [내 관심종목 파고들기 — 종목 칩 탭 → 분석 카드 3~5개] ⟷ [지금 뉴스에서]
+// ASK-6/9 탐구 엔트리 (v5). 접속 시 LLM 0회 — 뉴스 질문 피드는 백그라운드 캐시, 종목
+// 분석거리는 사용자가 종목을 "직접 눌렀을 때"만 온디맨드 생성(소스별 후보 → 다양성 큐레이션).
+// v5 레이아웃 — 섹션 세로 스택:
+//   ① 내 관심종목 파고들기 — 1차 depth는 관심 @그룹 아코디언. 그룹을 누르면 안의 종목 칩이
+//     토글되고, 종목을 누르면 그 자리에서 분석 카드 3~5개. 리스트 끝 ＋ 새 그룹은 관심
+//     페이지의 생성 플로우 그대로 — 만들면 관심 페이지로 이동해 종목을 채운다(onManageWatch).
+//   ② Macro Trends — 우→좌로 흐르는 질문 카드 마키(호버·포커스 시 정지, 모션 최소화
+//     설정에서는 가로 스크롤). 카드는 백그라운드 캐시 최대 20장.
 // 전역 규칙: 카드 탭 = 컴포저 채움(자동 전송 없음). 출처 탭 = 근거 뷰어. 미생성 = 정직한 공백.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { Citation } from "@/lib/types";
 import { QCard, type AskCard } from "./QCard";
 import { TickerLogo } from "./TickerLogo";
 
 type TickerInfo = { market: string; ticker: string; name: string; groups: string[] };
+type WatchGroup = { id: string; name: string };
 
 // ENT-4: capability chips per company — the product's real verbs, market-aware.
 export function capabilityChips(name: string, market: string): { label: string; q: string }[] {
@@ -32,19 +36,25 @@ export function capabilityChips(name: string, market: string): { label: string; 
 
 const tkKey = (t: { market: string; ticker: string }) => `${t.market}:${t.ticker}`;
 
-export default function CockpitEntry({ onPick, onQuestions, onEvidence }: {
+export default function CockpitEntry({ onPick, onQuestions, onEvidence, onManageWatch }: {
   onPick: (q: string) => void;                       // fill the composer, focus — never send
   onQuestions?: (qs: string[]) => void;              // today's questions → rotating placeholder
   onEvidence?: (cit: Citation) => void;              // open the source/evidence viewer
+  onManageWatch?: (groupId?: string) => void;        // 관심 페이지로 이동 (해당 그룹 활성 + 종목 검색)
 }) {
   const [tickers, setTickers] = useState<TickerInfo[]>([]);
-  const [groups, setGroups] = useState<string[]>([]);
+  const [groups, setGroups] = useState<WatchGroup[]>([]);
   const [news, setNews] = useState<AskCard[]>([]);
-  const [group, setGroup] = useState<string | null>(null);      // selected 관심그룹 filter (null = all)
+  const [openGroup, setOpenGroup] = useState<string | null>(null);   // 펼친 @그룹 (name)
   // 종목 파고들기: 탭한 종목만 온디맨드 생성. sel = 펼친 종목, cardsBy = 세션 캐시.
   const [sel, setSel] = useState<string | null>(null);
   const [cardsBy, setCardsBy] = useState<Record<string, AskCard[]>>({});
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
+  // ＋ 새 그룹 — 관심 페이지의 인라인 생성 플로우 그대로
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [busyNew, setBusyNew] = useState(false);
+  const [newErr, setNewErr] = useState("");
 
   useEffect(() => {
     let dead = false;
@@ -53,7 +63,11 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence }: {
         const r = await fetch("/api/ask-feed");
         if (r.ok && !dead) {
           const d = await r.json();
-          setTickers(d.tickers ?? []); setGroups(d.groups ?? []); setNews(d.news_feed ?? []);
+          setTickers(d.tickers ?? []);
+          // 구버전 studio(문자열 그룹) 응답도 그리게 — id 없으면 name을 임시 id로.
+          setGroups((d.groups ?? []).map((g: WatchGroup | string) =>
+            typeof g === "string" ? { id: g, name: g } : g));
+          setNews(d.news_feed ?? []);
           // RC-3: 콜드스타트 0 — 뉴스 캐시가 비면(가입 직후) 온보딩 쇼케이스 카드로 즉시 채움.
           if (!(d.news_feed ?? []).length) {
             try {
@@ -91,11 +105,51 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence }: {
     }
   }
 
-  const inGroup = (g: string[]) => group === null || g.includes(group);
-  const visTickers = useMemo(() => tickers.filter((t) => inGroup(t.groups)), [tickers, group]);
-  const selTicker = useMemo(() => tickers.find((t) => tkKey(t) === sel) ?? null, [tickers, sel]);
-  const selVisible = selTicker != null && visTickers.some((t) => tkKey(t) === sel);
+  async function createGroup() {
+    const nm = newName.trim();
+    if (!nm || busyNew) return;
+    setNewErr(""); setBusyNew(true);
+    try {
+      const r = await fetch("/api/watchlists", { method: "POST", body: JSON.stringify({ name: nm }) });
+      // 서버 detail은 영어·격식체라 그대로 노출하지 않고 한국어 해요체로 매핑 (해요체 불변조건).
+      if (!r.ok) { setNewErr(r.status === 409 ? "이미 같은 이름의 그룹이 있어요." : "그룹을 만들지 못했어요."); return; }
+      const wl = await r.json();
+      setCreating(false); setNewName("");
+      onManageWatch?.(wl.id);   // 관심 페이지로 — 방금 만든 그룹에 실제 종목을 담도록
+    } catch {
+      setNewErr("그룹을 만들지 못했어요.");
+    } finally { setBusyNew(false); }
+  }
+
+  const selTicker = tickers.find((t) => tkKey(t) === sel) ?? null;
   const selCards = sel ? cardsBy[sel] : undefined;
+
+  const tickerCards = (t: TickerInfo) => (
+    <div className="tk-cards" data-testid="tk-cards">
+      {loadingKey === sel ? (
+        <div className="tk-loading" data-testid="tk-loading">
+          <span className="tl-spin" aria-hidden />
+          {t.name}의 공시·가격·뉴스·밸류에이션·수급을 훑는 중…
+        </div>
+      ) : selCards && selCards.length > 0 ? (
+        <div className="qc-list">
+          {selCards.slice(0, 5).map((c, i) => (
+            <QCard key={i} c={c} name={t.name} onPick={onPick} onEvidence={onEvidence} />
+          ))}
+        </div>
+      ) : selCards ? (
+        <div className="tk-gap" data-testid="tk-gap">
+          지금은 {t.name}의 분석거리를 준비하지 못했어요 — 잠시 후 다시 눌러보세요.
+          직접 물어보셔도 돼요:
+          <span className="tk-gap-chips">
+            {capabilityChips(t.name, t.market).slice(0, 3).map((ch) => (
+              <button key={ch.label} type="button" className="grp" onClick={() => onPick(ch.q)}>{ch.label}</button>
+            ))}
+          </span>
+        </div>
+      ) : null}
+    </div>
+  );
 
   return (
     <div className="ask" data-testid="cockpit">
@@ -106,90 +160,127 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence }: {
         <p className="ask-trust">모든 답에는 <b>출처[n]</b>가 붙고, <span className="ask-noforecast">전망은 하지 않아요</span>.</p>
       </div>
 
-      {/* 2단: 내 관심종목 파고들기 · Macro Trends */}
-      <div className="ask-cols">
-        {/* 왼쪽 — 내 관심종목 파고들기 (종목을 누르면 그 자리에서 3~5개 큐레이션) */}
-        <section className="ask-col" data-testid="ck-mine">
+      <div className="ask-secs">
+        {/* ① 내 관심종목 파고들기 — @그룹 아코디언 → 종목 칩 → 온디맨드 분석 카드 */}
+        <section className="ask-sec" data-testid="ck-mine">
           <div className="ask-col-h">
             <span className="ask-col-t">🔎 내 관심종목 파고들기</span>
           </div>
-          <p className="ask-col-desc">궁금한 종목을 누르면 <b>공시·가격·뉴스·밸류에이션·수급·실적</b>을 훑어 오늘 가장 눌러볼 만한 분석거리 3~5개를 추려드려요.</p>
+          <p className="ask-col-desc">그룹을 열고 궁금한 종목을 누르면 <b>공시·가격·뉴스·밸류에이션·수급·실적</b>을 훑어 오늘 가장 눌러볼 만한 분석거리 3~5개를 추려드려요.</p>
 
-          {tickers.length > 0 ? (
-            <>
-              {groups.length > 1 && (
-                <div className="grp-row">
-                  <button type="button" className={`grp ${group === null ? "on" : ""}`} onClick={() => setGroup(null)}>전체</button>
-                  {groups.map((g) => (
-                    <button key={g} type="button" className={`grp ${group === g ? "on" : ""}`}
-                      data-testid={`grp-${g}`} onClick={() => setGroup((v) => (v === g ? null : g))}>{g}</button>
-                  ))}
-                </div>
-              )}
-              <div className="tk-row" role="listbox" aria-label="관심종목">
-                {visTickers.map((t) => {
-                  const key = tkKey(t);
-                  const on = sel === key;
-                  return (
-                    <button key={key} type="button" data-testid={`tk-${t.ticker}`}
-                      className={`tk-chip ${on ? "on" : ""}`} aria-pressed={on}
-                      onClick={() => void pickTicker(t)}>
-                      <TickerLogo market={t.market} ticker={t.ticker} name={t.name} size={20} />
-                      <span className="tk-name">{t.name}</span>
-                      <span className="tk-mkt mono">{t.market}</span>
-                      {loadingKey === key ? <span className="tl-spin" aria-hidden /> : (
-                        <span className="tk-chev" aria-hidden>{on ? "▾" : "▸"}</span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {selTicker && selVisible && (
-                <div className="tk-cards" data-testid="tk-cards">
-                  {loadingKey === sel ? (
-                    <div className="tk-loading" data-testid="tk-loading">
-                      <span className="tl-spin" aria-hidden />
-                      {selTicker.name}의 공시·가격·뉴스·밸류에이션·수급을 훑는 중…
-                    </div>
-                  ) : selCards && selCards.length > 0 ? (
-                    <div className="qc-list">
-                      {selCards.slice(0, 5).map((c, i) => (
-                        <QCard key={i} c={c} name={selTicker.name} onPick={onPick} onEvidence={onEvidence} />
-                      ))}
-                    </div>
-                  ) : selCards ? (
-                    <div className="tk-gap" data-testid="tk-gap">
-                      지금은 {selTicker.name}의 분석거리를 준비하지 못했어요 — 잠시 후 다시 눌러보세요.
-                      직접 물어보셔도 돼요:
-                      <span className="tk-gap-chips">
-                        {capabilityChips(selTicker.name, selTicker.market).slice(0, 3).map((ch) => (
-                          <button key={ch.label} type="button" className="grp" onClick={() => onPick(ch.q)}>{ch.label}</button>
+          {groups.length > 0 ? (
+            <div className="eg-list">
+              {groups.map((g) => {
+                const members = tickers.filter((t) => t.groups.includes(g.name));
+                const open = openGroup === g.name;
+                return (
+                  <div key={g.id} className={`eg ${open ? "open" : ""}`}>
+                    <button type="button" className="eg-head" data-testid={`grp-${g.name}`}
+                      aria-expanded={open} onClick={() => setOpenGroup(open ? null : g.name)}>
+                      <span className="eg-name">@{g.name}</span>
+                      <span className="eg-logos" aria-hidden>
+                        {members.slice(0, 5).map((t) => (
+                          <span key={tkKey(t)} className="eg-logo">
+                            <TickerLogo market={t.market} ticker={t.ticker} name={t.name} size={18} />
+                          </span>
                         ))}
                       </span>
-                    </div>
-                  ) : null}
+                      <span className="eg-count mono">{members.length}종목</span>
+                      <span className="eg-chev" aria-hidden>{open ? "▾" : "▸"}</span>
+                    </button>
+                    {open && (
+                      <div className="eg-body" data-testid={`grp-body-${g.name}`}>
+                        {members.length === 0 ? (
+                          <div className="tk-gap">
+                            아직 담긴 종목이 없어요.
+                            <span className="tk-gap-chips">
+                              <button type="button" className="grp" onClick={() => onManageWatch?.(g.id)}>＋ 종목 담으러 가기</button>
+                            </span>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="tk-row" role="listbox" aria-label={`@${g.name} 종목`}>
+                              {members.map((t) => {
+                                const key = tkKey(t);
+                                const on = sel === key;
+                                return (
+                                  <button key={key} type="button" data-testid={`tk-${t.ticker}`}
+                                    className={`tk-chip ${on ? "on" : ""}`} aria-pressed={on}
+                                    onClick={() => void pickTicker(t)}>
+                                    <TickerLogo market={t.market} ticker={t.ticker} name={t.name} size={20} />
+                                    <span className="tk-name">{t.name}</span>
+                                    <span className="tk-mkt mono">{t.market}</span>
+                                    {loadingKey === key ? <span className="tl-spin" aria-hidden /> : (
+                                      <span className="tk-chev" aria-hidden>{on ? "▾" : "▸"}</span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            {selTicker && members.some((t) => tkKey(t) === sel) && tickerCards(selTicker)}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {creating ? (
+                <div className="eg-new">
+                  <input className="input" autoFocus placeholder="그룹 이름 (예: 반도체바스켓)" value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void createGroup();
+                      if (e.key === "Escape") { setCreating(false); setNewName(""); setNewErr(""); }
+                    }} />
+                  <button type="button" className="grp on" onClick={() => void createGroup()}
+                    disabled={busyNew || !newName.trim()}>추가</button>
+                  <button type="button" className="grp"
+                    onClick={() => { setCreating(false); setNewName(""); setNewErr(""); }}>취소</button>
+                  {newErr && <span className="eg-new-err">{newErr}</span>}
                 </div>
+              ) : (
+                <button type="button" className="wl-addgroup" data-testid="eg-add"
+                  onClick={() => setCreating(true)}>＋ 새 그룹</button>
               )}
-            </>
+            </div>
           ) : (
             <div className="nudge-card" data-testid="ck-nudge">
-              <div className="nudge-t">관심종목을 등록하면</div>
-              <div className="nudge-b">여기서 종목을 눌러 그날의 분석거리를 바로 받아볼 수 있어요.</div>
+              <div className="nudge-t">관심 그룹을 만들면</div>
+              <div className="nudge-b">여기서 그룹 속 종목을 눌러 그날의 분석거리를 바로 받아볼 수 있어요.</div>
+              <button type="button" className="wl-addgroup nudge-cta" onClick={() => onManageWatch?.()}>＋ 관심 그룹 만들기</button>
             </div>
           )}
         </section>
 
-        {/* 오른쪽 — Macro Trends (뉴스+거시지표, 5분 주기 백그라운드 갱신 + read-through) */}
+        {/* ② Macro Trends — 우→좌 마키 (호버·포커스 시 정지; 카드 탭 = 컴포저 채움).
+            카드가 4장 미만(콜드스타트 등)이면 흐르지 않는 정적 행 — 한두 장이 뱅뱅 도는
+            어색한 루프 방지. */}
         {news.length > 0 && (
-          <section className="ask-col" data-testid="ck-news">
+          <section className="ask-sec" data-testid="ck-news">
             <div className="ask-col-h">
               <span className="ask-col-t">🌍 Macro Trends</span>
               <span className="ask-col-sub mono">5분마다 갱신</span>
             </div>
-            <p className="ask-col-desc">실시간 뉴스와 <b>금리·물가·고용</b> 같은 거시 지표에서 지금 눌러볼 만한 질문만 골라뒀어요.</p>
-            <div className="qc-list">
-              {news.map((c, i) => <QCard key={i} c={c} onPick={onPick} onEvidence={onEvidence} />)}
+            <p className="ask-col-desc">실시간 뉴스와 <b>금리·물가·고용</b> 같은 거시 지표를 교차해, 지금 파볼 만한 질문만 골라뒀어요. 관심 가는 카드를 눌러 바로 살펴보세요.</p>
+            <div className={`mq ${news.length < 4 ? "mq-static" : ""}`} data-testid="ck-news-mq">
+              <div className="mq-track" style={{ animationDuration: `${Math.max(45, news.length * 8)}s` }}>
+                <div className="mq-half">
+                  {news.map((c, i) => (
+                    <div key={i} className="mq-card"><QCard c={c} onPick={onPick} onEvidence={onEvidence} /></div>
+                  ))}
+                </div>
+                {/* 이어붙인 복제 절반 — 끊김 없는 루프용. aria-hidden + nonInteractive(tabIndex=-1)로
+                    스크린리더·키보드 탭 순서에서 제외(마우스 클릭은 유지). */}
+                {news.length >= 4 && (
+                  <div className="mq-half mq-dup" aria-hidden>
+                    {news.map((c, i) => (
+                      <div key={`d${i}`} className="mq-card"><QCard c={c} onPick={onPick} onEvidence={onEvidence} nonInteractive /></div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </section>
         )}

@@ -62,8 +62,10 @@ export function StandingList() {
 }
 
 export default function Watchlists(
-  { onClose, onChanged, embedded = false }:
-  { onClose?: () => void; onChanged?: () => void; embedded?: boolean },
+  { onClose, onChanged, embedded = false, initialId }:
+  // initialId: 엔트리 화면의 ＋ 새 그룹에서 방금 만든 그룹 — 그 그룹을 활성화하고
+  // ＋ 종목 검색을 바로 열어 종목을 담게 한다.
+  { onClose?: () => void; onChanged?: () => void; embedded?: boolean; initialId?: string },
 ) {
   const [lists, setLists] = useState<Watchlist[]>([]);
   const [activeId, setActiveId] = useState<string>("");
@@ -88,11 +90,15 @@ export default function Watchlists(
       if (r.ok) {
         const ls: Watchlist[] = (await r.json()).watchlists ?? [];
         setLists(ls);
-        setActiveId((cur) => selectId ?? (ls.some((l) => l.id === cur) ? cur : ls[0]?.id ?? ""));
+        setActiveId((cur) => (selectId && ls.some((l) => l.id === selectId)) ? selectId
+          : (ls.some((l) => l.id === cur) ? cur : ls[0]?.id ?? ""));
       }
     } catch {}
   }, []);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void load(initialId);
+    if (initialId) setShowSearch(true);   // 방금 만든 그룹 → 바로 종목 검색으로
+  }, [load, initialId]);
 
   function changed() { load(activeId); onChanged?.(); }
 

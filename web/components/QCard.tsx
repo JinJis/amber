@@ -24,14 +24,18 @@ export const KIND: Record<string, { i: string; t: string }> = {
   market:           { i: "📉", t: "시장" },
 };
 
-export function QCard({ c, name, onPick, onEvidence }: {
+export function QCard({ c, name, onPick, onEvidence, nonInteractive }: {
   c: AskCard; name?: string; onPick: (q: string) => void; onEvidence?: (cit: Citation) => void;
+  // 마키의 복제 절반(끊김 없는 루프용)은 aria-hidden + tabIndex=-1 로 키보드/스크린리더
+  // 탭 순서에서 제외한다 (마우스 클릭은 그대로 — WCAG 4.1.2 aria-hidden-focus 방지).
+  nonInteractive?: boolean;
 }) {
   const k = KIND[c.kind] ?? { i: "•", t: "" };
   const cit = c.citations?.[0];
+  const tab = nonInteractive ? -1 : undefined;
   return (
     <div className="qc">
-      <button type="button" className="qc-main" onClick={() => {
+      <button type="button" className="qc-main" tabIndex={tab} onClick={() => {
         // RC-1: 탭 신호(fire-and-forget) — 실패해도 UX 무영향
         try { fetch("/api/ask-feed/tap", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ kind: c.kind, ticker: c.ticker ?? null }) }).catch(() => {}); } catch {}
@@ -47,7 +51,7 @@ export function QCard({ c, name, onPick, onEvidence }: {
         <div className="qc-hook">{c.hook}</div>
       </button>
       {cit?.source ? (
-        <button type="button" className="qc-src" title="근거 보기"
+        <button type="button" className="qc-src" title="근거 보기" tabIndex={tab}
           onClick={(e) => { e.stopPropagation(); onEvidence?.(cit); }}>
           <span className="qc-src-dot" aria-hidden />
           <span className="qc-src-name">{cit.source}</span>

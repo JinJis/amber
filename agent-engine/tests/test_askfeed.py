@@ -131,6 +131,8 @@ def test_news_plan_is_news_first_and_marketwide():
     news_calls = [p for p in plan if p[0] == "google_news__news"]
     assert {a["market"] for _, a, _ in news_calls} == {"US", "KR"}   # both markets' headlines
     assert all("ticker" not in a for _, a, _ in news_calls)          # market-wide, not per-ticker
+    # /news 라우트 상한은 10(le=10) — 넘기면 400 → 소스 통째 드랍. 상한에 맞춰야 한다.
+    assert all(a["limit"] <= 10 for _, a, _ in news_calls)
     assert "yahoo__asset_classes" in names                           # price context rides along
     # Macro Trends: 실제 거시지표 최신값(FRED 패널)도 US·KR 모두 엮는다
     assert [a["region"] for n, a, _ in plan if n == "fred__macro_panel"] == ["US", "KR"]
@@ -180,6 +182,40 @@ def test_ticker_plan_covers_diverse_angles():
     names_kr = [p[0] for p in plan_kr]
     assert "kis__investor_flow" in names_kr                  # KR 수급
     assert "fmp__consensus_estimates" not in names_kr        # US 전용은 제외
+
+
+async def test_news_scope_allows_twenty_cards_ticker_stays_curated(monkeypatch):
+    """Macro Trends 마키: 뉴스 스코프는 20장까지 내보내고, 티커 스코프는 여전히 3~6장 큐레이션."""
+    gathered = [_g(1, "google_news__news", {"items": [{"title": "Fed holds rates",
+                                                       "date": "2026-07-05"}]}, source="Google News")]
+    monkeypatch.setattr(AF, "PlatformClient", lambda key: _FakeClient({"google_news__news": {}}, gathered))
+    monkeypatch.setattr(AF, "_news_plan", lambda tools: [("google_news__news", {}, "x")])
+    monkeypatch.setattr(AF, "_ticker_plan", lambda tools, req: [("google_news__news", {}, "x")])
+
+    async def fake_gather(client, tools, plan):
+        return gathered
+    monkeypatch.setattr(AF, "_gather", fake_gather)
+
+    async def fake_synth(prompt):
+        return [{"kind": "macro", "question": f"주제 {i}번을 같이 볼까요?", "hook": "Fed holds rates",
+                 "sources": [1]} for i in range(25)]
+    monkeypatch.setattr(AF, "_synthesize", fake_synth)
+
+    out = await build_ask_feed(AskFeedRequest(scope="news_feed", limit=20), api_key="k")
+    assert len(out["cards"]) == 20                     # 25 생성 → 상한 20에서 자름
+
+    kinds = ["filing_deep", "price_context", "news_probe", "history_echo",
+             "fundamental_shift", "valuation", "ownership", "earnings"]
+
+    async def fake_curated(prompt):
+        return {"candidates": [{"kind": k, "question": f"{k} 카드 볼까요?", "hook": "Fed holds rates",
+                                "sources": [1]} for k in kinds],
+                "picks": list(range(len(kinds)))}
+    monkeypatch.setattr(AF, "_synthesize_curated", fake_curated)
+
+    out_t = await build_ask_feed(AskFeedRequest(scope="ticker", market="US", ticker="AAPL",
+                                                limit=20), api_key="k")
+    assert len(out_t["cards"]) == 6                    # 티커 스코프 상한은 그대로 6
 
 
 def test_curate_respects_picks_and_kind_diversity():

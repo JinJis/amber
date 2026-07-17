@@ -127,8 +127,9 @@ async def refresh_once() -> dict:
                 key = _bg_api_key(db)
                 if not key:
                     return {"scopes": 0, "refreshed": 0}
+                # Macro Trends 마키(우→좌 흐름)용 — 분야가 서로 겹치지 않는 심층 질문 20개.
                 ok = await _refresh_scope(client, db, scope=_NEWS_SCOPE, api_key=key,
-                                          body={"scope": _NEWS_SCOPE, "limit": 6},
+                                          body={"scope": _NEWS_SCOPE, "limit": 20},
                                           timeout=settings.ask_feed_generate_timeout_seconds)
                 return {"scopes": 1, "refreshed": 1 if ok else 0}
             finally:
@@ -196,19 +197,21 @@ async def ask_feed_refresh() -> dict:
 
 
 def _assemble(db: Session, email: str) -> dict:
-    # Each ticker carries the watchlist GROUP(s) it belongs to — the entry screen filters by group
-    # (관심그룹). A ticker in two groups appears under both filters.
+    # 1차 depth = 관심 @그룹 (id+name — id는 관심 페이지로의 딥링크에 쓰인다). 빈 그룹도
+    # 내려보낸다: 엔트리의 그룹 아코디언이 "방금 만든 그룹"을 그대로 보여주고 종목 추가로
+    # 이어줘야 하므로. Each ticker carries the group NAME(s) it belongs to — a ticker in two
+    # groups appears under both.
+    groups = [{"id": wid, "name": wname} for wid, wname in db.execute(
+        select(Watchlist.id, Watchlist.name)
+        .where(Watchlist.user_email == email).order_by(Watchlist.name)).all()]
     rows = db.execute(
         select(Watchlist.name, WatchlistItem.market, WatchlistItem.ticker, WatchlistItem.name)
         .join(Watchlist, WatchlistItem.watchlist_id == Watchlist.id)
         .where(Watchlist.user_email == email)
         .order_by(Watchlist.name, WatchlistItem.market, WatchlistItem.ticker)
     ).all()
-    groups: list[str] = []
     by_ticker: dict[str, dict] = {}
     for group, market, ticker, name in rows:
-        if group not in groups:
-            groups.append(group)
         key = _scope_key(market, ticker)
         entry = by_ticker.setdefault(key, {"market": (market or "US").upper(), "ticker": ticker,
                                            "name": name or ticker, "groups": []})

@@ -3,9 +3,9 @@
 Two scopes, two rhythms:
 
 * ``news_feed`` — studio-api's refresher calls this every ~10 minutes in the background:
-  gather the freshest US/KR market headlines (+ an index snapshot for context) through the
-  gateway, pick the IMPORTANT news, and synthesize curiosity-provoking question cards. The
-  entry screen shows them instantly (pure cache read).
+  gather the freshest US/KR market headlines (+ index snapshot + macro panels) through the
+  gateway and synthesize up to 20 DEEP, theme-diverse question cards (교차·모순·2차 파급·과거
+  대조 — 단순 시황 중계 금지) for the entry screen's Macro Trends marquee (pure cache read).
 * ``ticker`` — called on demand when the user taps a watchlist ticker on the entry screen
   (never as a background sweep over every watched ticker): a WIDE gather over every angle
   the desk has for that ticker (price·filings·news·valuation·insiders/flows·consensus·
@@ -101,8 +101,10 @@ def _news_plan(tools: dict[str, dict]) -> list[tuple[str, dict, str]]:
     returns market-wide news) + one index snapshot so the editor has price context."""
     plan: list[tuple[str, dict, str]] = []
     if "google_news__news" in tools:
-        plan.append(("google_news__news", {"market": "US", "limit": 8}, "미국 시장 실시간 헤드라인"))
-        plan.append(("google_news__news", {"market": "KR", "limit": 8}, "한국 시장 실시간 헤드라인"))
+        # 20장 마키를 채울 만큼 주제가 갈라지도록 헤드라인 풀을 넓게 가져온다. /news 라우트
+        # 상한이 10(le=10)이라 그 이상은 400 → 소스가 통째로 드랍되므로 10에 맞춘다.
+        plan.append(("google_news__news", {"market": "US", "limit": 10}, "미국 시장 실시간 헤드라인"))
+        plan.append(("google_news__news", {"market": "KR", "limit": 10}, "한국 시장 실시간 헤드라인"))
     if "yahoo__asset_classes" in tools:
         plan.append(("yahoo__asset_classes", {}, "지수·금리·원자재·환율 스냅샷"))
     if "fred__macro_panel" in tools:
@@ -150,12 +152,28 @@ _TICKER_PROMPT = """당신은 리서치 데스크의 선임 애널리스트입�
 {snippets}
 """
 
-_NEWS_PROMPT = """당신은 리서치 데스크의 시황·거시 에디터입니다. 아래는 방금 수집된 미국·한국
-시장의 실시간 뉴스 헤드라인, 지수·환율 스냅샷, 그리고 **핵심 거시지표 패널(금리·물가·고용 등의
-실제 최신값)**입니다([n] 인덱스). 이 중 투자 리서치 관점에서 정말 중요한 것만 골라, 사용자가
-"궁금해서 눌러보고 싶어지는" Macro Trends 질문 카드를 {limit}개 이내로 만드세요.
-- 뉴스 헤드라인과 거시 패널의 실제 수치를 엮으면 가장 좋습니다 (예: 금리 관련 뉴스 + 패널의
-  현재 기준금리 값). 사소한 잡음(단순 시황 중계, 광고성 기사, 중복 보도)은 버리세요.
+_NEWS_PROMPT = """당신은 글로벌 매크로 헤지펀드의 수석 스트래티지스트 출신 에디터입니다. 아래는
+방금 수집된 미국·한국 시장의 실시간 뉴스 헤드라인, 지수·금리·원자재·환율 스냅샷, 그리고 **핵심
+거시지표 패널(금리·물가·고용 등의 실제 최신값)**입니다([n] 인덱스). 프로 투자자·애널리스트가
+"이건 지금 파봐야 해"라며 스크롤을 멈추고 눌러볼 Macro Trends 질문 카드를 {limit}개 이내로
+만드세요. 사소한 잡음(단순 시황 중계, 광고성 기사, 중복 보도)은 버리세요.
+
+깊이 — 단순 시황 중계 카드는 실격입니다. 좋은 카드는 서로 다른 데이터를 엮어 긴장을 드러냅니다:
+- 교차: 뉴스 헤드라인 × 거시 패널의 실제 수치 × 지수·환율 스냅샷을 한 카드에서 엮기
+  (예: 금리 인하 관측 보도 + 패널의 현재 기준금리·10년물 값).
+- 모순·괴리: 헤드라인끼리, 또는 뉴스와 지표가 서로 어긋나는 지점을 짚기
+  (예: "물가 둔화" 보도 vs 아직 높은 근원 물가 값).
+- 2차 파급: 한 사건이 다른 자산·시장·산업으로 번지는 경로를 데이터로 따라가게 하기
+  (예: 유가 급등 → 항공·화학 원가, 원화 약세 → 수출주·수입물가).
+- 과거 대조: 지금 수치가 과거 사이클 어디쯤인지 기록으로 확인하게 하기 — 전망이 아니라
+  과거 기록 조회여야 합니다.
+
+다양성 — {limit}개가 한 주제로 쏠리면 실패입니다:
+- 같은 주제(예: 연준 금리)는 최대 2개. 스니펫이 허용하는 한 통화정책·물가·고용·환율·원자재/
+  에너지·반도체/AI·개별 산업·기업 실적/공시·지정학/정책·한국 시장 고유 이슈·변동성/수급처럼
+  서로 멀리 떨어진 분야로 넓게 퍼뜨리세요. 미국과 한국을 골고루 다루세요.
+- 단, 스니펫에 없는 주제를 억지로 만들지는 말 것 — 모든 카드는 실제 스니펫 사실에서 출발합니다.
+- 중요도 순으로 정렬하세요(맨 앞 카드가 가장 강력하게).
 
 규칙 (모두 필수):
 - kind는 다음 중 하나: macro(금리·물가·환율·정책) | micro(기업 실적·공시·산업) | market(지수·수급·변동성)
@@ -194,8 +212,10 @@ async def _gen_json(prompt: str, schema: dict) -> dict:
 
     from agentengine.gemini_io import _get_text_from_response, genai_client
 
+    # 8192: 뉴스 스코프는 카드 20장(각 question+query+hook)을, 티커 스코프는 소스별 후보
+    # 2~3장×~10소스를 JSON으로 담는다 — 4096이면 긴 생성이 중간에 잘린다.
     cfg = types.GenerateContentConfig(
-        temperature=0.4, max_output_tokens=4096, response_mime_type="application/json",
+        temperature=0.4, max_output_tokens=8192, response_mime_type="application/json",
         response_schema=schema, thinking_config=types.ThinkingConfig(thinking_budget=0),
     )
     client = genai_client()
@@ -267,10 +287,14 @@ async def build_ask_feed(req: AskFeedRequest, api_key: str | None) -> dict:
         # the records didn't change → the previous cards still hold; no LLM spend.
         return {"cards": [], "signature": sig, "unchanged": True, "generated_at": _now_iso()}
 
-    limit = max(3, min(req.limit, 6))
-    prompt = (_TICKER_PROMPT.format(name=req.name or req.ticker, limit=limit, snippets=_snippets(gathered))
+    # 티커 스코프는 3~5장 큐레이션(ASK-9), 뉴스 스코프는 Macro Trends 마키용 최대 20장.
+    limit = max(3, min(req.limit, 6 if is_ticker else 20))
+    # 뉴스 스코프는 소스당 스니펫 예산을 넉넉히 — 10 헤드라인/시장이 잘리지 않아야 20장
+    # 다양성을 채운다 (기본 1600은 US 기사 ~3개에서 끊긴다).
+    snippets = _snippets(gathered) if is_ticker else _snippets(gathered, budget=8000)
+    prompt = (_TICKER_PROMPT.format(name=req.name or req.ticker, limit=limit, snippets=snippets)
               if is_ticker
-              else _NEWS_PROMPT.format(limit=limit, snippets=_snippets(gathered)) + _session_hint())
+              else _NEWS_PROMPT.format(limit=limit, snippets=snippets) + _session_hint())
     raw_cards: list[dict] = []
     try:
         if is_ticker:

@@ -236,12 +236,14 @@ def _parse_cards(raw: str) -> list[dict]:
     return cards if isinstance(cards, list) else []
 
 
-def _snippets(gathered: list[dict]) -> str:
+def _snippets(gathered: list[dict], budget: int = _SNIPPET_CHARS) -> str:
     """The evidence snippets block fed to every synthesis prompt: one line per gathered source
-    with its index, why, source, tool, and a truncated JSON dump."""
+    with its index, why, source, tool, and a truncated JSON dump. ``budget`` caps each source's
+    JSON — the news scope raises it so all ~10 headlines/market survive (10 US 기사 ≈ 8k chars;
+    the default 1600 would cut it to ~3, starving the 20-card diverse marquee)."""
     return "\n".join(
         f"[{g['idx']}] {g['why']} · 출처 {g['citation'].source} · 도구 {g['tool']}\n"
-        f"{json.dumps(g['data'], ensure_ascii=False, default=str)[:_SNIPPET_CHARS]}"
+        f"{json.dumps(g['data'], ensure_ascii=False, default=str)[:budget]}"
         for g in gathered
     )
 

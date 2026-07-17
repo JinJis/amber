@@ -77,6 +77,8 @@ export default function Chat({ name, email, image, features, guest = false, prov
   // surface and the fallback when a feature-flagged surface is off.
   const [view, setView] = useState<"dashboard" | "explore" | "watch" | "bot" | "settings">(
     features.dashboard ? "dashboard" : "explore");
+  // 엔트리(＋ 새 그룹)에서 관심 페이지로 넘어올 때 활성화할 그룹 id — 종목을 바로 담도록.
+  const [watchFocus, setWatchFocus] = useState<string | undefined>(undefined);
   const [standingDone, setStandingDone] = useState<Set<number>>(new Set());  // SA-1: subscribed turns
   const [groups, setGroups] = useState<Watchlist[]>([]);   // @관심종목 groups (name + member items)
   const [mention, setMention] = useState<Watchlist[]>([]); // open @-autocomplete suggestions
@@ -511,7 +513,8 @@ export default function Chat({ name, email, image, features, guest = false, prov
             <span className="ic">📊</span><span className="lbl">대시보드</span>
           </button>
         )}
-        <button className={`rail-item ${view === "watch" ? "on" : ""}`} onClick={() => setView("watch")}>
+        <button className={`rail-item ${view === "watch" ? "on" : ""}`}
+          onClick={() => { setWatchFocus(undefined); setView("watch"); }}>
           <span className="ic">⭐</span><span className="lbl">관심종목</span>
         </button>
         <button className={`rail-item ${view === "settings" ? "on" : ""}`} onClick={() => { setView("settings"); if (isMobile) setDrawer(false); }}>
@@ -571,7 +574,7 @@ export default function Chat({ name, email, image, features, guest = false, prov
         {view === "settings" ? (
           <Settings name={name} email={email ?? name} image={image} />
         ) : view === "watch" ? (
-          <Watchlists embedded onChanged={loadHandles} />
+          <Watchlists embedded onChanged={loadHandles} initialId={watchFocus} />
         ) : view === "dashboard" && features.dashboard ? (
           <BoardCanvas onEvidence={setViewer} />
         ) : view === "bot" && features.alerts ? (
@@ -601,6 +604,7 @@ export default function Chat({ name, email, image, features, guest = false, prov
                     onPick={(q) => { setInput(q); inputRef.current?.focus(); }}
                     onQuestions={setTodayQs}
                     onEvidence={setViewer}
+                    onManageWatch={(id) => { setWatchFocus(id); setView("watch"); }}
                   />
                 </div>
               )}

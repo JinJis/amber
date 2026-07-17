@@ -708,10 +708,9 @@ select.input { appearance: none; }
 .tk-gap { font-size: 12px; color: var(--muted); line-height: 1.7; padding: 10px 4px; }
 .tk-gap-chips { display: inline-flex; gap: 6px; margin-left: 8px; vertical-align: middle; }
 
-/* 2단 레이아웃 */
-.ask-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
-@media (max-width: 860px) { .ask-cols { grid-template-columns: 1fr; } }
-.ask-col { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+/* v5: 섹션 세로 스택 (관심종목 → Macro Trends → …) */
+.ask-secs { display: flex; flex-direction: column; gap: 30px; }
+.ask-sec { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
 .ask-col-h { display: flex; align-items: center; gap: 8px; }
 .ask-col-t { font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: -.01em; }
 .ask-col-sub { margin-left: auto; font-size: 9.5px; color: var(--faint); border: 1px solid var(--line-3);
@@ -719,12 +718,65 @@ select.input { appearance: none; }
 .ask-col-desc { font-size: 11.5px; line-height: 1.55; color: var(--muted); margin: 0 0 3px; }
 .ask-col-desc b { color: var(--text-2); font-weight: 600; }
 
-/* 관심그룹 필터 */
+/* 알약 버튼 (능력 칩·소액션) */
 .grp-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 2px; }
 .grp { padding: 5px 12px; font-size: 12px; border: 1px solid var(--line-2); border-radius: 999px;
   background: var(--panel); color: var(--text-2); cursor: pointer; transition: all .12s; }
 .grp:hover { border-color: var(--ink); color: var(--text); }
 .grp.on { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
+.grp:disabled { opacity: .45; cursor: default; }
+
+/* v5: 관심 @그룹 아코디언 (1차 depth = 그룹, 펼치면 종목 칩) */
+.eg-list { display: flex; flex-direction: column; gap: 8px; }
+.eg { border: 1px solid var(--line-2); border-radius: 13px; background: var(--panel);
+  box-shadow: var(--shadow-card); transition: border-color .13s; }
+.eg.open, .eg:hover { border-color: var(--ink); }
+.eg-head { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 12px 14px; cursor: pointer; background: none; border: none; border-radius: 13px; }
+.eg-head:hover { background: var(--panel-2); }
+.eg-name { font-size: 13.5px; font-weight: 700; color: var(--text); letter-spacing: -.01em; }
+.eg-logos { display: inline-flex; align-items: center; }
+.eg-logo { display: inline-flex; border-radius: 50%; box-shadow: 0 0 0 2px var(--panel);
+  margin-left: -6px; }
+.eg-logo:first-child { margin-left: 0; }
+.eg-count { margin-left: auto; font-size: 10px; color: var(--muted);
+  border: 1px solid var(--line-3); border-radius: 999px; padding: 2px 8px; flex-shrink: 0; }
+.eg-chev { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+.eg-body { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px 14px;
+  border-top: 1px dashed var(--line-3); }
+.eg-new { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.eg-new .input { flex: 1; min-width: 180px; box-sizing: border-box; padding: 9px 12px; font-size: 13px; }
+.eg-new-err { font-size: 11px; color: var(--danger, #d66); flex-basis: 100%; }
+
+/* v5: Macro Trends 마키 — 우→좌 흐름, 호버/포커스 정지, 가장자리 페이드.
+   overflow: clip (hidden 아님) — clip은 스크롤 컨테이너가 아니라서 키보드 포커스가
+   .mq를 프로그래밍적으로 스크롤해 루프를 어긋나게 만드는 문제를 원천 차단한다. */
+.mq { overflow: clip; padding: 4px 0 6px;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent); }
+.mq-track { display: flex; width: max-content; animation: mq-flow 160s linear infinite; }
+.mq:hover .mq-track, .mq:focus-within .mq-track { animation-play-state: paused; }
+.mq-half { display: flex; }
+.mq-card { width: min(320px, 78vw); flex-shrink: 0; margin-right: 12px; display: flex; }
+.mq-card .qc { flex: 1; display: flex; flex-direction: column; }
+.mq-card .qc-main { flex: 1; align-content: flex-start; }
+@keyframes mq-flow { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+/* 카드가 적어(콜드스타트) 흐르지 않는 정적 행 */
+.mq-static { -webkit-mask-image: none; mask-image: none; overflow-x: auto; overflow-y: hidden; }
+.mq-static .mq-track { animation: none; }
+/* 터치 기기(hover 없음): 호버 정지가 불가능하고 움직이는 탭 타깃은 나쁜 UX →
+   자동 흐름 대신 손가락으로 넘겨보는 정적 스와이프 행으로. */
+@media (hover: none) {
+  .mq { -webkit-mask-image: none; mask-image: none; overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch; }
+  .mq-track { animation: none !important; }
+  .mq-dup { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mq { -webkit-mask-image: none; mask-image: none; overflow-x: auto; overflow-y: hidden; }
+  .mq-track { animation: none !important; }
+  .mq-dup { display: none; }
+}
 
 /* 분석 카드 리스트 */
 .qc-list { display: flex; flex-direction: column; gap: 9px; }
@@ -764,6 +816,7 @@ select.input { appearance: none; }
   background: var(--panel-2); text-align: center; }
 .nudge-t { font-size: 13.5px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
 .nudge-b { font-size: 12px; color: var(--muted); }
+.nudge-cta { margin-top: 12px; text-align: center; }
 
 /* ENT-1: 빈 상태에서 컴포저 승격 (같은 컴포저, 시각만 크게) */
 .composer form.hero { max-width: 640px; margin: 0 auto; width: 100%; }
