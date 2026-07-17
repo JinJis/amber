@@ -378,6 +378,14 @@ def grade(checks: dict, r: dict) -> list[tuple[str, bool, str]]:
         data = [c for c in r.get("cards") or [] if c.get("kind") not in ("watchlist_nudge", "continue_thread")]
         bad = [c.get("question") for c in data if not c.get("citations")]
         out.append(("all data cards cited", not bad, f"uncited={bad}"))
+    if "cards_kind_diverse" in checks:
+        # 피드 다양성: 데이터 카드가 최소 N개의 서로 다른 kind로 퍼져 있다(가격·공시만 반복 금지).
+        # 카드가 없으면(시장 전체 공유 캐시가 작은 유니버스에서 빌 수 있음) 정직한 갭으로 통과.
+        want = checks["cards_kind_diverse"]
+        data = [c for c in r.get("cards") or [] if c.get("kind") not in ("watchlist_nudge", "continue_thread")]
+        kinds = sorted({c.get("kind") for c in data if c.get("kind")})
+        ok = (not data) or len(kinds) >= want
+        out.append((f"≥{want} distinct card kinds", ok, f"kinds={kinds}"))
     if "expect_computation" in checks:
         # PH-DATA-6: a self-computed figure (valuation/backtest/screener) must carry the auditable
         # derivation — method + at least one input/assumption/step row — so the math isn't a black box.

@@ -260,6 +260,36 @@ def test_ticker_generation_failure_returns_honest_gap(monkeypatch):
     assert r.json()["cards"] == []          # a gap, never fabricated content
 
 
+def test_ticker_in_proc_single_flight_collapses_concurrent_taps(monkeypatch):
+    """ME-1: 같은 티커를 동시에 탭하면 in-proc 락이 생성을 1회로 합친다 — 두 번째는 첫 결과를
+    서빙(중복 2단계 Gemini 방지). (교차노드 PG advisory lock은 SQLite no-op이라 여기선 미검증 —
+    PG 통합 환경 필요.)"""
+    import studioapi.askfeed as SAF
+    with SessionLocal() as db:
+        _mk_user(db, "sf@u.com")
+    scope = _scope_key("US", "COIN")
+    calls = {"n": 0}
+
+    async def slow_refresh(client, db, *, scope, api_key, body, timeout):
+        calls["n"] += 1
+        await asyncio.sleep(0.2)                       # 첫 생성이 도는 동안 두 번째가 겹치게
+        row = db.get(AskFeedCache, scope) or AskFeedCache(scope=scope)
+        row.payload = json.dumps({"cards": TICKER_CARDS["cards"]})
+        row.signature, row.generated_at = "s", datetime.utcnow()
+        db.merge(row); db.commit()
+        return True
+    monkeypatch.setattr(SAF, "_refresh_scope", slow_refresh)
+    SAF._ticker_flight.clear()
+
+    async def _inner():
+        u = User(email="sf@u.com", api_key="vgk_x")
+        return await asyncio.gather(SAF.get_ticker_feed("US", "COIN", None, u),
+                                    SAF.get_ticker_feed("US", "COIN", None, u))
+    r1, r2 = asyncio.run(_inner())
+    assert r1["cards"] and r2["cards"]                 # 둘 다 카드를 받는다
+    assert calls["n"] == 1                             # 동시 탭 2회지만 생성은 1회
+
+
 @respx.mock
 def test_ticker_failure_serves_stale_pool_when_present(monkeypatch):
     """생성 실패라도 이전 풀이 있으면 그걸 서빙(정직한 공백은 캐시가 아예 없을 때만)."""

@@ -946,8 +946,10 @@ SCENARIOS = [
         ]},
         "criteria": ("각 카드의 hook은 인용된 소스의 사실만 담고(수치 창작 금지), question은 우리 도구로 "
                      "답할 수 있는 구체적 질문이어야 함. '기회'·'매수/매도'·'전망' 등 조언·예측 표현은 0건. "
-                     "관심그룹(NVDA·삼성전자)과 관련된 카드가 존재해야 함."),
-        "checks": {"expect_min_cards": 2, "cards_all_cited": True, "expect_status": 200, "judge": True},
+                     "관심그룹(NVDA·삼성전자)과 관련된 카드가 존재해야 하고, 카드들이 가격·공시·실적·뉴스처럼 "
+                     "서로 다른 각도로 다양해야 함(한 종류만 반복 금지)."),
+        "checks": {"expect_min_cards": 2, "cards_all_cited": True, "cards_kind_diverse": 2,
+                   "expect_status": 200, "judge": True},
     },
     {
         # M-DERIV (DRV-5): a DERIVED metric's citation carries its derivation — the 출처
@@ -1024,7 +1026,8 @@ SCENARIOS = [
         "agent": {"name": "-", "data_sources": []},
         "criteria": ("각 카드 hook은 뉴스/거시지표의 실제 사실 한 줄이고 모두 출처를 인용. kind는 "
                      "macro/micro/market 중 하나. 방향 예측·조언·'기회'·목표가 표현은 0건 — "
-                     "'이런 데이터가 나왔다'까지만. 단순 시황 중계가 아니라 파볼 만한 질문."),
+                     "'이런 데이터가 나왔다'까지만. 단순 시황 중계가 아니라 파볼 만한 질문이어야 하고, "
+                     "question은 해요체(~할까요?/~볼까요?)의 친근한 초대문. 여러 분야로 다양하게."),
         "checks": {"cards_all_cited": True, "expect_status": 200, "judge": True},
     },
     {
