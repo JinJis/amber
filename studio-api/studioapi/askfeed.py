@@ -44,6 +44,15 @@ router = APIRouter(tags=["ask-feed"])
 
 _NEWS_SCOPE = "news_feed"
 
+# 홈 마키 섹션(시장 전체 공유 캐시). 뉴스보다 느리게 도는 스코프들 — 각 에이전트 스코프로
+# 생성해 스코프명으로 캐시. 프레젠테이션(제목·이모지·카피)은 프런트가 스코프로 매핑한다.
+# 순서 = 화면 노출 순서(Macro Trends 다음 어닝 → 거장·수급 → 히스토리).
+_SECTION_SCOPES: list[dict] = [
+    {"scope": "earnings_radar", "limit": 14},
+    {"scope": "guru_flows", "limit": 14},
+    {"scope": "history_lab", "limit": 14},
+]
+
 
 def _scope_key(market: str, ticker: str) -> str:
     return f"ticker:{(market or 'US').upper()}:{ticker}"
@@ -137,6 +146,34 @@ async def refresh_once() -> dict:
                     db.execute(func.pg_advisory_unlock(0x76674132))
 
 
+async def refresh_sections_once() -> dict:
+    """One pass over the market-wide marquee section scopes (어닝·거장·히스토리). Each is a SHARED
+    scope (not a per-ticker sweep) and signature-gated, so unchanged data spends no LLM call.
+    Refreshed on a slower cadence than news — the read-through kick regenerates a stale section
+    when someone visits, and the background loop keeps them warm even without visitors."""
+    refreshed = 0
+    async with httpx.AsyncClient() as client:
+        with SessionLocal() as db:
+            # CR-3: only ONE replica generates the shared sections per interval (separate lock
+            # id from news_feed's). No-op on SQLite.
+            is_pg = db.bind.dialect.name == "postgresql"
+            if is_pg and not bool(db.execute(func.pg_try_advisory_lock(0x76674133)).scalar()):  # 'vgA3'
+                return {"scopes": 0, "refreshed": 0}
+            try:
+                key = _bg_api_key(db)
+                if not key:
+                    return {"scopes": 0, "refreshed": 0}
+                for s in _SECTION_SCOPES:
+                    ok = await _refresh_scope(client, db, scope=s["scope"], api_key=key,
+                                              body={"scope": s["scope"], "limit": s["limit"]},
+                                              timeout=settings.ask_feed_generate_timeout_seconds)
+                    refreshed += 1 if ok else 0
+            finally:
+                if is_pg:
+                    db.execute(func.pg_advisory_unlock(0x76674133))
+    return {"scopes": len(_SECTION_SCOPES), "refreshed": refreshed}
+
+
 async def _loop() -> None:
     while True:
         try:
@@ -148,12 +185,25 @@ async def _loop() -> None:
         await asyncio.sleep(settings.ask_feed_refresh_seconds)
 
 
+async def _sections_loop() -> None:
+    while True:
+        try:
+            out = await refresh_sections_once()
+            if out["refreshed"]:
+                log.info("ask-feed sections refreshed (%d)", out["refreshed"])
+        except Exception:
+            log.exception("ask-feed sections tick failed")
+        await asyncio.sleep(settings.ask_feed_section_refresh_seconds)
+
+
 def start(task_holder: list) -> None:
     if not settings.ask_feed_enabled:
         log.info("ask-feed refresher disabled")
         return
     task_holder.append(asyncio.create_task(_loop()))
-    log.info("ask-feed news refresher started (every %ss)", settings.ask_feed_refresh_seconds)
+    task_holder.append(asyncio.create_task(_sections_loop()))
+    log.info("ask-feed refreshers started (news %ss · sections %ss)",
+             settings.ask_feed_refresh_seconds, settings.ask_feed_section_refresh_seconds)
 
 
 # read-through 콜드스타트 가드: 캐시가 없거나 오래됐을 때 접속이 갱신을 킥한다.
@@ -162,26 +212,42 @@ def start(task_holder: list) -> None:
 _kick_task: asyncio.Task | None = None
 _kick_at: datetime | None = None
 _KICK_MIN_GAP = timedelta(seconds=60)
+# 섹션 스코프 read-through 킥 — 뉴스와 독립된 single-flight + 쿨다운.
+_sec_kick_task: asyncio.Task | None = None
+_sec_kick_at: datetime | None = None
+
+
+def _is_stale(row: AskFeedCache | None, ttl_seconds: float) -> bool:
+    return (row is None or not row.generated_at
+            or datetime.utcnow() - row.generated_at > timedelta(seconds=ttl_seconds))
 
 
 @router.get("/ask-feed", summary="ASK-6: the 물어보기 entry feed (one DB read, zero LLM)")
 async def get_ask_feed(user: User = Depends(current_user)) -> dict:
     """Assemble the caller's 물어보기 entry screen from cache — one DB read, zero LLM calls.
     Tickers come WITHOUT cards; tapping one calls ``GET /ask-feed/ticker`` on demand.
-    Read-through: a missing/stale Macro Trends cache fires ONE background refresh (never
-    blocks the response) — the first visitor after a cold start populates the section."""
-    global _kick_task, _kick_at
+    Read-through: a missing/stale Macro Trends cache fires ONE background news refresh, and a
+    stale section cache fires ONE background section refresh — neither blocks the response, so
+    the first visitor after a cold start populates the sections for the next visit."""
+    global _kick_task, _kick_at, _sec_kick_task, _sec_kick_at
     with SessionLocal() as db:
         out = _assemble(db, user.email)
-        row = db.get(AskFeedCache, _NEWS_SCOPE)
-    stale_after = timedelta(seconds=settings.ask_feed_refresh_seconds * 2)
-    stale = row is None or not row.generated_at or datetime.utcnow() - row.generated_at > stale_after
-    idle = _kick_task is None or _kick_task.done()
-    cooled = _kick_at is None or datetime.utcnow() - _kick_at > _KICK_MIN_GAP
-    if stale and idle and cooled:
+        news_row = db.get(AskFeedCache, _NEWS_SCOPE)
+        sec_rows = [db.get(AskFeedCache, s["scope"]) for s in _SECTION_SCOPES]
+    now = datetime.utcnow()
+    news_stale = _is_stale(news_row, settings.ask_feed_refresh_seconds * 2)
+    if news_stale and (_kick_task is None or _kick_task.done()) \
+            and (_kick_at is None or now - _kick_at > _KICK_MIN_GAP):
         # refresh_once opens its own httpx client + DB session → safe to fire-and-forget.
-        _kick_at = datetime.utcnow()
+        _kick_at = now
         _kick_task = asyncio.create_task(refresh_once())
+    # 섹션은 느린 캐시 — enabled일 때만(테스트 격리: ASK_FEED_ENABLED=false면 킥 안 함).
+    sec_stale = any(_is_stale(r, settings.ask_feed_section_refresh_seconds) for r in sec_rows)
+    if settings.ask_feed_enabled and sec_stale \
+            and (_sec_kick_task is None or _sec_kick_task.done()) \
+            and (_sec_kick_at is None or now - _sec_kick_at > _KICK_MIN_GAP):
+        _sec_kick_at = now
+        _sec_kick_task = asyncio.create_task(refresh_sections_once())
     return out
 
 
@@ -194,6 +260,18 @@ async def ask_feed_refresh() -> dict:
     with SessionLocal() as db:
         p = _payload_of(db.get(AskFeedCache, _NEWS_SCOPE))
     return {**out, "generated_at": p.get("generated_at"), "cards": len(p.get("cards") or [])}
+
+
+@router.post("/ask-feed/refresh-sections", dependencies=[ServiceDep],
+             summary="어닝·거장·히스토리 섹션 수동 갱신 (admin ops / eval) — refresh_sections_once 즉시 1회")
+async def ask_feed_refresh_sections() -> dict:
+    """The 마키 섹션(어닝 레이더·투자거장·수급·히스토리 랩)의 지금 갱신 — 각 스코프를 1회 생성
+    (signature-gated). ops 콘솔·eval에서 섹션 캐시를 결정적으로 채우는 훅."""
+    out = await refresh_sections_once()
+    with SessionLocal() as db:
+        counts = {s["scope"]: len(_payload_of(db.get(AskFeedCache, s["scope"])).get("cards") or [])
+                  for s in _SECTION_SCOPES}
+    return {**out, "cards_by_scope": counts}
 
 
 def _assemble(db: Session, email: str) -> dict:
@@ -219,9 +297,22 @@ def _assemble(db: Session, email: str) -> dict:
             entry["groups"].append(group)
 
     news = _payload_of(db.get(AskFeedCache, _NEWS_SCOPE))
+    # 홈 마키 섹션들 — Macro Trends(news_feed)를 맨 앞에 두고, 시장 전체 섹션 캐시를 순서대로.
+    # 카드가 있는 섹션만 (빈 섹션은 프런트가 그리지 않게 데이터 단계에서 제외). data-only —
+    # 제목·이모지·카피는 프런트가 scope로 매핑.
+    sections = [{"scope": _NEWS_SCOPE, "cards": news.get("cards") or [],
+                 "generated_at": news.get("generated_at")}]
+    for s in _SECTION_SCOPES:
+        p = _payload_of(db.get(AskFeedCache, s["scope"]))
+        cards = p.get("cards") or []
+        if cards:
+            sections.append({"scope": s["scope"], "cards": cards,
+                             "generated_at": p.get("generated_at")})
     return {
         "groups": groups,
         "tickers": list(by_ticker.values()),
+        "sections": sections,
+        # backward-compat: Macro Trends 카드를 예전 필드로도 노출(구버전 프런트/기존 테스트).
         "news_feed": news.get("cards") or [],
         "news_generated_at": news.get("generated_at"),
     }

@@ -45,10 +45,16 @@ logger = logging.getLogger(__name__)
 _TICKER_KINDS = {"filing_deep", "price_context", "news_probe", "history_echo", "fundamental_shift",
                  "valuation", "ownership", "earnings"}
 _NEWS_KINDS = {"macro", "micro", "market"}
+# 홈 마키 섹션(시장 전체 공유 캐시)들의 kind 집합 — 각 섹션은 서로 다른 각도만 낸다.
+_EARNINGS_KINDS = {"earnings_upcoming", "earnings_surprise", "consensus_gap"}
+_GURU_KINDS = {"guru_move", "guru_consensus", "flow_move"}
+_HISTORY_KINDS = {"regime_now", "base_rate", "drawdown_now", "vol_now"}
+# 시장 전체 섹션 스코프 — 특정 유저의 관심 티커를 훑지 않는다("전 티커 스윕 금지").
+_SECTION_SCOPES = frozenset({"earnings_radar", "guru_flows", "history_lab"})
 
 
 class AskFeedRequest(BaseModel):
-    scope: str                       # "ticker" | "news_feed" ("hot_trend" accepted as legacy alias)
+    scope: str                       # "ticker" | "news_feed" | 섹션(earnings_radar|guru_flows|history_lab)
     market: str | None = None        # scope=ticker
     ticker: str | None = None        # scope=ticker
     name: str | None = None          # display name for the prompt
@@ -113,6 +119,88 @@ def _news_plan(tools: dict[str, dict]) -> list[tuple[str, dict, str]]:
         plan.append(("fred__macro_panel", {"region": "US"}, "미국 핵심 거시지표(금리·물가·고용) 최신값"))
         plan.append(("fred__macro_panel", {"region": "KR"}, "한국 핵심 거시지표 최신값"))
     return plan
+
+
+# --- 홈 마키 섹션(시장 전체 공유 캐시) 3종의 gather plan ----------------------------------------
+# 어느 것도 특정 유저의 관심 티커를 훑지 않는다: 미국 대표주·과거 지수·거장 13F처럼 시장
+# 전체의 고정 앵커만 모은다. 결측 커넥터(키 없음 등)는 _gather가 조용히 드랍 → 정직한 축소.
+_EARNINGS_BELLWETHERS = [
+    ("AAPL", "Apple"), ("NVDA", "NVIDIA"), ("MSFT", "Microsoft"), ("AMZN", "Amazon"),
+    ("GOOGL", "Alphabet"), ("META", "Meta"), ("TSLA", "Tesla"), ("JPM", "JPMorgan"),
+]
+_GURU_SLUGS = [("buffett", "버핏"), ("burry", "버리"), ("ackman", "애크먼")]
+# base_rates의 event는 JSON 문자열 파라미터 — S&P500 하루 −2% 급락을 사건으로.
+_HIST_DROP_EVENT = json.dumps({"daily_return_lte": -2.0})
+
+
+def _earnings_plan(tools: dict[str, dict]) -> list[tuple[str, dict, str]]:
+    """어닝 레이더 — 미국 대표주들의 실적 캘린더(다가오는 발표일 eps_actual=null + ~50분기 비트/
+    미스 서프라이즈)와 일부 분기 컨센서스. 에디터가 D-day·서프라이즈 패턴·컨센 괴리를 엮게."""
+    plan: list[tuple[str, dict, str]] = []
+    for tkr, name in _EARNINGS_BELLWETHERS:
+        if "fmp__earnings_calendar" in tools:
+            plan.append(("fmp__earnings_calendar", {"ticker": tkr, "market": "US", "limit": 8},
+                         f"{name} 실적 일정·서프라이즈 히스토리"))
+    for tkr, name in _EARNINGS_BELLWETHERS[:2]:
+        if "fmp__consensus_estimates" in tools:
+            plan.append(("fmp__consensus_estimates",
+                         {"ticker": tkr, "market": "US", "period": "quarter"},
+                         f"{name} 분기 컨센서스 추정치"))
+    return plan
+
+
+def _guru_plan(tools: dict[str, dict]) -> list[tuple[str, dict, str]]:
+    """투자거장·수급 — 슈퍼투자자 공통 보유 + 유명 거장(버핏·버리·애크먼)의 분기 13F 매매(미국)
+    와 한국 거래량·등락률 상위(KIS). 어느 쪽이든 있는 것만 모아 시장 전체 그림을 만든다."""
+    plan: list[tuple[str, dict, str]] = []
+    if "sec_edgar__guru_common" in tools:
+        plan.append(("sec_edgar__guru_common", {"min_holders": 3, "limit": 15},
+                     "슈퍼투자자 다수가 함께 보유 중인 종목"))
+    for slug, name in _GURU_SLUGS:
+        if "sec_edgar__guru_trades" in tools:
+            plan.append(("sec_edgar__guru_trades", {"slug": slug, "limit": 10},
+                         f"{name}의 최근 분기 13F 매매(신규·추가·축소·청산)"))
+    if "kis__volume_rank" in tools:
+        plan.append(("kis__volume_rank", {"limit": 15}, "한국 거래량 상위(movers)"))
+    if "kis__fluctuation_rank" in tools:
+        plan.append(("kis__fluctuation_rank", {"direction": "up", "limit": 10}, "한국 상승률 상위"))
+        plan.append(("kis__fluctuation_rank", {"direction": "down", "limit": 10}, "한국 하락률 상위"))
+    return plan
+
+
+def _history_plan(tools: dict[str, dict]) -> list[tuple[str, dict, str]]:
+    """히스토리 랩 — 시장 전체 지수(^GSPC·^KS11·^VIX)의 낙폭·변동성 퍼센타일·급락 뒤 베이스레이트·
+    과거 약세장 에피소드·국면 목록. 모두 저장된 가격에서 결정론적으로 파생된 '과거 기록'."""
+    plan: list[tuple[str, dict, str]] = []
+
+    def want(tool: str, args: dict, why: str) -> None:
+        if tool in tools:
+            plan.append((tool, args, why))
+
+    want("market_history__drawdowns", {"ticker": "^GSPC", "market": "US"},
+         "S&P500 현재 낙폭·고점 대비 위치")
+    want("market_history__drawdowns", {"ticker": "^KS11", "market": "KR"},
+         "코스피 현재 낙폭·고점 대비 위치")
+    want("market_history__vol_context", {"ticker": "^VIX", "market": "US", "is_level": True},
+         "VIX 변동성 레벨의 과거 퍼센타일")
+    want("market_history__base_rates",
+         {"ticker": "^GSPC", "market": "US", "event": _HIST_DROP_EVENT},
+         "S&P500 하루 −2% 급락 뒤 1/5/20/60일 수익률 통계(과거 발생 기록)")
+    want("market_history__episodes", {"ticker": "^GSPC", "market": "US"},
+         "S&P500 과거 약세장 에피소드(닷컴·GFC·코로나)")
+    want("market_history__regimes", {}, "역사적 국면 목록(외환위기·닷컴·GFC·코로나 등)")
+    return plan
+
+
+def _section_plan(scope: str, tools: dict[str, dict]) -> list[tuple[str, dict, str]]:
+    """섹션 스코프 → gather plan 디스패치 (모듈 전역 함수 참조 — 테스트 monkeypatch 반영)."""
+    if scope == "earnings_radar":
+        return _earnings_plan(tools)
+    if scope == "guru_flows":
+        return _guru_plan(tools)
+    if scope == "history_lab":
+        return _history_plan(tools)
+    return _news_plan(tools)
 
 
 _TICKER_PROMPT = """당신은 리서치 데스크의 선임 애널리스트입니다. 아래는 {name}의 방금 수집된
@@ -192,6 +280,111 @@ _NEWS_PROMPT = """당신은 글로벌 매크로 헤지펀드의 수석 스트래
 데이터 스니펫:
 {snippets}
 """
+
+_EARNINGS_PROMPT = """당신은 실적(어닝) 전담 애널리스트입니다. 아래는 방금 수집된 미국 대표주들의
+**실적 캘린더**(다가오는 발표일은 실제 EPS가 아직 없음(null) · 지난 분기들은 컨센서스 대비 실제
+EPS/매출과 서프라이즈% 히스토리)와 일부 **분기 컨센서스 추정치**입니다([n] 인덱스). 프로 투자자가
+"이번 실적 시즌에 이건 봐둬야 해"라며 눌러볼 어닝 레이더 카드를 {limit}개 이내로 만드세요.
+
+깊이 — 단순히 "곧 실적 발표"만 나열하면 실격입니다. 데이터를 엮어 긴장을 드러내세요:
+- 다가오는 발표 × 과거 서프라이즈 패턴: "다음 발표가 임박했는데 최근 N개 분기 연속 비트/미스".
+- 컨센서스 괴리: 컨센서스 추정 성장률과 최근 실제 추세가 어긋나는 지점.
+- 서프라이즈의 방향성 변화: 계속 비트하다 최근 미스로 꺾인 곳, 반대로 회복된 곳.
+
+다양성 — {limit}개가 한 기업/한 각도로 쏠리면 실패입니다. 서로 다른 기업을 고르고,
+'발표 임박' · '서프라이즈 히스토리' · '컨센서스 괴리'가 골고루 섞이게 하세요. 중요도 순 정렬.
+
+규칙 (모두 필수):
+- kind는 다음 중 하나: earnings_upcoming(발표 임박) | earnings_surprise(과거 비트/미스 패턴)
+  | consensus_gap(컨센서스와 실제의 괴리)
+- hook: 스니펫의 실제 사실 한 줄 (날짜·EPS·서프라이즈%는 스니펫 그대로; 지어내지 말 것).
+  예: "엔비디아는 최근 4개 분기 모두 컨센서스를 웃돌았어요", "다음 실적 발표가 8월 28일이에요".
+- question: **친근한 초대형 문장**(해요체, "~할까요?"/"~볼까요?"). 우리 도구(실적 캘린더·컨센서스·
+  재무·주가)로 파볼 수 있는 실제 요청이어야 함. 예: "지난 분기 서프라이즈 흐름을 발표 전에 같이 정리해볼까요?"
+- query: question과 같은 내용의 **실행 명령문** 한 문장(반말 명령조). **기업명을 반드시 포함**.
+  예: "엔비디아 최근 8개 분기 컨센서스 대비 실제 EPS 서프라이즈를 정리해줘".
+- ticker: 그 카드가 다루는 미국 종목의 티커(예: NVDA). market은 항상 US.
+- sources: 근거 스니펫 인덱스 배열 — 근거 없는 카드 금지.
+- 절대 금지: 실적 예측("비트할 것" 류), 목표가, 매수/매도 조언. "과거엔 이랬고 언제 발표한다"까지만.
+
+데이터 스니펫:
+{snippets}
+"""
+
+_GURU_PROMPT = """당신은 13F·수급 전담 애널리스트입니다. 아래는 방금 수집된 **슈퍼투자자(거장) 13F**
+데이터(다수 거장이 공통 보유 중인 종목 · 버핏/버리/애크먼 등의 최근 분기 매매: 신규·추가·축소·청산)와
+**한국 시장 수급**(거래량 상위 · 상승/하락률 상위)입니다([n] 인덱스). 프로 투자자가 "돈이 어디로
+움직였나"를 보려고 눌러볼 카드를 {limit}개 이내로 만드세요.
+
+깊이 — 단순 목록 나열은 실격입니다. 변화·쏠림·의외성을 짚으세요:
+- 거장의 신규 진입/전량 청산 같은 방향 전환, 여러 거장이 동시에 담거나 던진 종목.
+- 공통 보유 상위의 구성 — 어떤 종목에 슈퍼투자자들이 몰려 있는지.
+- 한국 수급의 쏠림 — 거래량·등락률 상위에서 두드러지는 이름/테마.
+
+다양성 — '거장 매매' · '거장 공통 보유' · '한국 수급'이 골고루 섞이게. 미국과 한국을 함께.
+중요도 순 정렬. 스니펫에 없는 이름을 지어내지 말 것.
+
+규칙 (모두 필수):
+- kind는 다음 중 하나: guru_move(거장의 개별 매매) | guru_consensus(거장 공통 보유·쏠림)
+  | flow_move(한국 수급·movers)
+- hook: 스니펫의 실제 사실 한 줄 (종목명·수량·순위·등락%는 스니펫 그대로; 지어내지 말 것).
+  예: "버핏이 지난 분기 이 종목을 새로 담았어요", "오늘 거래량 1위는 …예요".
+- question: **친근한 초대형 문장**(해요체, "~할까요?"/"~볼까요?"). 우리 도구(13F·수급·주가·공시)로
+  파볼 수 있는 실제 요청. 예: "버핏이 새로 담은 이 종목의 재무·주가를 같이 들여다볼까요?"
+- query: question과 같은 내용의 **실행 명령문** 한 문장(반말 명령조). **종목/거장 이름을 반드시 포함**.
+- ticker: 카드가 특정 종목을 다루면 그 티커. (한국 종목이면 6자리 코드, market=KR)
+- sources: 근거 스니펫 인덱스 배열 — 근거 없는 카드 금지.
+- 절대 금지: "따라 사라"류 조언, 전망, 목표가. "거장이 이렇게 했다 / 수급이 이렇게 쏠렸다"까지만.
+
+데이터 스니펫:
+{snippets}
+"""
+
+_HISTORY_PROMPT = """당신은 시장 역사 아키비스트입니다. 아래는 방금 수집된 지수들의 **과거 기록**입니다
+([n] 인덱스): S&P500·코스피의 현재 낙폭(고점 대비 위치), VIX 변동성 레벨의 과거 퍼센타일,
+S&P500이 하루 크게 급락한 뒤의 1/5/20/60일 수익률 **베이스레이트(과거 발생 통계)**, 과거 약세장
+에피소드(닷컴·GFC·코로나), 역사적 국면 목록. 투자자가 "지금 이 장세, 과거엔 어땠지?"를 보려고
+눌러볼 히스토리 랩 카드를 {limit}개 이내로 만드세요.
+
+★ 이 섹션의 철칙: 모든 카드는 **과거 기록 조회**입니다. 미래를 예측하거나 확률로 단정하지 마세요.
+베이스레이트는 "과거에 이랬다"는 통계일 뿐, "이번에도 그럴 것"이 아닙니다.
+
+깊이 — 데이터를 엮어 지금을 과거 좌표에 놓으세요:
+- 현재 낙폭/변동성이 자체 히스토리에서 몇 퍼센타일인지 (지금이 과거 대비 어디쯤).
+- 특정 사건(예: 하루 −2% 급락) 뒤 과거 수익률 분포 — 중앙값·상승마감 비율.
+- 지금과 닮은 과거 국면(외환위기·닷컴·GFC·코로나)과의 비교 여지.
+
+다양성 — '낙폭 위치' · '변동성 퍼센타일' · '베이스레이트' · '국면 비교'가 골고루 섞이게. 미·한 함께.
+중요도 순 정렬. 스니펫에 없는 수치를 지어내지 말 것.
+
+규칙 (모두 필수):
+- kind는 다음 중 하나: drawdown_now(현재 낙폭의 과거 위치) | vol_now(변동성 퍼센타일)
+  | base_rate(사건 뒤 과거 통계) | regime_now(과거 국면과의 비교)
+- hook: 스니펫의 실제 사실 한 줄 (퍼센타일·수익률·낙폭%·날짜는 스니펫 그대로; 지어내지 말 것).
+  예: "지금 VIX는 과거 상위 20% 수준이에요", "S&P가 하루 −2% 빠진 뒤 20일 수익률 중앙값은 +…였어요".
+- question: **친근한 초대형 문장**(해요체, "~할까요?"/"~볼까요?"). 우리 도구(히스토리 랩)로 조회할
+  수 있는 실제 요청. 예: "지금 낙폭이 과거 약세장들과 비교하면 어디쯤인지 같이 볼까요?"
+- query: question과 같은 내용의 **실행 명령문** 한 문장(반말 명령조). **지수/사건을 문장 안에 포함**.
+  예: "S&P500이 하루 2% 넘게 빠진 뒤 20일 수익률이 과거에 어땠는지 통계로 보여줘".
+- sources: 근거 스니펫 인덱스 배열 — 근거 없는 카드 금지.
+- 절대 금지: 미래 예측, "오를/내릴 것", 확률 단정, 조언. 과거 기록 조회로만.
+
+데이터 스니펫:
+{snippets}
+"""
+
+_PROMPT_BY_SCOPE = {
+    "news_feed": _NEWS_PROMPT,
+    "earnings_radar": _EARNINGS_PROMPT,
+    "guru_flows": _GURU_PROMPT,
+    "history_lab": _HISTORY_PROMPT,
+}
+_KINDS_BY_SCOPE = {
+    "news_feed": _NEWS_KINDS,
+    "earnings_radar": _EARNINGS_KINDS,
+    "guru_flows": _GURU_KINDS,
+    "history_lab": _HISTORY_KINDS,
+}
 
 
 # ASK-9: the ticker scope answers in TWO fields — every per-source candidate + the curator's
@@ -277,7 +470,7 @@ async def build_ask_feed(req: AskFeedRequest, api_key: str | None) -> dict:
         return {"cards": [], "signature": None, "unchanged": False, "generated_at": _now_iso()}
 
     is_ticker = req.scope == "ticker"
-    plan = _ticker_plan(tools, req) if is_ticker else _news_plan(tools)
+    plan = _ticker_plan(tools, req) if is_ticker else _section_plan(req.scope, tools)
     gathered = await _gather(client, tools, plan)
     if not gathered:
         return {"cards": [], "signature": None, "unchanged": False, "generated_at": _now_iso()}
@@ -287,14 +480,15 @@ async def build_ask_feed(req: AskFeedRequest, api_key: str | None) -> dict:
         # the records didn't change → the previous cards still hold; no LLM spend.
         return {"cards": [], "signature": sig, "unchanged": True, "generated_at": _now_iso()}
 
-    # 티커 스코프는 3~5장 큐레이션(ASK-9), 뉴스 스코프는 Macro Trends 마키용 최대 20장.
+    # 티커 스코프는 3~5장 큐레이션(ASK-9), 뉴스·섹션 스코프는 마키용 최대 20장.
     limit = max(3, min(req.limit, 6 if is_ticker else 20))
-    # 뉴스 스코프는 소스당 스니펫 예산을 넉넉히 — 10 헤드라인/시장이 잘리지 않아야 20장
+    # 뉴스·섹션 스코프는 소스당 스니펫 예산을 넉넉히 — 여러 헤드라인/종목/지수가 잘리지 않아야
     # 다양성을 채운다 (기본 1600은 US 기사 ~3개에서 끊긴다).
     snippets = _snippets(gathered) if is_ticker else _snippets(gathered, budget=8000)
     prompt = (_TICKER_PROMPT.format(name=req.name or req.ticker, limit=limit, snippets=snippets)
               if is_ticker
-              else _NEWS_PROMPT.format(limit=limit, snippets=snippets) + _session_hint())
+              else _PROMPT_BY_SCOPE.get(req.scope, _NEWS_PROMPT).format(
+                  limit=limit, snippets=snippets) + _session_hint())
     raw_cards: list[dict] = []
     try:
         if is_ticker:
@@ -307,7 +501,7 @@ async def build_ask_feed(req: AskFeedRequest, api_key: str | None) -> dict:
         logger.warning("ask-feed synthesis unavailable (%s)", type(exc).__name__)
         return {"cards": [], "signature": None, "unchanged": False, "generated_at": _now_iso()}
 
-    allowed = _TICKER_KINDS if is_ticker else _NEWS_KINDS
+    allowed = _TICKER_KINDS if is_ticker else _KINDS_BY_SCOPE.get(req.scope, _NEWS_KINDS)
     by_idx = {g["idx"]: g for g in gathered}
     from agentengine.audit import audit_answer
     cards: list[DeskCard] = []

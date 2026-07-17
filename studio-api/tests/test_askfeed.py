@@ -11,7 +11,9 @@ import httpx
 import respx
 from fastapi.testclient import TestClient
 
-from studioapi.askfeed import _assemble, _scope_key, refresh_once
+from studioapi.askfeed import (
+    _SECTION_SCOPES, _assemble, _scope_key, refresh_once, refresh_sections_once,
+)
 from studioapi.config import settings
 from studioapi.db import SessionLocal, init_db
 from studioapi.main import app
@@ -93,6 +95,62 @@ def test_refresh_once_is_news_feed_only(monkeypatch):
     asyncio.run(refresh_once())
     with SessionLocal() as db:
         assert json.loads(db.get(AskFeedCache, "news_feed").payload)["cards"]
+
+
+@respx.mock
+def test_refresh_sections_once_covers_each_section_scope(monkeypatch):
+    """섹션 리프레셔는 시장 전체 스코프(어닝·거장·히스토리)를 각각 1회 생성 — 티커 스윕 아님."""
+    monkeypatch.setattr(settings, "agent_engine_url", "http://ae.test")
+    with SessionLocal() as db:
+        _mk_user(db, "sec@u.com")
+
+    seen: list[str] = []
+
+    def _resp(request):
+        scope = json.loads(request.content)["scope"]
+        seen.append(scope)
+        return httpx.Response(200, json={"cards": [{"kind": "earnings_upcoming",
+                                                    "question": "실적 전에 볼까요?", "hook": "다음 발표 임박",
+                                                    "citations": [{"source": "API Ninjas / FMP"}]}],
+                                         "signature": f"sig-{scope}", "unchanged": False,
+                                         "generated_at": "2026-07-05T00:00:00+00:00"})
+    respx.post("http://ae.test/agent/ask-feed").mock(side_effect=_resp)
+
+    out = asyncio.run(refresh_sections_once())
+    want = [s["scope"] for s in _SECTION_SCOPES]
+    assert set(seen) == set(want) and out["scopes"] == len(want) and out["refreshed"] == len(want)
+    assert "news_feed" not in seen and "ticker" not in seen   # 뉴스·티커는 이 리프레셔의 몫이 아님
+    with SessionLocal() as db:
+        for scope in want:
+            row = db.get(AskFeedCache, scope)
+            assert row is not None and row.signature == f"sig-{scope}"
+
+
+def test_assemble_includes_section_marquees():
+    with SessionLocal() as db:
+        _mk_user(db, "sx@u.com")
+        # 섹션 캐시는 스코프 PK로 전역 공유 → 다른 테스트가 남긴 행을 지우고 이 테스트 상태로.
+        for s in _SECTION_SCOPES:
+            row = db.get(AskFeedCache, s["scope"])
+            if row:
+                db.delete(row)
+        db.commit()
+        db.merge(AskFeedCache(scope="news_feed",
+                              payload=json.dumps({"cards": CARDS["cards"],
+                                                  "generated_at": "2026-07-05T00:05:00+00:00"})))
+        db.merge(AskFeedCache(scope="earnings_radar",
+                              payload=json.dumps({"cards": [{"kind": "earnings_upcoming",
+                                                             "question": "실적 전에 볼까요?", "hook": "발표 임박"}],
+                                                  "generated_at": "2026-07-05T00:06:00+00:00"})))
+        # guru_flows는 비어 있음 → sections에 안 실린다(빈 섹션은 프런트가 안 그리게 데이터 단계에서 제외)
+        db.commit()
+        out = _assemble(db, "sx@u.com")
+    scopes = [s["scope"] for s in out["sections"]]
+    assert scopes[0] == "news_feed"                            # Macro Trends 맨 앞
+    assert "earnings_radar" in scopes and "guru_flows" not in scopes
+    earn = next(s for s in out["sections"] if s["scope"] == "earnings_radar")
+    assert earn["cards"][0]["kind"] == "earnings_upcoming"
+    assert out["news_feed"][0]["kind"] == "macro"             # backward-compat 필드 유지
 
 
 def test_assemble_lists_tickers_without_cards_plus_news():
@@ -215,6 +273,22 @@ def test_manual_refresh_endpoint_service_guarded(monkeypatch):
     assert r.status_code == 200
     body = r.json()
     assert body["refreshed"] == 1 and body["cards"] == 1 and body["generated_at"]
+
+
+@respx.mock
+def test_refresh_sections_endpoint_service_guarded(monkeypatch):
+    """POST /ask-feed/refresh-sections — 어닝·거장·히스토리 수동 갱신: 서비스 토큰 필수."""
+    monkeypatch.setattr(settings, "agent_engine_url", "http://ae.test")
+    with SessionLocal() as db:
+        _mk_user(db, "rs@u.com")
+    respx.post("http://ae.test/agent/ask-feed").mock(return_value=httpx.Response(200, json=CARDS))
+
+    r = client.post("/ask-feed/refresh-sections")                # no token → rejected
+    assert r.status_code == 401
+    r = client.post("/ask-feed/refresh-sections", headers={"X-Service-Token": SVC})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["scopes"] == len(_SECTION_SCOPES) and "cards_by_scope" in body
 
 
 def test_read_through_kicks_refresh_once_on_stale_cache(monkeypatch):

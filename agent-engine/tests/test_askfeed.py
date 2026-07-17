@@ -232,6 +232,71 @@ def test_curate_respects_picks_and_kind_diversity():
     assert [c["question"] for c in out2] == ["q0", "q1", "q3"]
 
 
+def test_section_plans_are_marketwide_not_a_ticker_sweep():
+    # 홈 마키 섹션 3종은 시장 전체 앵커(대표주·거장·지수)만 모은다 — 특정 유저 티커 스윕 아님.
+    # 어닝: 미국 대표주 실적 캘린더 + 일부 컨센서스
+    ep = AF._earnings_plan({t: {} for t in ["fmp__earnings_calendar", "fmp__consensus_estimates"]})
+    cal = [a["ticker"] for n, a, _ in ep if n == "fmp__earnings_calendar"]
+    assert "NVDA" in cal and "AAPL" in cal and len(cal) >= 6
+    assert all(a.get("market") == "US" for _, a, _ in ep)
+    assert AF._earnings_plan({}) == []                       # 커넥터 결측 → 그 소스만 빠짐
+
+    # 거장·수급: 공통 보유 + 유명 거장 매매(미국) + 한국 movers(KIS)
+    gp = AF._guru_plan({t: {} for t in ["sec_edgar__guru_common", "sec_edgar__guru_trades",
+                                        "kis__volume_rank", "kis__fluctuation_rank"]})
+    assert "sec_edgar__guru_common" in [n for n, _, _ in gp]
+    assert "buffett" in [a["slug"] for n, a, _ in gp if n == "sec_edgar__guru_trades"]
+    assert {a.get("direction") for n, a, _ in gp if n == "kis__fluctuation_rank"} == {"up", "down"}
+    # KIS 키 없으면 한국 수급만 빠지고 미국 거장은 남는다(정직한 축소)
+    gp_us = AF._guru_plan({"sec_edgar__guru_common": {}, "sec_edgar__guru_trades": {}})
+    assert [n for n, _, _ in gp_us] and all(not n.startswith("kis__") for n, _, _ in gp_us)
+
+    # 히스토리: 시장 전체 지수(^GSPC·^KS11·^VIX)의 결정론적 과거 기록
+    hp = AF._history_plan({t: {} for t in ["market_history__drawdowns", "market_history__vol_context",
+                                           "market_history__base_rates", "market_history__episodes",
+                                           "market_history__regimes"]})
+    hticks = {a.get("ticker") for _, a, _ in hp if a.get("ticker")}
+    assert {"^GSPC", "^KS11", "^VIX"} <= hticks
+    ev = next(a["event"] for n, a, _ in hp if n == "market_history__base_rates")
+    assert "daily_return_lte" in ev                          # base_rates event = JSON 문자열
+
+
+def test_section_plan_dispatch():
+    assert AF._section_plan("earnings_radar", {"fmp__earnings_calendar": {}}) \
+        == AF._earnings_plan({"fmp__earnings_calendar": {}})
+    assert AF._section_plan("guru_flows", {"sec_edgar__guru_common": {}}) \
+        == AF._guru_plan({"sec_edgar__guru_common": {}})
+    assert AF._section_plan("history_lab", {"market_history__regimes": {}}) \
+        == AF._history_plan({"market_history__regimes": {}})
+    # 모르는 스코프는 news_plan으로 폴백
+    assert AF._section_plan("news_feed", {"google_news__news": {}}) \
+        == AF._news_plan({"google_news__news": {}})
+
+
+async def test_section_scope_uses_its_kinds(monkeypatch):
+    """어닝 스코프는 자기 kind만 내보내고 다른 섹션/티커 kind는 드랍한다(스코프별 allow-list)."""
+    gathered = [_g(1, "fmp__earnings_calendar",
+                   {"events": [{"date": "2026-08-28", "eps_actual": None}]}, source="API Ninjas / FMP")]
+    monkeypatch.setattr(AF, "PlatformClient", lambda key: _FakeClient({"fmp__earnings_calendar": {}}, gathered))
+    monkeypatch.setattr(AF, "_earnings_plan", lambda tools: [("fmp__earnings_calendar", {}, "x")])
+
+    async def fake_gather(client, tools, plan):
+        return gathered
+    monkeypatch.setattr(AF, "_gather", fake_gather)
+
+    async def fake_synth(prompt):
+        return [
+            {"kind": "earnings_upcoming", "question": "엔비디아 실적 전에 서프라이즈 흐름 볼까요?",
+             "hook": "다음 발표 2026-08-28", "sources": [1]},              # ships
+            {"kind": "macro", "question": "어닝 스코프에 거시 카드", "hook": "x", "sources": [1]},  # dropped
+            {"kind": "guru_move", "question": "어닝 스코프에 거장 카드", "hook": "x", "sources": [1]},  # dropped
+        ]
+    monkeypatch.setattr(AF, "_synthesize", fake_synth)
+
+    out = await build_ask_feed(AskFeedRequest(scope="earnings_radar", limit=14), api_key="k")
+    assert [c["kind"] for c in out["cards"]] == ["earnings_upcoming"]
+
+
 async def test_query_field_subject_injection(monkeypatch):
     # F3: 카드의 실행용 query — 종목 주체가 없으면 서버가 "이름(티커) " 프리픽스를 주입하고,
     # 이미 있으면 그대로, query 누락이면 question으로 폴백(역시 주입).

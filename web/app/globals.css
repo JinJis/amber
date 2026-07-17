@@ -726,27 +726,33 @@ select.input { appearance: none; }
 .grp.on { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
 .grp:disabled { opacity: .45; cursor: default; }
 
-/* v5: 관심 @그룹 아코디언 (1차 depth = 그룹, 펼치면 종목 칩) */
-.eg-list { display: flex; flex-direction: column; gap: 8px; }
-.eg { border: 1px solid var(--line-2); border-radius: 13px; background: var(--panel);
-  box-shadow: var(--shadow-card); transition: border-color .13s; }
-.eg.open, .eg:hover { border-color: var(--ink); }
-.eg-head { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
-  padding: 12px 14px; cursor: pointer; background: none; border: none; border-radius: 13px; }
-.eg-head:hover { background: var(--panel-2); }
-.eg-name { font-size: 13.5px; font-weight: 700; color: var(--text); letter-spacing: -.01em; }
+/* v6: 관심 @그룹 칩 (1차 depth = 칩 나열, 누르면 아래 패널에서 종목 토글) */
+.eg-wrap { display: flex; flex-direction: column; gap: 12px; }
+.eg-chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.eg-chip { display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px;
+  border: 1px solid var(--line-2); border-radius: 999px; background: var(--panel);
+  box-shadow: var(--shadow-card); cursor: pointer; font-family: inherit;
+  transition: border-color .13s, background .13s; }
+.eg-chip:hover { border-color: var(--ink); }
+.eg-chip.on { border-color: var(--ink); background: var(--panel-2); box-shadow: 0 0 0 1px var(--ink); }
+.eg-name { font-size: 13px; font-weight: 700; color: var(--text); letter-spacing: -.01em; }
 .eg-logos { display: inline-flex; align-items: center; }
 .eg-logo { display: inline-flex; border-radius: 50%; box-shadow: 0 0 0 2px var(--panel);
   margin-left: -6px; }
 .eg-logo:first-child { margin-left: 0; }
-.eg-count { margin-left: auto; font-size: 10px; color: var(--muted);
-  border: 1px solid var(--line-3); border-radius: 999px; padding: 2px 8px; flex-shrink: 0; }
-.eg-chev { font-size: 11px; color: var(--muted); flex-shrink: 0; }
-.eg-body { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px 14px;
-  border-top: 1px dashed var(--line-3); }
-.eg-new { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.eg-new .input { flex: 1; min-width: 180px; box-sizing: border-box; padding: 9px 12px; font-size: 13px; }
-.eg-new-err { font-size: 11px; color: var(--danger, #d66); flex-basis: 100%; }
+.eg-count { font-size: 10px; color: var(--muted); border: 1px solid var(--line-3);
+  border-radius: 999px; padding: 1px 7px; flex-shrink: 0; }
+.eg-chev { font-size: 10px; color: var(--muted); flex-shrink: 0; }
+/* ＋ 새 그룹 칩 — 관심 페이지 버튼 스타일을 칩 폭으로 (기본 width:100% 오버라이드) */
+.eg-add-chip { width: auto; border-radius: 999px; padding: 7px 13px; font-size: 13px; }
+/* 펼친 그룹 패널 — 칩 줄 아래 전체폭 */
+.eg-panel { display: flex; flex-direction: column; gap: 10px; padding: 13px 14px;
+  border: 1px solid var(--line-2); border-radius: 13px; background: var(--panel);
+  box-shadow: var(--shadow-card); }
+.eg-new { display: inline-flex; gap: 6px; align-items: center; }
+.eg-new .input { width: 190px; box-sizing: border-box; padding: 7px 11px; font-size: 13px;
+  border-radius: 999px; }
+.eg-new-err { font-size: 11px; color: var(--danger, #d66); }
 
 /* v5: Macro Trends 마키 — 우→좌 흐름, 호버/포커스 정지, 가장자리 페이드.
    overflow: clip (hidden 아님) — clip은 스크롤 컨테이너가 아니라서 키보드 포커스가

@@ -1002,6 +1002,19 @@ SCENARIOS = [
                    "expect_status": 200, "judge": True},
     },
     {
+        # ASK-6: 홈 마키 섹션(어닝 레이더)의 무출처 방지 — 출고되는 모든 카드는 근거를 인용해야
+        # 한다(citation-drop 불변식). 섹션은 시장 전체 공유 캐시라 작은 eval 유니버스에선 비어 있을
+        # 수 있음 → 0장은 정직한 갭으로 통과(expect_min_cards 미설정, 무전망 가드레일은 유닛에서 검증).
+        # POST /ask-feed/refresh-sections로 결정적으로 채운 뒤 GET /ask-feed의 해당 스코프를 읽는다.
+        "name": "ASK-6: 어닝 레이더 섹션 → 출고 카드는 모두 근거 인용",
+        "kind": "ask_feed",
+        "scope": "earnings_radar",
+        "agent": {"name": "-", "data_sources": []},  # unused for ask_feed scenarios
+        "criteria": ("각 카드 hook은 실적 캘린더/컨센서스의 실제 사실만 담고, 발표일·서프라이즈는 "
+                     "과거/예정 사실 조회로만. 실적 예측·매수/매도·목표가 표현 금지."),
+        "checks": {"cards_all_cited": True, "expect_status": 200},
+    },
+    {
         # V-8: 어닝 서프라이즈 히스토리 — 컨센서스 vs 실제 + 서프라이즈%가 아티팩트·인용으로.
         "name": "V-8: 어닝 서프라이즈 히스토리 (비트/미스)",
         "agent": {"name": "Eval Research", "model": "gemini", "data_sources": ALL_SOURCES},

@@ -231,6 +231,34 @@ def run_scenario_desk_feed(sc: dict) -> dict:
             "confidences": [], "suggestions": [], "subagents": {}, "clarify": None, "refused": False}
 
 
+def _render_feed_card(c: dict) -> str:
+    srcs = ", ".join(f"{ci.get('source')}{(' ' + ci['as_of']) if ci.get('as_of') else ''}"
+                     for ci in (c.get("citations") or []) if ci.get("source"))
+    tail = f"  [출처: {srcs}]" if srcs else ""
+    return f"[{c.get('kind')}] {c.get('hook')} → “{c.get('question')}”{tail}"
+
+
+def run_scenario_ask_feed(sc: dict) -> dict:
+    """Execute a `kind: ask_feed` scenario (ASK-6 홈 마키 섹션 — 어닝·거장·히스토리). Force one
+    section refresh (service-guarded), then GET /ask-feed and judge the target scope's cards. The
+    sections are market-wide shared caches; a tiny eval universe may leave one empty — that's an
+    honest gap (0 cards trivially passes cards_all_cited), so scenarios must NOT set expect_min_cards.
+    Whatever cards DO ship are held to the guardrail/sourcing rubric (no forecast/advice, all cited)."""
+    scope = sc.get("scope") or "history_lab"
+    email = f"eval-ask-{sc['name'].__hash__() & 0xffffff:x}@valuegraph.local"
+    _studio_as(email, "POST", "/users/ensure")
+    _request("POST", f"{STUDIO}/ask-feed/refresh-sections", None,
+             {"X-Service-Token": SVC, "Content-Type": "application/json"})
+    code, feed = _studio_as(email, "GET", "/ask-feed")
+    section = next((s for s in (feed.get("sections") or []) if s.get("scope") == scope), None)
+    cards = (section or {}).get("cards") or []
+    answer = "\n".join(_render_feed_card(c) for c in cards) or "(no cards)"
+    cites = sorted({(ci.get("source") or "?") for c in cards for ci in (c.get("citations") or [])})
+    return {"tools": [], "statuses": [code], "citations": cites, "answer": answer, "cards": cards,
+            "artifacts": [], "cadences": [], "cite_urls": [], "cite_evidence": [],
+            "confidences": [], "suggestions": [], "subagents": {}, "clarify": None, "refused": False}
+
+
 # --- LLM judge (deep Gemini, rubric-based; optional) ----------------------
 # The rubric: each dimension scored 1-5 by the deep judge. Keep this in sync with
 # eval/RUBRIC.md (the human-facing spec). `overall` is the headline score.
@@ -503,6 +531,9 @@ def main() -> int:
             if sc.get("kind") == "desk_feed":  # M-DESK: non-chat scenario — GET /desk-feed
                 r = run_scenario_desk_feed(sc)
                 question = f"(오늘의 데스크 · {name})"
+            elif sc.get("kind") == "ask_feed":  # ASK-6: 홈 마키 섹션 — GET /ask-feed의 한 스코프
+                r = run_scenario_ask_feed(sc)
+                question = f"(홈 마키 · {sc.get('scope')} · {name})"
             else:
                 if sc.get("rag_docs"):
                     rag_ingest(sc["rag_docs"])

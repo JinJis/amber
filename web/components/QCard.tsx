@@ -22,6 +22,19 @@ export const KIND: Record<string, { i: string; t: string }> = {
   macro:            { i: "🌍", t: "거시" },
   micro:            { i: "🏭", t: "산업" },
   market:           { i: "📉", t: "시장" },
+  // 어닝 레이더
+  earnings_upcoming:{ i: "📅", t: "발표 임박" },
+  earnings_surprise:{ i: "🎯", t: "서프라이즈" },
+  consensus_gap:    { i: "🔭", t: "컨센서스" },
+  // 투자거장·수급
+  guru_move:        { i: "🐘", t: "거장 매매" },
+  guru_consensus:   { i: "👑", t: "거장 공감대" },
+  flow_move:        { i: "🔀", t: "수급" },
+  // 히스토리 랩 (과거 기록·전망 아님)
+  drawdown_now:     { i: "🌊", t: "낙폭" },
+  vol_now:          { i: "🌡️", t: "변동성" },
+  base_rate:        { i: "📐", t: "베이스레이트" },
+  regime_now:       { i: "⏳", t: "그때·지금" },
 };
 
 export function QCard({ c, name, onPick, onEvidence, nonInteractive }: {

@@ -2,7 +2,7 @@
 // 분석 카드) + ＋ 새 그룹(생성 → 관심 페이지 이동) ②Macro Trends 마키(우→좌, 카드 복제 루프).
 // 전역 규칙 = 카드 탭은 컴포저 채움, 출처 탭은 근거 뷰어(자동 전송 없음). 미생성/실패 =
 // 정직한 공백 (콘텐츠 날조 없음).
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import CockpitEntry, { capabilityChips } from "../components/CockpitEntry";
 
@@ -27,7 +27,31 @@ const NEWS = [
     hook: "원달러 1,390원", citations: [{ source: "Yahoo Finance", url: "http://f", tool: "yahoo__asset_classes" }] },
 ];
 
-function stubApis({ empty = false, tickerFail = false, fewNews = false } = {}) {
+// v6: studio가 내려주는 마키 섹션(스코프별 카드). Macro Trends 다음 어닝·거장·히스토리.
+const SECTIONS = [
+  { scope: "news_feed", cards: NEWS },
+  { scope: "earnings_radar", cards: [
+    { kind: "earnings_upcoming", question: "엔비디아 실적 발표 전에 서프라이즈 흐름 같이 볼까요?",
+      query: "엔비디아 최근 8개 분기 컨센서스 대비 실제 EPS 서프라이즈를 정리해줘",
+      hook: "엔비디아 다음 실적 발표 8월 28일", ticker: "NVDA", market: "US",
+      citations: [{ source: "API Ninjas / FMP", url: "http://e", tool: "fmp__earnings_calendar" }] },
+    { kind: "earnings_surprise", question: "애플 최근 비트/미스 패턴 짚어볼까요?", query: "애플 최근 분기 어닝 서프라이즈 히스토리 보여줘",
+      hook: "애플 최근 4개 분기 연속 비트", ticker: "AAPL", market: "US",
+      citations: [{ source: "API Ninjas / FMP", url: "http://e2", tool: "fmp__earnings_calendar" }] },
+  ] },
+  { scope: "guru_flows", cards: [
+    { kind: "guru_move", question: "버핏이 새로 담은 종목 들여다볼까요?", query: "버핏이 지난 분기 새로 담은 종목의 재무·주가를 살펴봐",
+      hook: "버핏, 지난 분기 신규 편입 1건",
+      citations: [{ source: "SEC EDGAR", url: "http://g", tool: "sec_edgar__guru_trades" }] },
+  ] },
+  { scope: "history_lab", cards: [
+    { kind: "vol_now", question: "지금 변동성이 과거 어디쯤인지 같이 볼까요?", query: "VIX가 과거 대비 지금 몇 퍼센타일인지 보여줘",
+      hook: "지금 VIX는 과거 상위 20% 수준",
+      citations: [{ source: "Market History", url: "http://h", tool: "market_history__vol_context" }] },
+  ] },
+];
+
+function stubApis({ empty = false, tickerFail = false, fewNews = false, sections = null as unknown } = {}) {
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const u = String(url);
     if (u.includes("/api/watchlists") && init?.method === "POST") {
@@ -49,6 +73,7 @@ function stubApis({ empty = false, tickerFail = false, fewNews = false } = {}) {
           { market: "KR", ticker: "005930", name: "삼성전자", groups: ["반도체"] },
           { market: "US", ticker: "NVDA", name: "NVIDIA", groups: ["빅테크"] },
         ],
+        ...(sections ? { sections } : {}),
         news_feed: fewNews ? NEWS.slice(0, 1) : NEWS,
         news_generated_at: "2026-07-06T00:00:00+00:00",
       }) };
@@ -260,5 +285,54 @@ describe("CockpitEntry (ASK-6 v5)", () => {
   it("capabilityChips: US는 13F, KR은 수급", () => {
     expect(capabilityChips("Apple", "US").some((c) => c.label.includes("13F"))).toBe(true);
     expect(capabilityChips("삼성전자", "KR").some((c) => c.label.includes("수급"))).toBe(true);
+  });
+
+  it("관심 그룹은 칩으로 나열된다 — 풀폭 행 아님(.eg-chips 안의 .eg-chip)", async () => {
+    stubApis();
+    render(<CockpitEntry onPick={vi.fn()} />);
+    const chip = await screen.findByTestId("grp-반도체");
+    const chips = chip.closest(".eg-chips");
+    expect(chips).toBeTruthy();                                   // 칩 컨테이너(가로 wrap)
+    expect(chip.className).toContain("eg-chip");
+    // ＋ 새 그룹도 같은 칩 줄 안, 칩 스타일(풀폭 아님)
+    const add = screen.getByTestId("eg-add");
+    expect(add.closest(".eg-chips")).toBe(chips);
+    expect(add.className).toContain("eg-add-chip");
+    // 접힌 상태에서는 종목 칩이 없다(패널 미노출)
+    expect(screen.queryByTestId("tk-005930")).toBeNull();
+  });
+
+  it("v6 섹션: Macro Trends 뒤로 어닝·거장·히스토리 마키가 순서대로", async () => {
+    stubApis({ sections: SECTIONS });
+    render(<CockpitEntry onPick={vi.fn()} />);
+    const news = await screen.findByTestId("ck-news");
+    const earn = await screen.findByTestId("ck-sec-earnings_radar");
+    const guru = await screen.findByTestId("ck-sec-guru_flows");
+    const hist = await screen.findByTestId("ck-sec-history_lab");
+    expect(earn.textContent).toContain("어닝 레이더");
+    expect(guru.textContent).toContain("투자거장·수급");
+    expect(hist.textContent).toContain("히스토리 랩");
+    expect(hist.textContent).toContain("과거 기록 · 전망 아님");     // 무전망 브랜드
+    // DOM 순서: news → earnings → guru → history
+    const after = (a: Element, b: Element) => a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(after(news, earn)).toBeTruthy();
+    expect(after(earn, guru)).toBeTruthy();
+    expect(after(guru, hist)).toBeTruthy();
+  });
+
+  it("섹션 카드 탭 → 실행용 query가 컴포저로 (표시용 question 아님)", async () => {
+    stubApis({ sections: SECTIONS });
+    const onPick = vi.fn();
+    render(<CockpitEntry onPick={onPick} />);
+    const earn = await screen.findByTestId("ck-sec-earnings_radar");
+    fireEvent.click(within(earn).getAllByText(/서프라이즈 흐름 같이 볼까요/)[0]);
+    expect(onPick).toHaveBeenCalledWith("엔비디아 최근 8개 분기 컨센서스 대비 실제 EPS 서프라이즈를 정리해줘");
+  });
+
+  it("모르는 스코프의 섹션은 건너뛴다", async () => {
+    stubApis({ sections: [{ scope: "news_feed", cards: NEWS }, { scope: "made_up_scope", cards: NEWS }] });
+    render(<CockpitEntry onPick={vi.fn()} />);
+    await screen.findByTestId("ck-news");
+    expect(screen.queryByTestId("ck-sec-made_up_scope")).toBeNull();
   });
 });
