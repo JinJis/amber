@@ -22,6 +22,12 @@
 	reverse_proxy web:3000 {
 		# SSE: stream every byte immediately — never buffer the event stream.
 		flush_interval -1
+		# Rolling deploy (deploy/deploy.sh): while the web container is being swapped
+		# (~2-5s), hold+retry new requests instead of returning 502 — users see a brief
+		# delay, not an error. In-flight SSE streams on the OLD container drain via
+		# stop_grace_period; brand-new requests land here and wait for the new one.
+		lb_try_duration 30s
+		lb_try_interval 250ms
 		# Agent turns run ~45s+ (feeds up to 120s); allow slow upstream reads.
 		transport http {
 			read_timeout 300s

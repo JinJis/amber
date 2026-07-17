@@ -7,8 +7,13 @@
 #   * Every API port is re-bound to 127.0.0.1 (defense-in-depth under the GCP firewall) —
 #     containers still talk over the compose network; only Caddy is world-reachable.
 #   * mem_limit per service so one runaway container can't OOM the whole VM (ME-13).
-#     Budget on a 32GB host: pg 14g · worker 3g · rag 2.5g · datasets 2g · agent 1.5g ·
+#     Defaults budget a 32GB host: pg 14g · worker 3g · rag 2.5g · datasets 2g · agent 1.5g ·
 #     web 1.5g · cp/studio/admin 1g · caddy 512m ≈ 29.5g + OS ~2g (8GB swapfile as spike buffer).
+#     STARTER (16GB e2-standard-4) — override via shell/root .env (docs/INFRA.md §2):
+#       VG_MEM_PG=8g VG_MEM_WORKER=2g VG_MEM_RAG=1.5g VG_MEM_DATASETS=1.5g
+#     (tradeoff: less page cache for the HNSW index → colder vector queries; fine for first users)
+#   * stop_grace_period on studio-api/agent-engine — SIGTERM lets in-flight SSE turns (~45s)
+#     finish before the swap kills them (deploy/deploy.sh rolling update).
 #   * worker healthcheck (procrastinate) — a silently-wedged worker now flips unhealthy.
 #   * web build receives NEXT_PUBLIC_TOSS_CLIENT_KEY (inlined at `npm run build`).
 #
@@ -46,15 +51,16 @@ services:
         NEXT_PUBLIC_TOSS_CLIENT_KEY: "${NEXT_PUBLIC_TOSS_CLIENT_KEY:-}"
     ports: !override
       - "127.0.0.1:3000:3000"
-    mem_limit: 1.5g
+    mem_limit: ${VG_MEM_WEB:-1.5g}
+    stop_grace_period: 15s
 
   datasets:
     ports: !override
       - "127.0.0.1:8000:8000"
-    mem_limit: 2g
+    mem_limit: ${VG_MEM_DATASETS:-2g}
 
   worker:
-    mem_limit: 3g
+    mem_limit: ${VG_MEM_WORKER:-3g}
     healthcheck:
       test: ["CMD", "python", "-m", "procrastinate", "--app=app.queue.app", "healthchecks"]
       interval: 60s
@@ -70,17 +76,19 @@ services:
   rag:
     ports: !override
       - "127.0.0.1:8002:8002"
-    mem_limit: 2.5g
+    mem_limit: ${VG_MEM_RAG:-2.5g}
 
   agent-engine:
     ports: !override
       - "127.0.0.1:8003:8003"
-    mem_limit: 1.5g
+    mem_limit: ${VG_MEM_AGENT:-1.5g}
+    stop_grace_period: 45s
 
   studio-api:
     ports: !override
       - "127.0.0.1:8004:8004"
     mem_limit: 1g
+    stop_grace_period: 45s
 
   admin:
     # Force loopback in production REGARDLESS of ADMIN_BIND (a dev .env may set 0.0.0.0).
@@ -91,8 +99,8 @@ services:
 
   postgres:
     # 14g leaves room for shared_buffers(2g) + backends + the host page cache holding the
-    # ~8.4GB HNSW index (cgroup v2 attributes page cache to the container).
-    mem_limit: 14g
+    # ~8.4GB HNSW index (cgroup v2 attributes page cache to the container). Starter(16GB): 8g.
+    mem_limit: ${VG_MEM_PG:-14g}
 
 volumes:
   caddy_data: {}

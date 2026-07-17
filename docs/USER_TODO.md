@@ -98,7 +98,10 @@
 - [ ] **Origin CA 인증서 발급**: Cloudflare → SSL/TLS → Origin Server → Create Certificate →
   VM의 `secrets/origin-cert/{origin.pem,origin-key.pem}`
 - [ ] **`PROJECT=… DOMAIN=… ./deploy/provision.sh` 실행** (VM·고정IP·방화벽·백업 버킷·스냅샷 스케줄)
-  → 출력된 IP를 Cloudflare A 레코드로
+  → 출력된 IP를 Cloudflare A 레코드로. **첫 유저·테스트 단계면 `MACHINE=e2-standard-4`(16GB, −$44/mo)
+  스타터로 시작** — 벡터 검색이 느려지면 `set-machine-type`으로 32GB 승격(~3–5분 다운타임 1회, INFRA §2)
+- [ ] **업데이트는 항상 `DOMAIN=… ./deploy/deploy.sh`** (무중단 롤링 — 빌드 먼저·서비스별 헬스 게이트·
+  SSE 드레인·Caddy 갭 흡수). ⚠️ 프로드 VM에서 test_all/e2e/coverage 스크립트 실행 금지(스택을 내림)
 - [ ] **VM에서 `./deploy/vm-setup.sh`** → 체크리스트대로 `env/*.env`·`secrets/` 채우기
   (`ENV=production`은 dev 기본값 부팅 거부 — 1-2의 시크릿 목록 전부)
 - [ ] **backup 버킷 설정**: `/etc/systemd/system/valuegraph-backup.service`의 `BACKUP_BUCKET` 교체

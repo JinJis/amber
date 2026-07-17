@@ -44,10 +44,25 @@
 | GCS 버킷 | `gs://<project>-vg-backups` | 서울 리전, uniform access, PAP, 라이프사이클: 7d→Nearline, 30d 삭제 |
 | 스냅샷 스케줄 | `vg-daily-snap` | 매일 03:00 KST, 7일 보존, 부트 디스크에 부착 |
 
-**VM 메모리 예산 (32GB)**: postgres 14g(shared_buffers 2g + HNSW 8.4g 페이지캐시) · worker 3g ·
+**VM 메모리 예산 (32GB 기본)**: postgres 14g(shared_buffers 2g + HNSW 8.4g 페이지캐시) · worker 3g ·
 rag 2.5g · datasets 2g · agent-engine 1.5g · web 1.5g · control-plane/studio-api/admin 각 1g ·
 caddy 0.5g ≈ 29.5g + OS ~2g, 스파이크는 8GB 스왑. `docker-compose.prod.yml`의 `mem_limit`와 동일.
-e2-standard-4(16GB)로 내리면 ING-1 pg 튜닝을 풀어야 해서 콜드 벡터 인서트 ~2s/row로 회귀 — 비추천.
+
+**스타터 티어 (첫 유저·테스트용, −$44/mo)**: `MACHINE=e2-standard-4`(4vCPU/16GB, $125.51)로
+프로비저닝하고 스타터 메모리 프로필을 셸/루트 `.env`로 지정:
+```bash
+VG_MEM_PG=8g VG_MEM_WORKER=2g VG_MEM_RAG=1.5g VG_MEM_DATASETS=1.5g   # + DOMAIN=…
+```
+트레이드오프: HNSW 인덱스(8.4GB)를 페이지캐시에 다 못 올려 **콜드 벡터 검색이 느려짐**(측정: 콜드
+6.2s/웜 10ms) — 유저 수십 명 전이면 체감 OK. 대량 인제스트(주간 filing sweep)가 느려지면 업그레이드
+신호. **업그레이드는 ~3–5분 다운타임 1회** (데이터·디스크·고정IP 전부 보존, 새벽에 실행):
+```bash
+gcloud compute instances stop vg-beta --zone asia-northeast3-a
+gcloud compute instances set-machine-type vg-beta --zone asia-northeast3-a --machine-type e2-highmem-4
+gcloud compute instances start vg-beta --zone asia-northeast3-a
+# VM에서: VG_MEM_* 변수 제거(32GB 기본값 복귀) 후 DOMAIN=… ./deploy/deploy.sh
+```
+CUD는 **업그레이드가 끝나 사이즈가 확정된 뒤** 걸 것 (약정은 머신 리소스 양 기준).
 
 ## 3. 보안
 
@@ -102,13 +117,24 @@ DOMAIN=<domain> NEXT_PUBLIC_TOSS_CLIENT_KEY=<key> \
   ```
 - admin: IAP 터널로만 접속되는지(공인 IP:8005 접속 불가 확인)
 
-**E. 업데이트 / 롤백**
+**E. 업데이트 / 롤백 — 무중단 롤링 배포 (`deploy/deploy.sh`)**
 ```bash
-cd /opt/value-graph && git pull
-DOMAIN=<domain> docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build   # 업데이트
-git checkout <이전 커밋/태그> && DOMAIN=<domain> docker compose ... up -d --build               # 롤백
-# DB까지 롤백해야 하면: 위 복원 드릴 절차를 본 postgres 컨테이너에 적용 (down → pg_data 비우고 복원 → up)
+DOMAIN=<domain> ./deploy/deploy.sh              # 최신 development로 롤링 업데이트
+DOMAIN=<domain> ./deploy/deploy.sh <커밋/태그>   # 특정 버전으로 배포/롤백
 ```
+무중단 동작 원리 (단일 VM에서):
+1. **빌드 먼저** — 새 이미지를 빌드하는 동안(웹 ~수 분) 구 스택이 계속 서빙
+2. **한 서비스씩 헬스 게이트 재기동** (`up -d --no-deps --wait`, 의존 순서: datasets→rag→gateway→
+   agent→studio→worker→admin→web) — 변경 없는 서비스는 no-op
+3. **인플라이트 SSE 드레인** — studio-api·agent-engine `stop_grace_period: 45s`: 진행 중인 턴(~45s)이
+   끝날 때까지 구 컨테이너가 기다림. 45s 넘는 턴은 끊기지만 SC-2.3이 쿼터를 자동 환불
+4. **web 스왑 갭(~2–5s) 흡수** — Caddy `lb_try_duration 30s`: 스왑 중 새 요청은 502 대신 대기·재시도
+5. **postgres는 절대 재기동 안 함** — pg 이미지 업그레이드만 수동 점검창에서
+한계(정직하게): 완전한 blue-green이 아니라 "실패 요청 0 + 수 초 지연" 수준. 진짜 무중단(구/신 동시
+서빙)은 §8의 앱/DB 분리 후 가능. **DB까지 롤백**해야 하면 §4-D 복원 절차를 본 postgres에 적용.
+
+> ⚠️ **프로드 VM에서 `scripts/test_all.sh`·`e2e*.sh`·`coverage.sh` 절대 실행 금지** — 이 하니스들은
+> 라이브 스택을 내렸다 올립니다(과거 `down -v` 사고 전례). 테스트·eval은 개발 환경(회사 GCE)에서만.
 
 ## 5. 백업 전략 (CR-11 해소)
 
@@ -125,6 +151,7 @@ RPO ≈ 24h(덤프 기준). 결제가 본격화되면 §8의 Cloud SQL(PITR)로 
 | 항목 | 베타(온디맨드) | 베타(1-yr CUD) | 근거 |
 |---|---|---|---|
 | VM e2-highmem-4 (4vCPU/32GB) | $169.18 | $106.59 | gcloud-compute.com 2026-07-12 스크레이프 |
+| ↳ 스타터: e2-standard-4 (16GB) | $125.51 | $79.07 | 첫 유저용 — §2 스타터 프로필, 합계 ~$170–202 |
 | 디스크 200GB pd-balanced | $26.00 | $26.00 | $0.13/GB·mo |
 | 고정 외부 IP | $3.65 | $3.65 | $0.005/hr (사용 중에도 과금) |
 | 디스크 스냅샷 (~70GB 증분 체인) | ~$3.50 | ~$3.50 | ~$0.05/GB·mo |
@@ -156,7 +183,8 @@ RPO ≈ 24h(덤프 기준). 결제가 본격화되면 §8의 Cloud SQL(PITR)로 
 
 | 트리거 | 액션 | 추가 비용 |
 |---|---|---|
-| 베타 1개월 안정 | VM 1-yr CUD 전환 | −$63/mo |
+| 스타터(16GB)에서 벡터 검색/인제스트 체감 저하 | `set-machine-type`으로 e2-highmem-4 (§2 — 다운타임 ~3–5분 1회, 새벽에) | +$44/mo |
+| 베타 1개월 안정 (사이즈 확정 후) | VM 1-yr CUD 전환 | −$63/mo |
 | 유료 고객 발생 (결제 원장 RPO 분 단위 필요) | controlplane+studio DB만 **Cloud SQL**(PITR)로 분리 — `DATABASE_URL` 스왑만 | +$60–100/mo |
 | rag >60GB / 인제스트가 VM 포화 | rag DB를 **AlloyDB**(`alloydb_scann` — self-host HNSW 인서트 병목 제거)로 — `RAG_DATABASE_URL` 스왑만 (USER_TODO §1-10) | +$200+/mo |
 | 동시 턴 증가로 단일 노드 한계 | `--profile scale` redis + `REDIS_URL` + 앱 노드 분리 + LB(SSE 재개 경로 sticky — SC-3.3 잔여) | +VM/LB |
