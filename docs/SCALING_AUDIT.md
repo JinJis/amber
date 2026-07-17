@@ -1,5 +1,13 @@
 # Production Scaling Audit (SCALING_AUDIT)
 
+> **⚠️ 진행 상태 (2026-07-17 갱신 — 본문은 감사 시점 기준이라 대부분 "open bug"처럼 읽히지만 상당수 처리됨).**
+> ROADMAP M-SCALE 기준: **SC-0 ✅ · SC-1 ✅(12/12) · SC-2 ✅(6/6: 크로스노드 잠금·단일비행·advisory
+> lock) · SC-3 대부분 ✅(SC-3.1/3.2/3.3/3.4, ME-6 부분)**. 아래 §2 CRITICAL·§3 HIGH 다수는 이미 수정됨 —
+> 각 항목의 최신 상태는 ROADMAP M-SCALE 행을 기준으로 보세요. **여전히 열린 tail**만 이 문서의 유효
+> 착수 대상: rag→AlloyDB 분리 + 관리형 PITR(CR-8/CR-11), 인제스트 job 샤딩 + COPY inserts(HI-12),
+> 워커 healthcheck/리소스 제한/전용 pg 노드(ME-13), 잔여 ME-6 스토리지 분리(인라인 아티팩트 JSON→사이드
+> 테이블, og_image base64→오브젝트 스토리지, 조회수 hot-row), SC-3.3 request-id 전파 잔여.
+>
 > **2026-07-12 · development @ 8541a88.** Four independent code-first audits (request path /
 > data plane / product layer / infra + cost) were run against the actual source, and the highest-impact
 > claims (planner singleton race, billing lock scope, gateway synchronous commits) were re-verified

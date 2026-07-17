@@ -1,20 +1,24 @@
 # GEMINI.md — Investment-Agent Data Platform
 
-> Engineering rules for Jetski in this repo. This is the active product.
+> Engineering rules for Gemini in this repo (mirrors `CLAUDE.md` — keep the two in sync). This is the active product.
 > **The legacy ValueGraph engine (`services/`, `apps/`, CVE, Deep-Research acquisition) has been removed**
 > — not a dependency.
 >
-> **⚠️ Roadmap & UX docs are being rewritten (2026-06-23).** The old roadmap and UX-design docs
-> (`ROADMAP.md`, `UX_SPEC.md`, `DESIGN_SYSTEM.md`, `wireframes/`) have moved to
-> [`docs/deprecate/`](./docs/deprecate/) — reference only, **not** the source of truth. A **new roadmap**
-> (full UX overhaul + MVP) will land in `docs/`; pull tasks from it once it exists.
+> **The new roadmap landed (2026-07-03).** The old roadmap and UX-design docs
+> (`ROADMAP.md`, `UX_SPEC.md`, `DESIGN_SYSTEM.md`, `wireframes/`) live in
+> [`docs/deprecate/`](./docs/deprecate/) — reference only, **not** the source of truth.
+> **Chat-first:** the 대시보드(board) and 알림봇(alert bot) surfaces are feature-flagged off by
+> default (`FEATURE_BOARD`/`FEATURE_ALERTS`, ROADMAP FLAG-1) — don't extend them.
 >
 > **Docs map (read before building):**
+> - **The plan — pull tasks here:** [`docs/ROADMAP.md`](./docs/ROADMAP.md) (milestones FLAG-1,
+>   OPS-1, M0–M6, M-DESK, M-QUANT; one task per PR)
+> - **History Lab implementation contract:** [`docs/HISTORY_LAB_SPEC.md`](./docs/HISTORY_LAB_SPEC.md)
+> - **Quality plan (RAG/검색/UX 품질 — RQ·UXQ; 턴제로 피드 품질 §D):** [`docs/QUALITY_SPEC.md`](./docs/QUALITY_SPEC.md)
+> - **UX spec (chat-first, all new screens):** [`docs/UX_SPEC.md`](./docs/UX_SPEC.md)
 > - **How the services fit together (current state):** [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
 > - **Product idea / vision:** [`docs/IDEA.md`](./docs/IDEA.md)
 > - **Data expansion plans:** [`docs/DATA_EXPANSION.md`](./docs/DATA_EXPANSION.md)
-> - **The plan (new):** *being authored — full UX overhaul + MVP. Until it lands, the deprecated
->   `docs/deprecate/ROADMAP.md` is history only, not a task source.*
 >
 > One task at a time, **one task per PR**; tag the task id in branch/commits/PR. Don't mark done until
 > every acceptance criterion + the Definition of Done (§7) passes.
@@ -51,7 +55,10 @@ These hold across every service; breaking one fails review.
    provider; don't fork auth/tenancy across services.
 8. **Two surfaces over one core stay consistent:** the **connector manifest/catalog**
    (`datasets/app/connectors/`) is the single source REST docs, MCP tools, RAG registration, entitlement,
-   metering, and the agent's tool list all derive from. Touch the manifest, not forked copies.
+   metering, the agent's tool list, **and the builder's user-facing categories** all derive from. Every
+   Resource carries a `category` (set in `catalog.py`'s `_CATEGORY` map — load fails if any tool is
+   uncategorized); users pick **individual tools grouped by category**, never whole APIs. Touch the
+   manifest, not forked copies.
 9. **Deterministic *data*, not deterministic *logic*.** "Deterministic" describes the **data plane** —
    connectors are API-based, so figures are reproducible and **always accurately sourced**. It is **not**
    license to hardcode reasoning. **Answer quality, routing, and orchestration come from Gemini and
@@ -60,16 +67,17 @@ These hold across every service; breaking one fails review.
    come from Gemini. When a task needs judgment (difficulty, extraction, synthesis, review), reach for an
    LLM/agent, not an `if`-ladder.
 
-## 3. Services (ports = host:container; one `docker compose`, one shared `.env`)
+## 3. Services (ports = host:container; one `docker compose`; config split in `env/*.env`, see `env/README.md`)
 
 | Service | Host port | Package | Role |
 |---|---|---|---|
 | `datasets` | 8000 | `app` | data plane: US+KR connectors + ingestion store + `/catalog` |
+| `worker` | — | `app` (`app.queue`) | Procrastinate worker: runs the cron **sweeps** + processes ingestion jobs (Postgres-backed queue; no Redis) |
 | `control-plane` | 8010→8001 | `controlplane` | the **gateway** + tenants/keys/activations admin |
 | `rag` | 8002 | `rag` | provenance-first chunk→embed→retrieve→rerank |
 | `agent-engine` | 8003 | `agentengine` | guardrail→plan (Gemini)→tool loop→citations; `/agent/chat` SSE |
-| `studio-api` | 8004 | `studioapi` | Google user→tenant provisioning; conversations; **holds tenant key**; agents/prompts/(watchlists/briefs) |
-| `web` | 3000 | Next.js | chat UI + builder + prompt library; `/api/*` BFF (Auth.js session only) |
+| `studio-api` | 8004 | `studioapi` | Google user→tenant provisioning; conversations; **holds tenant key**; agents/(watchlists/briefs) |
+| `web` | 3000 | Next.js | chat UI + builder; `/api/*` BFF (Auth.js session only) |
 | `admin` | 8005 | — | out-of-band CRUD/ops console over service DBs (not in the request path) |
 | `mcp` | stdio | `mcpserver` | one tool per catalog resource, routed through the gateway |
 
@@ -81,20 +89,24 @@ Request flow (one chat turn): browser → web BFF (session) → studio-api (tena
   connector + manifest entry (an integrity test asserts every manifest path is a real route).
 - **Tenancy/entitlement/metering:** `control-plane/` (`controlplane`). Gateway is the enforcement point.
 - **Agent loop / planner / guardrails:** `agent-engine/` (`agentengine`). Planner via `AGENT_LLM_BACKEND`.
-- **Product data model** (users, conversations, agents, prompts, and the new **watchlists / standing
+- **Product data model** (users, conversations, agents, and the new **watchlists / standing
   analysts / briefs / pinned artifacts**): `studio-api/studioapi/models.py`. Extend here; mirror the
-  existing **prompt-import pattern** (`community` + `source_id` + idempotent clone) for analyst cloning.
-- **UI:** `web/` — chat, builder modal, prompt modal, BFF routes under `web/app/api/`. Read
+  **idempotent-clone pattern** (`orm_helpers.idempotent_clone` — `community` + `source_id`) for
+  analyst cloning. (The prompt library that originated it was removed 2026-07-06.)
+- **UI:** `web/` — chat, builder modal, BFF routes under `web/app/api/`. Read
   `/mnt/skills/public/frontend-design/SKILL.md` before UI work; **never render the graph with DOM nodes**
   (WebGL/R3F + instanced meshes); **no `localStorage`/`sessionStorage`** in preview/artifact contexts.
 
 ## 5. Commands
 ```bash
-cp .env.example .env                 # free keys (OPENDART/ECOS/FRED); AUTH_DEV_LOGIN=true; GOOGLE_API_KEY for Gemini
-docker compose up --build            # datasets:8000 gateway:8010 rag:8002 agent:8003 studio:8004 web:3000 admin:8005
+for f in env/*.env.example; do cp "$f" "${f%.example}"; done   # split config by topic (env/README.md);
+                                     # fill env/gemini.env (GOOGLE_API_KEY) + env/data-keys.env (OPENDART/ECOS/FRED…).
+                                     # A single root .env still works (compose reads both; env/* override).
+docker compose up --build            # datasets:8000 gateway:8010 rag:8002 agent:8003 studio:8004 web:3000 admin:8005 (+ worker)
+docker compose stop worker           # pause ALL automatic ingestion (the Procrastinate cron sweeps live here)
 docker compose up -d --build web     # rebuild one service after a change
 docker compose logs -f studio-api    # follow a service
-docker compose down                  # stop (-v also wipes SQLite/volumes)
+docker compose down                  # stop (-v also wipes the Postgres data + volumes)
 
 # Tests — only Docker required (no host uv/npm). See README "Run the tests".
 bash scripts/test_all.sh             # everything; live e2e+eval need GOOGLE_API_KEY (else skip cleanly)
@@ -106,16 +118,16 @@ python3 eval/run_eval.py             # quality eval (stack up first; skips witho
 ```
 **Definition of Done for a task:** its acceptance criteria pass · unit tests added/updated for the
 service(s) touched · the relevant e2e/coverage harness still green · **the quality eval
-(`python3 eval/run_eval.py`, deep-model rubric — see `eval/RUBRIC.md`) run before push and still above the
+(`python3 eval/run_eval.py`, LLM-judge rubric — see `eval/RUBRIC.md`) run before push and still above the
 bar; if the task adds a tool / endpoint / feature, add an eval scenario (with `criteria`) for it** ·
 the new roadmap's test totals + the task status updated in the same PR.
 
-## 6. Environment (Gemini only; never commit secrets — document new keys in `.env.example`)
+## 6. Environment (Gemini only; never commit secrets — document new keys in the right `env/*.env.example`)
 ```
 GOOGLE_API_KEY=                      # one key for all Gemini use — enables the gemini planner + live tests
 AGENT_LLM_BACKEND=gemini             # Gemini-only (stub removed); default gemini, requires GOOGLE_API_KEY
 AUTH_DEV_LOGIN=true                  # local login without Google
-DATABASE_URL=                        # SQLite by default; Postgres in prod
+DATABASE_URL=                        # runtime: Postgres (compose sets per-service DBs on the postgres svc); SQLite only for unit tests
 OPENDART_API_KEY= / ECOS_API_KEY= / FRED_API_KEY=    # free KR/US data keys
 RAG_EMBEDDING_BACKEND=hash|oss-cpu|oss-gpu|tei|gcp
 RAG_RERANKER_BACKEND=none|oss-cpu|oss-gpu|tei|gcp
@@ -126,8 +138,9 @@ Model IDs are env-overridable and Gemini-only; verify exact IDs/SDK details agai
 not memory.
 
 ## 7. Working style
-- **Pull the next task from the new roadmap** (being authored — full UX overhaul + MVP); read the UX
-  spec section it implements. The old roadmap/UX docs in `docs/deprecate/` are history, not a task source.
+- **Pull the next task from [`docs/ROADMAP.md`](./docs/ROADMAP.md)** (follow its recommended
+  build order); read the `HISTORY_LAB_SPEC.md`/`UX_SPEC.md` section the task cites before
+  building. The old roadmap/UX docs in `docs/deprecate/` are history, not a task source.
 - **One task per PR.** Prefer iterative refinement over rewrites; preserve working code and tests.
 - **Keep docs in sync in the same PR:** if architecture drifts, update `docs/ARCHITECTURE.md`; if you
   finish/advance a task, update its status + test totals in the new roadmap.

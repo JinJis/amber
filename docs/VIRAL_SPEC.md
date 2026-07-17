@@ -1,6 +1,6 @@
 # VIRAL SPEC — SNS 바이럴 파이프라인 (M-VIRAL)
 
-> Companion to [`ROADMAP.md`](./ROADMAP.md) · [`PUBLISH_SPEC.md`](./PUBLISH_SPEC.md).
+> Companion to [`ROADMAP.md`](./ROADMAP.md) · [`PUBLISH_SPEC.md`](./deprecate/PUBLISH_SPEC.md) (deprecated).
 > 2026-07-10 갭 분석에서 나온 실행 계획. 목표는 하나 — **공유된 링크 하나하나가
 > "받은 짤"을 이기는 영수증이 되어 가입을 끌고 오는 것.** 인바리언트(CLAUDE §2)는 불변:
 > 모든 수치는 출처와 함께, 전망 없음, 날조 없음. 바이럴은 신뢰의 배포 채널이지 예외가 아니다.

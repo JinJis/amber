@@ -1,106 +1,79 @@
-# Platform — Investment-Agent Data Platform
+# Investment-Agent Data Platform — 리서치 데스크
 
-> A fresh start. This workspace is the **new service**, built up from the `datasets/` data API.
-> **The legacy ValueGraph engine (`/services`, `/apps`, CVE, Deep-Research data acquisition) is treated
-> as nonexistent** — none of it is a dependency here.
+A **personal research desk**: the user staffs **standing analysts** (agents) on their own
+**watchlists** of companies. Every analyst works **only from licensed, point-in-time, fully-cited
+data**, renders figures as **live, sourced artifacts**, and **pushes what changed before being asked**
+(schedule + disclosure calendar). It is *not* a chatbot — the differentiators are **trust by
+construction**, **pull→push**, and a **clone-from-others ecosystem**.
 
-The goal: a **multi-tenant platform for investment agents** — a data-source layer that tenants activate
-to their needs, exposed as a **REST API, an MCP server, a RAG server, and an Agent Engine**, where
-builders develop against a defined interface or via natural language.
+> The legacy ValueGraph engine (`/services`, `/apps`, CVE, Deep-Research acquisition) has been removed —
+> not a dependency here.
 
-📖 **Docs:** [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) (detailed design + progress). The roadmap
-& UX-design docs are being rewritten (full UX overhaul + MVP); the old ones are in
-[`docs/deprecate/`](./docs/deprecate/) for reference.
+📖 **Docs** (read before building): the engineering rules + docs map live in the repo-root
+[`CLAUDE.md`](./CLAUDE.md). Plan/tasks: [`docs/ROADMAP.md`](./docs/ROADMAP.md). Current design:
+[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md). Retired specs are in
+[`docs/deprecate/`](./docs/deprecate/) — reference only.
 
-## Status
+## Services
 
-| Component | Path | Status | Tests |
-|---|---|---|---|
-| Data plane (US+KR financial API) | `datasets/` | ✅ | 63 |
-| Connector catalog/manifests (P0) | `datasets/app/connectors/` | ✅ | — |
-| Control plane (tenancy, entitlements, gateway, metering) | `control-plane/` | ✅ P1 | 12 |
-| MCP server (tools from catalog) | `mcp/` | ✅ P2 | 9 |
-| RAG (pluggable CPU-OSS / GCP / GPU; routed via gateway + MCP) | `rag/` | ✅ P3 | 14 |
-| Agent Engine (tools + RAG via gateway, guardrails, citations, streaming chat) | `agent-engine/` | ✅ P4 | 21 |
-| Studio API (provisioning, conversations, chat BFF, **agent builder**, **prompt library**) | `studio-api/` | ✅ | 24 |
-| Web — chat UI + **agent builder** + **prompt library** (Next.js + Auth.js Google) | `web/` | ✅ F1·F2 | build |
-| **End-to-end** (full stack via compose, incl. chat) | `scripts/e2e.sh` | ✅ | — |
+One `docker compose`; config split across `env/*.env` (a single root `.env` also works).
 
-## Layout
+| Service | Port | Package | Role | Tests |
+|---|---|---|---|---|
+| `datasets` | 8000 | `app` | data plane: US+KR connectors + ingestion store + `/catalog` | 340 |
+| `worker` | — | `app.queue` | Procrastinate worker: cron sweeps + ingestion jobs (Postgres queue, no Redis) | — |
+| `control-plane` | 8010→8001 | `controlplane` | the **gateway** (auth → entitlement → rate-limit → meter/audit) + tenants/keys admin | 19 |
+| `rag` | 8002 | `rag` | provenance-first chunk→embed→retrieve→rerank | 37 |
+| `agent-engine` | 8003 | `agentengine` | guardrail→plan (Gemini)→tool loop→citations; `/agent/chat` SSE; desk-feed / ask-feed | 202 |
+| `studio-api` | 8004 | `studioapi` | Google user→tenant provisioning; conversations; **holds tenant key**; watchlists/analysts/briefs | 142 |
+| `web` | 3000 | Next.js | chat UI + builder; `/api/*` BFF (Auth.js session only) | 95 |
+| `admin` | 8005 | `adminpanel` | out-of-band CRUD/ops console over service DBs (not in the request path) | 70 |
+| `mcp` | stdio | `mcpserver` | one tool per catalog resource, routed through the gateway | 9 |
 
-```
-.                  # repo root
-  datasets/        # ✅ DATA PLANE — US+KR financial data API (the foundation; built & tested)
-                   #    connectors (SEC/DART/Yahoo/FRED/ECOS/news) · point-in-time ingestion store
-                   #    · bulk/deep backfill · Procrastinate queue+worker · self-test · catalog (P0)
-  control-plane/   # ✅ CONTROL PLANE — tenants · scoped API keys · connector activation/entitlements
-                   #    · metering · audit · rate-limit · gateway in front of the data plane (P1)
-  mcp/             # ✅ MCP SERVER — tenant-scoped tools auto-derived from the catalog, routed through
-                   #    the gateway with the tenant key (entitlement + metering enforced) (P2)
-  rag/             # ✅ RAG SERVICE — provenance-first chunk→embed→store→retrieve→rerank, with
-                   #    pluggable backends (CPU-OSS / GCP-Vertex / GPU) selected by .env (P3)
-  agent-engine/    # ✅ AGENT ENGINE — run/stream agents over activated connectors + RAG via the gateway;
-                   #    guardrails (no advice/forecasting) + provenance citations; Gemini planner (P4)
-  studio-api/      # ✅ STUDIO API — Google user→tenant provisioning, conversations, chat BFF (holds the key)
-  web/             # ✅ WEB — chat UI (Next.js + Auth.js); tools & sources panel + agent builder (F1)
-                   #    + prompt library / community import (F2)
-  # next phase: Telegram/Slack messengers (F3)
-```
+Request flow (one chat turn): browser → web BFF (session) → studio-api (tenant key) → agent-engine →
+**gateway** (entitle + meter) → datasets/rag → upstreams. Full diagram in `docs/ARCHITECTURE.md` §2.
 
-## Principles
+## Architecture invariants (never violate — see `CLAUDE.md` §2)
 
-- **Deterministic *data*, not deterministic *logic*** — connectors are API-based, so figures are
-  structured, fast, reproducible, and always accurately sourced (Deep Research is at most one optional
-  tool). This is about the **data plane**, not the reasoning: answer quality and orchestration come from
-  Gemini / multi-agent flows, **never hardcoded keyword/heuristic rules** — the platform is Gemini-only,
-  with no keyword router anywhere.
-- **Provenance/trust envelope everywhere** — every datum/chunk/agent output carries source + as-of +
-  freshness (+ confidence where derivable). No number without a source.
-- **Platform holds upstream keys, meters usage, bills tenants** — so a per-connector license /
-  redistribution policy is mandatory (SEC/DART/FRED are redistribution-safe; restricted feeds use
-  BYO-key).
-- **One Gemini router, one tenancy model** — don't fork.
-
-## Roadmap
-
-The platform (PH hardening + connector waves) is built (see the status table above). The roadmap is
-being rewritten for a **full UX overhaul + MVP**; the old task tracker is archived in
-[`docs/deprecate/ROADMAP.md`](./docs/deprecate/ROADMAP.md).
+- **No number without a source** — every datum/chunk/artifact carries `source` + `as_of` + `freshness`
+  (+ `confidence`/interval where derivable). Unsourced → it doesn't ship.
+- **The gateway is the only path to data** — agents/MCP/external callers reach `datasets`/`rag` only
+  through the control-plane gateway (auth → entitlement → rate-limit → meter/audit).
+- **No forecasting / no advice** — forecasts, price targets, momentum, scored feeds, buy/sell advice are
+  refused at the agent boundary, and the refusal/label is **shown** in the UI (trust brand, not fine print).
+- **Honesty over fake data** — unbuilt endpoints return `501`; gaps are drawn, never fabricated.
+- **Gemini only, one router, one tenancy model** — all LLM calls go through the single router; no other
+  provider; don't fork auth/tenancy across services.
+- **Deterministic *data*, not deterministic *logic*** — "deterministic" describes the **data plane**
+  (API-based connectors → reproducible, sourced figures). Answer quality, routing, and orchestration come
+  from Gemini / multi-agent flows — **never hand-rolled keyword/heuristic rules** (no keyword router anywhere).
 
 ## Run the whole stack (Docker — recommended)
 
-A single `docker compose` brings up **all six services** from one shared `.env`:
-
 ```bash
-cp .env.example .env          # free keys (OPENDART/ECOS/FRED); AUTH_DEV_LOGIN=true; GOOGLE_API_KEY for Gemini
-docker compose up --build     # datasets :8000 · gateway :8010 · rag :8002 · agent :8003 · studio :8004 · web :3000
+for f in env/*.env.example; do cp "$f" "${f%.example}"; done   # split config by topic (env/README.md)
+# fill env/gemini.env (GOOGLE_API_KEY) + env/data-keys.env (OPENDART/ECOS/FRED…). A root .env also works.
+docker compose up --build     # datasets :8000 · gateway :8010 · rag :8002 · agent :8003 · studio :8004 · web :3000 · admin :8005 (+ worker)
 docker compose ps             # health of each service
-docker compose logs -f web    # follow a service's logs
-docker compose down           # stop  (add -v to also wipe the SQLite/volume state)
+docker compose logs -f studio-api
+docker compose stop worker    # pause ALL automatic ingestion (the Procrastinate cron sweeps)
+docker compose down           # stop  (add -v to ALSO wipe Postgres data + volumes)
 ```
 
-| Service | Port | What |
-|---|---|---|
-| `datasets` | 8000 | data plane (US+KR financial API, `/docs`) |
-| `control-plane` | 8010 | tenant gateway (auth · entitlement · metering) |
-| `rag` | 8002 | retrieval (hash default; `RAG_EMBEDDING_BACKEND=oss-cpu` for real embeddings) |
-| `agent-engine` | 8003 | agent loop (Gemini; `AGENT_LLM_BACKEND=gemini`, needs `GOOGLE_API_KEY`) |
-| `studio-api` | 8004 | provisioning · conversations · chat BFF |
-| `web` | 3000 | chat UI (open <http://localhost:3000>) |
-| `admin` | 8005 | Django-admin-style CRUD over every service DB + ops console (login `admin`/`admin`) |
+Open <http://localhost:3000> and ask "삼성전자 최근 실적" — the agent answers with sources. The browser
+never holds a platform key: web BFF (Auth.js session) → studio-api (tenant key) → agent-engine → tools via
+the metered gateway. `AUTH_DEV_LOGIN=true` enables local login without Google. Rebuild one service after a
+change: `docker compose up -d --build agent-engine`.
 
-Rebuild one service after a code change: `docker compose up -d --build agent-engine`.
-Drive the data plane through the gateway:
+Drive the data plane through the gateway directly:
 ```bash
-A='-H X-Admin-Token:dev-admin-token'
 # POST /admin/tenants -> /projects -> /keys -> /activations (connector_id), then:
 curl -H "X-API-KEY: vgk_..." "http://127.0.0.1:8010/company/facts?ticker=AAPL&market=US"
 ```
-Without Docker you can still run any service with `uv run uvicorn <pkg>.main:app --port <p>` (each reads `../.env`).
 
 ## Run the tests
 
-**Everything in one command — only Docker is required** (no host `uv`/`npm`/`pytest`). Unit tests run in
+**Everything in one command — only Docker is required** (no host `uv`/`npm`/`pytest`). Unit suites run in
 the `uv` image, the web build is a docker build, and the e2e + eval drive `docker compose`:
 
 ```bash
@@ -110,40 +83,40 @@ bash scripts/test_all.sh          # GOOGLE_API_KEY in .env enables the live e2e 
 Or run a layer on its own — the **docker** harnesses bring the stack up themselves:
 
 ```bash
-# Docker end-to-end (each spins the stack via docker compose, then tears it down):
-bash scripts/coverage.sh          # EVERY catalog tool (all 29) called through the gateway — coverage matrix
-bash scripts/e2e.sh               # Gemini planner, whole product chain — skips cleanly (exit 2) without a key
+bash scripts/coverage.sh          # EVERY catalog tool called through the gateway — coverage matrix
+bash scripts/e2e.sh               # Gemini planner, whole product chain — skips (exit 2) without a key
 bash scripts/e2e_functional.sh    # REAL data + MCP tool calls + semantic RAG (oss-cpu) + entitlement — no key
-GOOGLE_API_KEY=... bash scripts/e2e_live.sh   # REAL Gemini: grounded, cited answers (skips cleanly w/o a key)
+GOOGLE_API_KEY=... bash scripts/e2e_live.sh   # REAL Gemini: grounded, cited answers
 
 # Quality eval (needs the stack up: `docker compose up -d` first; skips without GOOGLE_API_KEY):
-python3 eval/run_eval.py          # 14 scenarios across every source; scores tool-use, grounding, citations, guardrails
+python3 eval/run_eval.py          # 96 scenarios; scores tool-use, grounding, citations, guardrails (+ Gemini judge)
 
 # Unit tests in docker (one service) — no host uv needed:
-docker run --rm -v "$PWD/datasets:/app" -w /app ghcr.io/astral-sh/uv:python3.11-bookworm-slim \
+docker run --rm -v "$PWD/agent-engine:/app" -w /app ghcr.io/astral-sh/uv:python3.11-bookworm-slim \
   sh -lc "uv run --extra dev pytest -q"
-# (host shortcut, only if you have uv: cd datasets && uv run --extra dev pytest -q)
 ```
 
-**156 unit tests** pass + web build. Three docker e2e harnesses + a scenario-based **quality eval**:
+**~900 unit/component tests** pass + the web build. The **quality eval** (`eval/run_eval.py`, LLM-judge
+rubric — see [`eval/RUBRIC.md`](./eval/RUBRIC.md)) runs before every push and must stay above the bar; every
+new tool / endpoint / feature adds a scenario. Per-service test totals live in `docs/ROADMAP.md` §13.
+
+The e2e harnesses:
 - **`e2e.sh`** — Gemini planner, the whole chain (catalog → tenant → entitlement → data plane + RAG via
-  gateway → metering → MCP → studio chat → agent builder → prompt import). Skips cleanly (exit 2) without
-  a `GOOGLE_API_KEY`.
+  gateway → metering → MCP → studio chat). Skips cleanly (exit 2) without `GOOGLE_API_KEY`.
 - **`e2e_functional.sh`** — real upstream numbers (Apple facts, a live AAPL close, Samsung's KRW revenue,
   the BOK rate), MCP real tool calls + schema + entitlement, and **real semantic RAG** (oss-cpu) with provenance.
-- **`e2e_live.sh`** — the real Gemini planner answering grounded, cited questions (Apple FY2025 rev cited
-  to SEC EDGAR; Samsung ₩333.6T to OpenDART; a "should I buy?" prompt refused).
-- **`eval/run_eval.py`** — builds agents with chosen data sources and scores answer quality across 14
-  scenarios (right source called · grounded figure · correct citation · restriction honoured · guardrail ·
-  multi-turn context) + an optional Gemini judge. Latest: 59/59 checks · judge 5.00/5. See [`eval/README.md`](./eval/README.md).
+- **`e2e_live.sh`** — the real Gemini planner answering grounded, cited questions (a "should I buy?" prompt refused).
 
-## The product (chat UI)
+## Environment (Gemini only; never commit secrets)
 
-```bash
-cp .env.example .env                       # AUTH_DEV_LOGIN=true for local login without Google
-docker compose up --build                  # whole stack incl. web on :3000
-# open http://localhost:3000 — ask "삼성전자 최근 실적"; the agent answers with sources.
 ```
-The browser never holds a platform key: web BFF (Auth.js session) → studio-api (holds the tenant key) →
-agent-engine → tools via the metered gateway. Guardrails refuse advice/forecasting. For real token
-streaming set `AGENT_LLM_BACKEND=gemini` + `GOOGLE_API_KEY`.
+GOOGLE_API_KEY=                      # one key for all Gemini use — enables the gemini planner + live tests
+AGENT_LLM_BACKEND=gemini             # Gemini-only (stub removed); default gemini, requires GOOGLE_API_KEY
+AUTH_DEV_LOGIN=true                  # local login without Google
+DATABASE_URL=                        # runtime: Postgres (compose sets per-service DBs); SQLite only for unit tests
+OPENDART_API_KEY= / ECOS_API_KEY= / FRED_API_KEY=    # free KR/US data keys
+RAG_EMBEDDING_BACKEND=hash|oss-cpu|oss-gpu|tei|gcp
+RAG_RERANKER_BACKEND=none|oss-cpu|oss-gpu|tei|gcp
+RAG_VECTOR_STORE=memory|pgvector
+X-Admin-Token (dev: dev-admin-token) # control-plane admin
+```

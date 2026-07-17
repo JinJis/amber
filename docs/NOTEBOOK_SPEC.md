@@ -1,11 +1,13 @@
-> **❌ §A 리서치 노트북은 2026-07-10 제거됨** — 이 문서는 히스토리 참고용. §B 스탠딩 알림은 유지(M-SA).
+> **❌ §A 리서치 노트북은 2026-07-10 제거됨** — 히스토리 참고용, 코드에 없음(Notebook/NoteBlock/kind=note 0건).
+> **유효한 것은 §B 스탠딩 알림(M-SA)뿐** — SA-1..4 라이브 검증 완료, 잔여는 ROADMAP의 `SA eval ⬜` 하나.
+> §A는 읽지 말고 §B만 참고하세요.
 
 # 리서치 노트북 + 스탠딩 알림 — 구현 스펙 (2026-07-05)
 
 > 사용자 방향: ① 대시보드를 갈아엎어 "근거를 pin해 기록하는 리서치 노트북 + 나만의 투자 노트 →
 > 커뮤니티/SNS 공유"로, ② 알림봇 기능은 대시보드에서 제거, ③ 채팅 중 주기성 데이터에 대해
 > 알림 구독을 자연스럽게 추천. 세부 설계는 현 서비스 흐름에 맞춰 아래와 같이 판단했다.
-> 관련: [`UX_PROPOSALS.md`](./UX_PROPOSALS.md)(근거 패널 원장·엔트리), [`PUBLISH_SPEC.md`](./PUBLISH_SPEC.md)(공유 파이프라인).
+> 관련(모두 deprecated): [`UX_PROPOSALS.md`](./deprecate/UX_PROPOSALS.md), [`PUBLISH_SPEC.md`](./deprecate/PUBLISH_SPEC.md).
 
 ---
 

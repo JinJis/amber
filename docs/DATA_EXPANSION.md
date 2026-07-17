@@ -193,7 +193,15 @@ agent's tool list, and the chart/evidence/provenance pipeline. No forked surface
    dates **attributed to the provider** ("consensus EPS 2.10 · source FMP · as_of …"), never re-stated as
    *our* forecast/target. DCF/DDM/RIM stay transparent user-input models. The guardrail still refuses
    *our* predictions/advice; third-party data with provenance is fine.
-3. ✅ **Build start: HOLD.** Plan is approved for review; do NOT start CE tasks until the user gives the go.
+3. ✅ **Build start: 대부분 완료(2026-07-17 갱신).** HOLD 해제됨 — FMP(estimates/calendar), KIS(KR realtime),
+   밸류에이션 DCF/DDM/RIM, 백테스터, quant screener, movers/거장/섹터/자산군 카테고리가 모두 shipped
+   (ROADMAP §1 "FMP + KIS Wave 2"). 이 문서의 §B 🔵/🔴 마커는 그 범위에서 stale이니 아래 **잔여 open** 항목만
+   유효한 착수 대상입니다.
+
+**잔여 open (아직 미착수 — 이 문서가 유일하게 추적):**
+- **CE-14 IR자료실 + 밸류체인 그래프** — 8-K/DART 발표자료 데크 + value-chain 연결(datasets에 value_chain
+  커넥터 없음).
+- **CE-8 포트폴리오/보유 제품 모델** — studio-api에 미구현.
 
 **Still open (decide before those specific tasks):**
 - **CE-13 realtime/premium news** — provider/budget not chosen yet (FMP has some news; else Finnhub free

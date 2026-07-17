@@ -88,8 +88,9 @@
   (SC-0.1) — 배포 전 실값으로 안 바꾸면 스택이 아예 안 떠요. 바꿀 목록: `AUTH_SECRET`·`SERVICE_TOKEN`·
   `ADMIN_TOKEN`·`ADMINUI_*`·`DATASETS_API_KEYS`(+`AUTH_DISABLED=false`)·기본 pg 비번(`rag:rag`)·
   (게스트 켜면)`GUEST_IP_SALT`·(토스 켜면)`BILLING_ENC_KEY`
-- [ ] **레플리카 증설은 SC-2 완료 전 금지**: studio-api를 2대로 늘리면 지금 코드로는 중복 결제 시도·
-  알림 중복 발송·챗 재개 404가 발생해요. 수평 확장해도 되는 티어는 현재 web뿐
+- [x] **레플리카 증설**: SC-2 완료(2026-07-17 기준) — 중복 결제/알림 중복/챗 재개는 크로스노드 잠금·
+  단일비행으로 해소돼 studio-api·gateway 다중 레플리카가 가능해졌어요. 다만 챗 재개(SSE tail)는 아직
+  세션 스티키 라우팅이 필요하니 로드밸런서에서 그 경로만 고정해 주세요(SC-3.3 잔여).
 
 ## 2. 바이럴·품질 (선택이지만 효과 큼)
 - [ ] **Kakao JS 키** (V-6 카톡 리치 공유): developers.kakao.com 같은 앱 → JavaScript 키 + Web 플랫폼 도메인 등록 → `NEXT_PUBLIC_KAKAO_JS_KEY` (키가 오면 V-6 구현 착수 가능)

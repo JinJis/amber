@@ -75,6 +75,12 @@ after M0 and opens History Lab on click. Missing pieces render as gap chips, not
 
 ## 3. Desk Home — the turn-zero briefing (M-DESK)
 
+> **⚠️ 2026-07-17: 실제 출시된 탐구 첫 화면은 ENTRY-v6 5-섹션 홈**(관심 @그룹 칩 + Macro Trends·
+> 어닝 레이더·투자거장·수급·히스토리 랩 마키). 이 §3의 카드-그리드 Desk Home 설계는 그 구현으로
+> 대체됐어요 — 현행 계약은 ROADMAP M-ASK 행 + 코드(`CockpitEntry.tsx`)입니다. 이 절은 M-DESK
+> desk-feed(빈 챗 zero-state)의 카드 종류·무조언 톤 계약을 위한 참고로만 유효합니다. (§4/§5/§2/§8은
+> 여전히 미구현 M-QUANT/M2/M5의 살아있는 계약이니 그대로 두세요.)
+
 The empty state of 탐색. Replaces the blank "무엇이든 물어보세요" moment.
 
 ### 3.1 Layout
