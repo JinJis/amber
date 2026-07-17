@@ -41,6 +41,9 @@ Per scenario (`scenarios.py`), each present check is one graded item:
 | `expect_artifact` | an inline artifact (U3) was emitted — a `kind` (e.g. `"timeseries"`) or `True` for any |
 | `expect_computation` | a self-computed figure (valuation/backtest/screener) carries its **계산 근거** trace (PH-DATA-6) |
 | `expect_cite_url` | a citation carries an **external source-page URL** (the in-app viewer renders it) — a host substring or `True` |
+| `expect_min_cards` / `expect_card_kind` | (feed scenarios) the feed produced ≥N cards / a card of kind K |
+| `cards_all_cited` | (feed scenarios) every DATA card carries ≥1 citation (state cards exempt) |
+| `cards_kind_diverse` | (feed scenarios) data cards span ≥N distinct kinds — no 가격·공시만 반복; empty feed passes (honest gap) |
 | `judge` | **deep-model rubric judge** — scores 5 dimensions 1–5 (see [`RUBRIC.md`](./RUBRIC.md)) |
 
 Each judged scenario also carries a one-line **`criteria`** ("what a correct answer to THIS question

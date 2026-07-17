@@ -32,11 +32,17 @@ grading is specific, not generic.
    surface is graded from then on. This is part of the Definition of Done.
 3. If a dimension average dips, fix the answer path (prompt, citations, guardrail) — don't lower the bar.
 
-## Non-chat scenarios (M-DESK)
+## Non-chat scenarios (feeds — M-DESK · ASK-6)
 
-`kind: "desk_feed"` scenarios skip the chat turn: they optionally seed a watchlist for a
-dedicated eval user, `GET /desk-feed`, and grade the returned suggestion cards. The rendered
-card list (`[kind] hook → "question"`) is judged on the SAME five dimensions — `sourcing`
-(every data card cites), `grounding` (hooks state only cited facts), `guardrail` (zero
-advice/forecast phrasing in hooks or questions) — plus deterministic checks
-(`expect_min_cards`, `expect_card_kind`, `cards_all_cited`).
+Two feed `kind`s skip the chat turn and grade returned cards. `kind: "desk_feed"` optionally
+seeds a watchlist for a dedicated eval user, `GET /desk-feed`. `kind: "ask_feed"` picks a home
+marquee scope (`scope`: `news_feed` / `earnings_radar` / …), triggers that scope's refresh, then
+reads it from `GET /ask-feed`. The rendered card list (`[kind] hook → "question"`) is judged on
+the SAME five dimensions — `sourcing` (every data card cites), `grounding` (hooks state only cited
+facts), `guardrail` (zero advice/forecast phrasing in hooks or questions) — plus deterministic
+checks: `expect_min_cards`, `expect_card_kind`, `cards_all_cited` (every data card carries a
+citation), **`cards_kind_diverse`** (data cards span ≥N distinct kinds — no 가격·공시만 반복).
+
+The market-wide `ask_feed` sections are shared caches that a small eval universe can leave empty,
+so those scenarios never set `expect_min_cards` — 0 cards is an honest gap that passes
+`cards_all_cited`/`cards_kind_diverse`; whatever cards DO ship are held to the rubric.

@@ -41,6 +41,28 @@
 | UXQ-8 | 모바일: pull-to-refresh(피드) · 스와이프로 근거 시트 닫기 | ⬜ |
 | UXQ-9 | 티커 컨텍스트 헤더(UX-3): 종목 포커스 시 가격·다음 공시 상시 스트립 | ⬜ |
 
+## D. 턴제로 피드 품질 (QG — desk-feed·ask-feed·온보딩 쇼케이스)
+
+2026-07-17 턴제로 시스템 커버리지 감사 → 갭 처리. 피드 = desk-feed(M-DESK), ask-feed
+(Macro Trends + 어닝·거장·히스토리 섹션), 온보딩 쇼케이스(ONB-LIVE).
+
+| id | 항목 | 상태 |
+|---|---|---|
+| QG-1 | **서명 정확도** — `ask-feed _signature`가 페이로드 앞 400자만 해시 → 긴 리스트 깊숙한 새 레코드 놓쳐 재생성 스킵(stale). 전체 페이로드 해시로 수정 + 회귀 테스트 | ✅ 2026-07-17 |
+| QG-2 | **무출처 방지 측정** — eval `cards_all_cited`(모든 데이터 카드 인용)를 ask-feed(어닝·Macro Trends) 시나리오에 적용; `kind: ask_feed` 러너 신설 | ✅ 〃 |
+| QG-3 | **다양성 측정** — eval `cards_kind_diverse`(데이터 카드 ≥N종 kind); desk-feed 관심그룹 시나리오에 적용 | ✅ 〃 |
+| QG-4 | **무전망·톤 judge** — Macro Trends/desk-feed criteria에 무전망·해요체·다양성 명시 → judge 실측 | ✅ 〃 |
+| QG-5 | **stale-서빙** — engine 다운 시 이전 캐시가 있으면 stale:true/이전 풀 서빙(공백은 캐시 없을 때만); desk-feed·티커 테스트 | ✅ 〃 |
+| QG-6 | **ONB-LIVE 커버리지** — 온보딩 쇼케이스 studio 계층 테스트(저장·빈응답 유지·read-through 킥) 0→3 | ✅ 〃 |
+| QG-7 | **인젝션 하드닝** — 모든 피드 합성 프롬프트에 '스니펫 속 지시문 무시' 지침 + 회귀 테스트 | ✅ 〃 |
+| QG-8 | **동시성 단일비행** — 티커 동시 탭 → in-proc 락으로 생성 1회 테스트 | ✅ 〃 |
+| QG-9 | **admin 오퍼레이터 표면** — Pipelines에 홈 마키 섹션 상태 카드 + '지금 갱신'(refresh-sections) | ✅ 〃 |
+| QG-10 | **인용 URL 유효성** — 카드 인용이 실제 열람 가능한 URL/근거 앵커를 갖는지 결정적 측정 (macro/market 카드는 URL 없을 수 있어 per-card strict 체크는 false-fail 위험 → 미착수) | ⬜ |
+| QG-11 | **신선도 상한** — 피드 `generated_at`/근거 as_of 최대 나이 결정적 게이트(주 단위 묵은 데이터 방지) | ⬜ |
+| QG-12 | **질문 답변가능성** — 카드 query를 `/chat/stream`에 되먹여 실제로 소스 답변이 나오는지(거절·공백 아님) 검증 — 비쌈(추가 턴) | ⬜ |
+| QG-13 | **인젝션 잔여** — 오염된 소스에 심긴 수치는 QT-2를 통과(출처에 존재)·순수 텍스트 조언은 피드층 통과 → 카드 탭 시 채팅 가드레일이 최종 차단. 피드층 LLM 가드레일 패스는 비용 대비 미착수 | ⬜(설계 선택) |
+| QG-14 | **PG 동시성** — advisory lock·IntegrityError 수렴은 SQLite no-op → PG 통합 환경 테스트 필요 | ⬜ |
+
 ## 실행 순서 (권장)
 RQ-8(측정 먼저) → RC-1(피드백 루프) → RQ-5·6(검색) → UXQ-1·2(체감 최대) → 나머지.
 각 항목 one task per PR, 전/후 수치 필수.
