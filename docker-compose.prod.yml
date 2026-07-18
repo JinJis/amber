@@ -44,6 +44,7 @@ services:
       options: { max-size: "10m", max-file: "5" }
 
   web:
+    image: ${VG_REGISTRY_PREFIX:-}valuegraph-web:${VG_TAG:-latest}
     build:
       context: ./web
       args:
@@ -53,13 +54,21 @@ services:
       - "127.0.0.1:3000:3000"
     mem_limit: ${VG_MEM_WEB:-1.5g}
     stop_grace_period: 15s
+    healthcheck:   # deploy.sh의 --wait 게이트용 (busybox wget은 alpine 기본)
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   datasets:
+    image: ${VG_REGISTRY_PREFIX:-}valuegraph-datasets:${VG_TAG:-latest}
     ports: !override
       - "127.0.0.1:8000:8000"
     mem_limit: ${VG_MEM_DATASETS:-2g}
 
   worker:
+    image: ${VG_REGISTRY_PREFIX:-}valuegraph-datasets:${VG_TAG:-latest}
     mem_limit: ${VG_MEM_WORKER:-3g}
     healthcheck:
       test: ["CMD", "python", "-m", "procrastinate", "--app=app.queue.app", "healthchecks"]
@@ -69,22 +78,26 @@ services:
       start_period: 30s
 
   control-plane:
+    image: ${VG_REGISTRY_PREFIX:-}valuegraph-control-plane:${VG_TAG:-latest}
     ports: !override
       - "127.0.0.1:8010:8001"
     mem_limit: 1g
 
   rag:
+    image: ${VG_REGISTRY_PREFIX:-}valuegraph-rag:${VG_TAG:-latest}
     ports: !override
       - "127.0.0.1:8002:8002"
     mem_limit: ${VG_MEM_RAG:-2.5g}
 
   agent-engine:
+    image: ${VG_REGISTRY_PREFIX:-}valuegraph-agent-engine:${VG_TAG:-latest}
     ports: !override
       - "127.0.0.1:8003:8003"
     mem_limit: ${VG_MEM_AGENT:-1.5g}
     stop_grace_period: 45s
 
   studio-api:
+    image: ${VG_REGISTRY_PREFIX:-}valuegraph-studio-api:${VG_TAG:-latest}
     ports: !override
       - "127.0.0.1:8004:8004"
     mem_limit: 1g
@@ -93,9 +106,16 @@ services:
   admin:
     # Force loopback in production REGARDLESS of ADMIN_BIND (a dev .env may set 0.0.0.0).
     # Access via IAP SSH tunnel:  gcloud compute ssh vg-beta --tunnel-through-iap -- -L 8005:127.0.0.1:8005
+    image: ${VG_REGISTRY_PREFIX:-}valuegraph-admin:${VG_TAG:-latest}
     ports: !override
       - "127.0.0.1:8005:8005"
     mem_limit: 1g
+    healthcheck:   # /healthz는 인증 없이 열려 있음 (admin/tests/test_admin.py)
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8005/healthz').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   postgres:
     # 14g leaves room for shared_buffers(2g) + backends + the host page cache holding the

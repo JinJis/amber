@@ -21,14 +21,40 @@ BUCKET="${BUCKET:-gs://${PROJECT}-vg-backups}"
 SA_NAME="${SA_NAME:-vg-vm}"
 SA="${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
 
+AR_REPO="${AR_REPO:-vg}"
+AR_HOST="${REGION}-docker.pkg.dev"
+
 gcloud config set project "${PROJECT}" >/dev/null
 
 echo "── APIs"
-gcloud services enable compute.googleapis.com storage.googleapis.com iap.googleapis.com
+gcloud services enable compute.googleapis.com storage.googleapis.com iap.googleapis.com \
+  artifactregistry.googleapis.com
 
-echo "── service account (backup bucket only — app-level GCP auth stays in secrets/gcp-sa.json)"
+echo "── service account (backup bucket + AR pull only — app-level GCP auth stays in secrets/gcp-sa.json)"
 gcloud iam service-accounts describe "${SA}" >/dev/null 2>&1 || \
-  gcloud iam service-accounts create "${SA_NAME}" --display-name="ValueGraph VM (backups)"
+  gcloud iam service-accounts create "${SA_NAME}" --display-name="ValueGraph VM (backups + image pull)"
+
+echo "── Artifact Registry repo ${AR_REPO} (docker, ${REGION}) + bounded cleanup policy"
+gcloud artifacts repositories describe "${AR_REPO}" --location "${REGION}" >/dev/null 2>&1 || \
+  gcloud artifacts repositories create "${AR_REPO}" \
+    --repository-format=docker --location "${REGION}" \
+    --description="ValueGraph service images (pushed by deploy/build-push.sh)"
+# Storage stays bounded: keep the 10 most recent versions per image, delete the rest after 30d.
+# (rollback window = last 10 tags; adjust keepCount if you want deeper history)
+AR_POLICY="$(mktemp)"
+cat > "${AR_POLICY}" <<'JSON'
+[
+  {"name": "keep-recent-10", "action": {"type": "Keep"},
+   "mostRecentVersions": {"keepCount": 10}},
+  {"name": "delete-older-30d", "action": {"type": "Delete"},
+   "condition": {"olderThan": "2592000s"}}
+]
+JSON
+gcloud artifacts repositories set-cleanup-policies "${AR_REPO}" --location "${REGION}" \
+  --policy="${AR_POLICY}" --no-dry-run --quiet
+rm -f "${AR_POLICY}"
+gcloud artifacts repositories add-iam-policy-binding "${AR_REPO}" --location "${REGION}" \
+  --member="serviceAccount:${SA}" --role="roles/artifactregistry.reader" >/dev/null
 
 echo "── static external IP"
 gcloud compute addresses describe "${VM}-ip" --region "${REGION}" >/dev/null 2>&1 || \
@@ -90,11 +116,14 @@ gcloud compute disks describe "${VM}" --zone "${ZONE}" \
 
 cat <<DONE
 
-✅ Provisioned. Next steps (docs/INFRA.md runbook):
+✅ Provisioned (idempotent — 이미 있는 자원은 전부 스킵됨). Next steps (docs/INFRA.md runbook):
   1. Point Cloudflare DNS: A ${DOMAIN:-your.domain} → ${IP}  (proxied ☁, SSL mode "Full (strict)")
-  2. SSH in:   gcloud compute ssh ${VM} --zone ${ZONE} --tunnel-through-iap
-  3. On the VM: run deploy/vm-setup.sh (installs docker, swap, clones the repo, scaffolds env/)
-  4. Fill env/*.env + secrets/ (SC-0 refuses dev defaults), then:
-       DOMAIN=${DOMAIN:-your.domain} docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-  Backup bucket: ${BUCKET}   (set it in deploy/systemd/valuegraph-backup.service)
+  2. Build & push images (개발 머신에서):
+       PROJECT=${PROJECT} ./deploy/build-push.sh
+  3. SSH in:   gcloud compute ssh ${VM} --zone ${ZONE} --tunnel-through-iap
+  4. On the VM: run deploy/vm-setup.sh (installs docker, swap, clones the repo, scaffolds env/ + .env)
+  5. Fill env/*.env + secrets/ + root .env (SC-0 refuses dev defaults), then:
+       ./deploy/deploy.sh <image-tag>
+  Backup bucket:   ${BUCKET}   (set it in deploy/systemd/valuegraph-backup.service)
+  Image registry:  ${AR_HOST}/${PROJECT}/${AR_REPO}  (cleanup: 최근 10버전 유지·30일 후 삭제)
 DONE
