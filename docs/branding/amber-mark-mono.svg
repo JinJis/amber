@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 106" role="img" aria-labelledby="amber-mono-title">
+  <title id="amber-mono-title">Amber</title>
+  <path d="M52 0C78 0 100 20 102 46c2 30-21 59-50 59C23 105 0 80 2 48 4 21 26 0 52 0Z" fill="none" stroke="currentColor" stroke-width="3"/>
+  <rect x="24" y="38" width="56" height="5" rx="2.5" fill="currentColor" opacity="0.4"/>
+  <rect x="24" y="50" width="34" height="8" rx="4" fill="currentColor"/>
+  <rect x="24" y="64" width="56" height="5" rx="2.5" fill="currentColor" opacity="0.4"/>
+</svg>
