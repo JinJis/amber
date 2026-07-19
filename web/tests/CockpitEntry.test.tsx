@@ -177,13 +177,32 @@ describe("CockpitEntry (ASK-6 v5)", () => {
     expect(JSON.parse(String(post[1].body)).name).toBe("2차전지");
   });
 
-  it("빈 그룹(방금 만든 그룹)도 보인다 — 펼치면 종목 담으러 가기", async () => {
-    stubApis();
-    const onManageWatch = vi.fn();
-    render(<CockpitEntry onPick={vi.fn()} onManageWatch={onManageWatch} />);
-    fireEvent.click(await screen.findByTestId("grp-빈그룹"));
-    fireEvent.click(screen.getByText("＋ 종목 담으러 가기"));
-    expect(onManageWatch).toHaveBeenCalledWith("g-empty");
+  it("그룹 칩은 종목 수 큰 순으로 정렬되고, 빈 그룹은 홈에서 숨긴다", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/api/ask-feed")) {
+        return { ok: true, json: async () => ({
+          groups: [
+            { id: "g-semi", name: "반도체" },     // 1종목
+            { id: "g-big", name: "빅테크" },      // 2종목 → 맨 앞
+            { id: "g-empty", name: "빈그룹" },    // 0종목 → 숨김
+          ],
+          tickers: [
+            { market: "KR", ticker: "005930", name: "삼성전자", groups: ["반도체"] },
+            { market: "US", ticker: "NVDA", name: "NVIDIA", groups: ["빅테크"] },
+            { market: "US", ticker: "MSFT", name: "Microsoft", groups: ["빅테크"] },
+          ],
+          news_feed: [],
+        }) };
+      }
+      return { ok: false, json: async () => ({}) };
+    }));
+    render(<CockpitEntry onPick={vi.fn()} />);
+    const big = await screen.findByTestId("grp-빅테크");
+    const semi = screen.getByTestId("grp-반도체");
+    // 종목 수 내림차순: 빅테크(2)가 반도체(1)보다 앞
+    expect(big.compareDocumentPosition(semi) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByTestId("grp-빈그룹")).toBeNull();          // 빈 그룹 숨김
   });
 
   it("트렌드 보드는 정적: 카드는 한 벌, 마키 없음; 탭 → 실행용 query가 컴포저로", async () => {

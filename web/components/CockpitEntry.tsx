@@ -217,6 +217,14 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence, onManage
     } finally { setBusyNew(false); }
   }
 
+  // 그룹 칩 순서 = 종목 수 내림차순(동률은 서버 순서 유지). 빈 그룹은 홈에서 숨긴다 —
+  // 관심 페이지에서는 계속 보이고, 홈의 새 그룹 생성은 곧장 관심 페이지로 이어지므로 흐름 무손실.
+  const rankedGroups = groups
+    .map((g) => ({ g, n: tickers.filter((t) => t.groups.includes(g.name)).length }))
+    .filter((x) => x.n > 0)
+    .sort((a, b) => b.n - a.n)
+    .map((x) => x.g);
+
   const selTicker = tickers.find((t) => tkKey(t) === sel) ?? null;
   const selCards = sel ? cardsBy[sel] : undefined;
 
@@ -265,10 +273,10 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence, onManage
 
           {groups.length > 0 ? (
             <div className="eg-wrap">
-              {/* 1차 depth = @그룹 칩(가로로 나열, 넘치면 줄바꿈). 칩을 누르면 아래 패널에서
+              {/* 1차 depth = @그룹 칩 한 줄 — 종목 수 큰 순. 칩을 누르면 아래 패널에서
                   그 그룹의 종목이 토글되고, 종목을 누르면 그 자리에서 분석 카드. */}
               <div className="eg-chips">
-                {groups.map((g) => {
+                {rankedGroups.map((g) => {
                   const members = tickers.filter((t) => t.groups.includes(g.name));
                   const open = openGroup === g.name;
                   return (
@@ -315,19 +323,12 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence, onManage
 
               {/* 펼친 그룹의 종목 패널 — 칩 줄 아래 전체폭으로 */}
               {(() => {
-                const g = openGroup ? groups.find((x) => x.name === openGroup) : null;
+                const g = openGroup ? rankedGroups.find((x) => x.name === openGroup) : null;
                 if (!g) return null;
                 const members = tickers.filter((t) => t.groups.includes(g.name));
                 return (
                   <div className="eg-panel" data-testid={`grp-body-${g.name}`}>
-                    {members.length === 0 ? (
-                      <div className="tk-gap">
-                        아직 담긴 종목이 없어요.
-                        <span className="tk-gap-chips">
-                          <button type="button" className="grp" onClick={() => onManageWatch?.(g.id)}>＋ 종목 담으러 가기</button>
-                        </span>
-                      </div>
-                    ) : (
+                    {(
                       <>
                         <div className="tk-row" role="listbox" aria-label={`@${g.name} 종목`}>
                           {members.map((t) => {
