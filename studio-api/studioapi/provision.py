@@ -62,18 +62,34 @@ def system_api_key_cached() -> str | None:
         return None
 
 
-_system_premium_done = False
+_system_backfill_done = False
 
 
-async def _ensure_system_premium() -> None:
-    """Backfill: a system project provisioned BEFORE premium feed connectors joined the set only has
-    the free set activated — so 어닝 레이더(fmp)·한국 수급(kis) never generate. Re-activate the
-    premium connectors once per process (idempotent — the control-plane no-ops already-active ones).
-    Self-heals every existing deployment on its next restart, no manual admin step."""
-    global _system_premium_done
-    if _system_premium_done:
+async def _all_connector_ids() -> list[str]:
+    """The FULL catalog connector set. The platform's own feed project is entitled to EVERYTHING —
+    it is NOT a plan-limited user, so it must not inherit the free-tier set (that's what left 어닝
+    레이더=fmp unentitled and 0장). Source of truth = the data-plane catalog (invariant #8); falls
+    back to the known set (incl. era-news gdelt/nyt_archive, which sit in no plan) if the control-plane
+    catalog is briefly unavailable at boot."""
+    try:
+        cat = await _admin("GET", "/admin/catalog")
+        ids = [c["id"] for c in (cat.get("connectors") or []) if c.get("id")]
+        if ids:
+            return ids
+    except Exception as exc:  # noqa: BLE001 — control-plane/catalog not ready → use the known fallback
+        log.warning("system project: catalog fetch failed, using fallback connector set: %s", exc)
+    from studioapi.plans import FREE_CONNECTORS, PREMIUM_CONNECTORS
+    return list(FREE_CONNECTORS) + list(PREMIUM_CONNECTORS) + ["gdelt", "nyt_archive"]
+
+
+async def _backfill_system_connectors() -> None:
+    """Backfill: a system project provisioned BEFORE it was entitled to the full catalog only has the
+    free set activated — so 어닝 레이더(fmp)·한국 수급(kis)·era-news(gdelt/nyt) never generate.
+    Re-activate the full catalog once per process (idempotent — the control-plane no-ops already-active
+    ones). Self-heals every existing deployment on its next restart, no manual admin step."""
+    global _system_backfill_done
+    if _system_backfill_done:
         return
-    row = None
     with SessionLocal() as db:
         row = db.get(ServiceState, _SYSTEM_STATE_KEY)
     if row is None:
@@ -84,9 +100,8 @@ async def _ensure_system_premium() -> None:
         pid = None
     if not pid:
         return
-    from studioapi.plans import PREMIUM_CONNECTORS
-    await _activate_defaults(pid, list(PREMIUM_CONNECTORS))
-    _system_premium_done = True
+    await _activate_defaults(pid, await _all_connector_ids())
+    _system_backfill_done = True
 
 
 async def ensure_system_project() -> str | None:
@@ -95,7 +110,7 @@ async def ensure_system_project() -> str | None:
     the caller degrades to `_any_api_key` until a later attempt succeeds. Idempotent via the KV cache."""
     cached = system_api_key_cached()
     if cached:
-        await _ensure_system_premium()   # backfill premium for projects provisioned before it existed
+        await _backfill_system_connectors()   # full-catalog backfill for pre-existing system projects
         return cached
     async with _system_lock:
         cached = system_api_key_cached()  # double-check under the lock
@@ -108,12 +123,12 @@ async def ensure_system_project() -> str | None:
         except Exception as exc:  # noqa: BLE001 — control-plane not ready yet → degrade, retry next boot
             log.warning("system project provisioning deferred (control-plane not ready): %s", exc)
             return None
-        # 시스템 피드 키는 유저 플랜이 아니라 플랫폼 — 프리미엄(fmp 어닝 캘린더/컨센서스, kis 수급)까지
-        # 활성화해야 어닝 레이더·한국 수급 섹션이 실제로 생성된다(활성 안 하면 어닝 레이더가 0장).
-        from studioapi.plans import FREE_CONNECTORS, PREMIUM_CONNECTORS
-        await _activate_defaults(project["id"], list(FREE_CONNECTORS) + list(PREMIUM_CONNECTORS))
-        global _system_premium_done
-        _system_premium_done = True   # fresh project already has premium — skip the backfill path
+        # 시스템 피드 키는 유저 플랜이 아니라 플랫폼 — 카탈로그 전체를 엔타이틀해야 모든 섹션
+        # (어닝=fmp·한국 수급=kis·era-news=gdelt/nyt 등)이 실제로 생성된다. 유저 플랜(FREE/PREMIUM)
+        # 분류와 무관하게 전 커넥터를 활성화한다.
+        await _activate_defaults(project["id"], await _all_connector_ids())
+        global _system_backfill_done
+        _system_backfill_done = True   # fresh project already has the full set — skip the backfill path
         state = {"tenant_id": tenant["id"], "project_id": project["id"], "api_key": key["api_key"]}
         with SessionLocal() as db:
             db.merge(ServiceState(key=_SYSTEM_STATE_KEY, value=_json.dumps(state)))

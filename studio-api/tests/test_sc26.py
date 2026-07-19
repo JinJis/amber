@@ -105,10 +105,16 @@ async def test_me5_system_key_provisioned_cached_and_preferred(monkeypatch):
         assert _bg_api_key(db) == "vgk_sys"
 
 
+def _mock_catalog(ids: list[str]) -> None:
+    """control-plane의 카탈로그 프록시(GET /admin/catalog) — 전체 커넥터 목록."""
+    respx.get("http://cp.test/admin/catalog").mock(
+        return_value=httpx.Response(200, json={"connectors": [{"id": i} for i in ids]}))
+
+
 @respx.mock
-async def test_system_project_activates_premium_connectors(monkeypatch):
-    """어닝 레이더·한국 수급이 실제로 생성되려면 시스템 피드 키가 fmp·kis(프리미엄)까지 활성화해야
-    한다 — FREE만 활성이던 버그가 어닝 레이더를 통째로 0장으로 만들었다."""
+async def test_system_project_entitled_to_full_catalog(monkeypatch):
+    """시스템 피드 키는 유저 플랜이 아니라 플랫폼 — 카탈로그 전체(fmp·kis·gdelt·nyt 포함)를
+    엔타이틀해야 모든 섹션이 생성된다. (FREE만 활성이던 버그가 어닝 레이더를 0장으로 만들었다.)"""
     import json as _json
 
     monkeypatch.setattr(settings, "control_plane_url", "http://cp.test")
@@ -118,37 +124,41 @@ async def test_system_project_activates_premium_connectors(monkeypatch):
         db.query(ServiceState).filter(ServiceState.key == _SYSTEM_STATE_KEY).delete()
         db.commit()
 
+    catalog_ids = ["sec_edgar", "yahoo", "fred", "google_news", "market_history",
+                   "fmp", "kis", "gdelt", "nyt_archive"]
+    _mock_catalog(catalog_ids)
     _, activations = _mock_cp(tenant="tsys2", project="psys2", key="vgk_sys2")
     key = await ensure_system_project()
     assert key == "vgk_sys2"
     activated = {_json.loads(c.request.content)["connector_id"] for c in activations.calls}
-    assert {"fmp", "kis"} <= activated                     # 프리미엄 포함 (어닝·수급의 데이터원)
-    assert {"sec_edgar", "market_history", "google_news"} <= activated   # free도 함께
+    assert activated == set(catalog_ids)                   # 유저 플랜 무관 — 카탈로그 전체
+    assert {"fmp", "kis", "gdelt", "nyt_archive"} <= activated   # 어떤 플랜에도 없는 것까지
 
 
 @respx.mock
-async def test_existing_system_project_backfills_premium(monkeypatch):
-    """이미 프로비저닝된(캐시된) 시스템 프로젝트도 재시작 시 fmp·kis를 백필로 활성화한다 —
-    프리미엄 활성화 이전에 만들어진 배포가 자가치유되도록(수동 admin 단계 없이)."""
+async def test_existing_system_project_backfills_full_catalog(monkeypatch):
+    """이미 프로비저닝된(캐시된) 시스템 프로젝트도 재시작 시 카탈로그 전체(fmp·kis·gdelt·nyt)를
+    백필로 활성화한다 — 전체 엔타이틀 이전에 만들어진 배포가 자가치유되도록(수동 admin 없이)."""
     import json as _json
 
     monkeypatch.setattr(settings, "control_plane_url", "http://cp.test")
     import studioapi.provision as P
 
-    # 캐시된 시스템 프로젝트가 이미 있는 상태(프리미엄 미활성으로 예전에 만들어짐)를 재현
+    # 캐시된 시스템 프로젝트가 이미 있는 상태(예전에 FREE만 활성으로 만들어짐)를 재현
     with SessionLocal() as db:
         db.merge(ServiceState(key=P._SYSTEM_STATE_KEY,
                               value=_json.dumps({"tenant_id": "told", "project_id": "pold",
                                                  "api_key": "vgk_old"})))
         db.commit()
-    P._system_premium_done = False   # 새 프로세스 부팅 흉내
+    P._system_backfill_done = False   # 새 프로세스 부팅 흉내
 
+    _mock_catalog(["sec_edgar", "fmp", "kis", "gdelt", "nyt_archive", "market_history"])
     activations = respx.post("http://cp.test/admin/projects/pold/activations").mock(
         return_value=httpx.Response(200, json={}))
     key = await P.ensure_system_project()               # 캐시 히트 → 백필만
     assert key == "vgk_old"
     backfilled = {_json.loads(c.request.content)["connector_id"] for c in activations.calls}
-    assert {"fmp", "kis"} <= backfilled                 # 프리미엄이 백필됨
+    assert {"fmp", "kis", "gdelt", "nyt_archive"} <= backfilled   # 플랜 밖 커넥터까지 백필
     # 한 프로세스에서 두 번째 호출은 재활성화하지 않는다(프로세스당 1회)
     before = activations.call_count
     await P.ensure_system_project()
