@@ -5,8 +5,8 @@
 // v7 레이아웃:
 //   ① 내 관심종목 파고들기 — 관심 @그룹 칩 한 줄(가로 스크롤, ＋새그룹은 우측 sticky).
 //     그룹 탭 → 아래 패널에 종목 칩 토글, 종목 탭 → 그 자리에서 분석 카드 3~5개.
-//   ② 트렌드 보드 — Macro Trends·어닝 레이더·투자거장·수급·히스토리 랩을 3단 정적 칼럼으로.
-//     카드 = 순위 행: 서버가 실측 인기(최근 7일 전 유저 탭 수)로 정렬, 🔥 수치 노출(0이면 숨김).
+//   ② 트렌드 보드 — "지금 뜨는 질문": 탭(Macro·어닝·거장·수급·히스토리) + 단일 랭킹 리스트.
+//     서버가 실측 인기(최근 7일 전 유저 탭 수)로 정렬, 🔥 수치 노출(0이면 숨김). 출처 버튼 없음.
 // 전역 규칙: 카드 탭 = 컴포저 채움(자동 전송 없음). 출처 탭 = 근거 뷰어. 미생성 = 정직한 공백.
 
 import { useEffect, useState, type ReactNode } from "react";
@@ -40,66 +40,73 @@ const SECTION_META: Record<string, SectionMeta> = {
   },
 };
 
-// 정적 랭킹 보드 — 마키 폐기(우→좌 흐름은 스캔이 안 됨). 섹션 = 칼럼, 카드 = 순위 행.
-// 순서는 서버가 실측 인기(최근 7일 전 유저 탭 수, RC-2)로 정렬해 내려준다 — 동률은 LLM
-// 중요도(큐레이션 순서). 🔥 수치는 실측이라 0이면 숨긴다(날조 없음). 행 탭 = 컴포저 채움,
-// 출처 탭 = 근거 뷰어. 상위 6개만 — 스캔 가능한 밀도가 마키 20장보다 낫다.
-const BOARD_TOP_N = 6;
+// 트렌드 보드 v8 — 탭 + 단일 랭킹 리스트 (토스증권 실시간 랭킹·트렌딩 패턴).
+// 3단 칼럼은 좁은 컬럼에서 시선이 경쟁해 스캔 경로가 없었다. 탭 하나 = 리스트 하나:
+// 큰 순위 번호(상위 3 앰버) + 질문 + 실측 🔥 탭 수(0이면 숨김 — 날조 없음). 탭 전환은
+// 즉시(데이터는 이미 로드됨) — "다음 탭도 눌러보는" 루프를 만든다. 행 탭 = 컴포저 채움.
+const BOARD_TOP_N = 8;
 
-function TrendColumn({ meta, cards, onPick, onEvidence }: {
-  meta: SectionMeta; cards: AskCard[];
-  onPick: (q: string) => void; onEvidence?: (cit: Citation) => void;
+function TrendTabs({ sections, onPick }: {
+  sections: TrendSection[]; onPick: (q: string) => void;
 }) {
-  // 기본은 상위 6개(스캔 밀도) — 나머지는 "더 보기"로 펼친다. 생성분(섹션당 최대 20장)을
-  // 버리지 않으면서 첫 화면 밀도를 지키는 표준 패턴. 순위 번호는 펼쳐도 이어진다.
+  const [active, setActive] = useState(sections[0]?.scope ?? "news_feed");
   const [expanded, setExpanded] = useState(false);
-  const top = expanded ? cards : cards.slice(0, BOARD_TOP_N);
-  const hidden = cards.length - BOARD_TOP_N;
+  const cur = sections.find((s) => s.scope === active) ?? sections[0];
+  if (!cur) return null;
+  const meta = SECTION_META[cur.scope];
+  const top = expanded ? cur.cards : cur.cards.slice(0, BOARD_TOP_N);
+  const hidden = cur.cards.length - BOARD_TOP_N;
   return (
-    <section className="tb-col" data-testid={meta.testId}>
-      <div className="tb-h">
-        <span className="tb-t">{meta.emoji} {meta.title}</span>
-        {meta.sub ? <span className="tb-sub mono">{meta.sub}</span> : null}
+    <section className="ask-sec" data-testid="ck-board">
+      <div className="ask-col-h">
+        <span className="ask-col-t">🔥 지금 뜨는 질문</span>
+        {meta.sub ? <span className="ask-col-sub mono">{meta.sub}</span> : null}
       </div>
-      <ol className="tb-list">
-        {top.map((c, i) => {
-          const cit = c.citations?.[0];
+      <div className="tt-tabs" role="tablist" aria-label="트렌드 섹션">
+        {sections.map((sec) => {
+          const m = SECTION_META[sec.scope];
+          const on = sec.scope === cur.scope;
           return (
-            <li key={i} className="tb-row">
-              <button type="button" className="tb-main" onClick={() => {
+            <button key={sec.scope} type="button" role="tab" aria-selected={on}
+              className={`tt-tab ${on ? "on" : ""}`} data-testid={m.testId}
+              onClick={() => { setActive(sec.scope); setExpanded(false); }}>
+              {m.emoji} {m.title}
+            </button>
+          );
+        })}
+      </div>
+      <p className="ask-col-desc">{meta.desc}</p>
+      <div className="tt-panel" data-testid="ck-board-panel">
+        <ol className="tt-list">
+          {top.map((c, i) => (
+            <li key={`${cur.scope}-${i}`} className="tt-row">
+              <button type="button" className="tt-main" onClick={() => {
                 try { fetch("/api/ask-feed/tap", { method: "POST", headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ kind: c.kind, ticker: c.ticker ?? null, question: c.question }) }).catch(() => {}); } catch {}
                 onPick(c.query || c.question);
               }}>
-                <span className="tb-rank mono" aria-hidden>{i + 1}</span>
-                <span className="tb-body">
-                  <span className="tb-q">{c.question}</span>
-                  <span className="tb-meta">
+                <span className={`tt-rank mono ${i < 3 ? "hot" : ""}`} aria-hidden>{i + 1}</span>
+                <span className="tt-body">
+                  <span className="tt-q">{c.question}</span>
+                  <span className="tt-meta">
                     {(c.taps ?? 0) > 0 && (
-                      <span className="tb-taps mono" data-testid="tb-taps"
+                      <span className="tt-taps mono" data-testid="tt-taps"
                         title={`최근 7일 동안 ${c.taps}번 열어본 질문이에요`}>🔥 {c.taps}</span>
                     )}
-                    <span className="tb-hook">{c.hook}</span>
+                    <span className="tt-hook">{c.hook}</span>
                   </span>
                 </span>
               </button>
-              {cit?.source ? (
-                <button type="button" className="tb-src" title="근거 보기"
-                  onClick={(e) => { e.stopPropagation(); onEvidence?.(cit); }}>
-                  {cit.source}
-                </button>
-              ) : null}
             </li>
-          );
-        })}
-      </ol>
-      {hidden > 0 && (
-        <button type="button" className="tb-more" data-testid={`${meta.testId}-more`}
-          aria-expanded={expanded}
-          onClick={() => setExpanded((v) => !v)}>
-          {expanded ? "접기 ▴" : `${hidden}개 더 보기 ▾`}
-        </button>
-      )}
+          ))}
+        </ol>
+        {hidden > 0 && (
+          <button type="button" className="tt-more" data-testid="ck-board-more"
+            aria-expanded={expanded} onClick={() => setExpanded((v) => !v)}>
+            {expanded ? "접기 ▴" : `${hidden}개 더 보기 ▾`}
+          </button>
+        )}
+      </div>
     </section>
   );
 }
@@ -364,16 +371,9 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence, onManage
           )}
         </section>
 
-        {/* ② 트렌드 보드 — Macro Trends·어닝 레이더·투자거장·수급·히스토리 랩을 관심종목
-            아래 3단 칼럼으로. 정적 + 실측 인기 랭킹(서버 정렬). 아는 스코프만 그린다. */}
-        {sections.length > 0 && (
-          <div className="tb-grid" data-testid="ck-board">
-            {sections.map((s) => (
-              <TrendColumn key={s.scope} meta={SECTION_META[s.scope]} cards={s.cards}
-                onPick={onPick} onEvidence={onEvidence} />
-            ))}
-          </div>
-        )}
+        {/* ② 트렌드 보드 v8 — 탭 + 단일 랭킹 리스트. 실측 인기 순(서버 정렬), 출처 버튼
+            없음(카드는 질문 제안일 뿐 — 근거는 답변에서 [n]으로 붙는다). */}
+        {sections.length > 0 && <TrendTabs sections={sections} onPick={onPick} />}
       </div>
     </div>
   );

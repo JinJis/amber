@@ -1,5 +1,6 @@
-// ASK-6 탐구 엔트리 v7: ①관심 @그룹 칩 한 줄(가로 스크롤 + ＋새그룹 우측 sticky) → 종목 칩 →
-// 온디맨드 분석 카드 ②트렌드 보드 — 3단 정적 랭킹 칼럼(서버 정렬 + 실측 🔥 탭 수, 마키 폐기).
+// ASK-6 탐구 엔트리 v8: ①관심 @그룹 칩 한 줄(종목 수 순·가로 스크롤 + ＋새그룹 우측 sticky) →
+// 종목 칩 → 온디맨드 분석 카드 ②트렌드 보드 — 탭 + 단일 랭킹 리스트(서버 정렬 + 실측 🔥,
+// 출처 버튼 없음).
 // 전역 규칙 = 카드 탭은 컴포저 채움, 출처 탭은 근거 뷰어(자동 전송 없음). 미생성/실패 =
 // 정직한 공백 (콘텐츠 날조 없음).
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -205,30 +206,45 @@ describe("CockpitEntry (ASK-6 v5)", () => {
     expect(screen.queryByTestId("grp-빈그룹")).toBeNull();          // 빈 그룹 숨김
   });
 
-  it("트렌드 보드는 정적: 카드는 한 벌, 마키 없음; 탭 → 실행용 query가 컴포저로", async () => {
+  it("트렌드 보드: 탭 + 단일 리스트 — 정적(한 벌), 행 탭 → 실행용 query가 컴포저로", async () => {
     stubApis();
     const onPick = vi.fn(); const onQuestions = vi.fn();
     render(<CockpitEntry onPick={onPick} onQuestions={onQuestions} />);
-    const newsSec = await screen.findByTestId("ck-news");
-    expect(newsSec.textContent).toContain("Macro Trends");
-    expect(newsSec.textContent).toContain("미 CPI 3.1%");
-    expect(newsSec.textContent).toContain("5분마다 갱신");
-    expect(screen.getByTestId("ck-board")).toBeTruthy();          // 정적 보드 (마키 폐기)
-    expect(document.querySelector(".mq-track")).toBeNull();       // 흐르는 트랙 없음
-    expect(screen.getAllByText(/물가 흐름을 최근 추이로/).length).toBe(1);   // 복제 없음 — 한 벌
+    const board = await screen.findByTestId("ck-board");
+    expect(board.textContent).toContain("지금 뜨는 질문");
+    expect(screen.getByTestId("ck-news").textContent).toContain("Macro Trends");   // 탭
+    const panel = screen.getByTestId("ck-board-panel");
+    expect(panel.textContent).toContain("미 CPI 3.1%");
+    expect(board.textContent).toContain("5분마다 갱신");
+    expect(document.querySelector(".mq-track")).toBeNull();       // 마키 없음
+    expect(panel.querySelector(".tb-src, .qc-src")).toBeNull();   // 출처 버튼 없음 (삭제됨)
+    expect(screen.getAllByText(/물가 흐름을 최근 추이로/).length).toBe(1);   // 한 벌
     fireEvent.click(screen.getAllByText(/물가 흐름을 최근 추이로/)[0]);
     // F3: 컴포저에는 주체가 포함된 실행용 query가 들어간다 (표시용 question이 아니라)
     expect(onPick).toHaveBeenCalledWith("미국 CPI 3.1%가 최근 물가 추이에서 어디쯤인지 살펴봐");
     await waitFor(() => expect(onQuestions).toHaveBeenCalledWith(NEWS.map((c) => c.question)));
   });
 
-  it("랭킹: 순위 번호가 붙고, 실측 🔥 탭 수는 있을 때만 보인다", async () => {
+  it("탭 전환: 다른 섹션 탭 → 그 섹션 리스트로 즉시 교체 (재요청 없음)", async () => {
+    stubApis({ sections: SECTIONS });
+    render(<CockpitEntry onPick={vi.fn()} />);
+    const panel = await screen.findByTestId("ck-board-panel");
+    expect(panel.textContent).toContain("물가 흐름");                  // 기본 = 첫 섹션(Macro)
+    const before = (globalThis.fetch as any).mock.calls.length;
+    fireEvent.click(screen.getByTestId("ck-sec-guru_flows"));          // 거장·수급 탭
+    expect(screen.getByTestId("ck-board-panel").textContent).toContain("버핏이 새로 담은 종목");
+    expect(screen.getByTestId("ck-board-panel").textContent).not.toContain("물가 흐름");
+    expect((globalThis.fetch as any).mock.calls.length).toBe(before);  // 전환은 로컬 — 추가 fetch 0
+  });
+
+  it("랭킹: 순위 번호(상위 3 강조)와 실측 🔥 탭 수는 있을 때만 보인다", async () => {
     stubApis();
     render(<CockpitEntry onPick={vi.fn()} />);
-    const newsSec = await screen.findByTestId("ck-news");
-    const ranks = [...newsSec.querySelectorAll(".tb-rank")].map((el) => el.textContent);
+    const panel = await screen.findByTestId("ck-board-panel");
+    const ranks = [...panel.querySelectorAll(".tt-rank")].map((el) => el.textContent);
     expect(ranks.slice(0, 4)).toEqual(["1", "2", "3", "4"]);      // 서버 정렬 순서 그대로 순위
-    const taps = screen.getAllByTestId("tb-taps");                 // 🔥 수치 — taps>0인 카드만
+    expect(panel.querySelectorAll(".tt-rank.hot").length).toBe(3); // 상위 3 강조
+    const taps = screen.getAllByTestId("tt-taps");                 // 🔥 수치 — taps>0인 카드만
     expect(taps.length).toBe(1);
     expect(taps[0].textContent).toContain("12");
     expect(taps[0].getAttribute("title")).toContain("최근 7일");
@@ -254,21 +270,12 @@ describe("CockpitEntry (ASK-6 v5)", () => {
     expect(screen.queryByText(/You already have/)).toBeNull();     // 영어 격식체 노출 금지
   });
 
-  it("카드가 적어도 보드는 그대로 정적 (복제·흐름 없음)", async () => {
+  it("카드가 적어도 보드는 그대로 정적 (복제·흐름·더보기 없음)", async () => {
     stubApis({ fewNews: true });
     render(<CockpitEntry onPick={vi.fn()} />);
-    await screen.findByTestId("ck-news");
+    await screen.findByTestId("ck-board-panel");
     expect(screen.getAllByText(/물가 흐름을 최근 추이로/).length).toBe(1);
-  });
-
-  it("출처 탭 → 근거 뷰어 콜백 (컴포저는 채우지 않음)", async () => {
-    stubApis();
-    const onPick = vi.fn(); const onEvidence = vi.fn();
-    render(<CockpitEntry onPick={onPick} onEvidence={onEvidence} />);
-    const newsSec = await screen.findByTestId("ck-news");
-    fireEvent.click([...newsSec.querySelectorAll(".tb-src")][0]!);   // 행 끝 출처 버튼
-    expect(onEvidence).toHaveBeenCalledWith(expect.objectContaining({ source: "FRED" }));
-    expect(onPick).not.toHaveBeenCalled();                          // 출처는 컴포저를 채우지 않음
+    expect(screen.queryByTestId("ck-board-more")).toBeNull();
   });
 
   it("그룹 없음 → 등록 넛지 + 관심 그룹 만들기 버튼", async () => {
@@ -318,7 +325,7 @@ describe("CockpitEntry (ASK-6 v5)", () => {
     expect(screen.queryByTestId("tk-005930")).toBeNull();
   });
 
-  it("보드 칼럼: Macro Trends 뒤로 어닝·거장·히스토리가 순서대로", async () => {
+  it("보드 탭: Macro Trends 뒤로 어닝·거장·히스토리가 순서대로", async () => {
     stubApis({ sections: SECTIONS });
     render(<CockpitEntry onPick={vi.fn()} />);
     const news = await screen.findByTestId("ck-news");
@@ -328,7 +335,8 @@ describe("CockpitEntry (ASK-6 v5)", () => {
     expect(earn.textContent).toContain("어닝 레이더");
     expect(guru.textContent).toContain("투자거장·수급");
     expect(hist.textContent).toContain("히스토리 랩");
-    expect(hist.textContent).toContain("과거 기록 · 전망 아님");     // 무전망 브랜드
+    fireEvent.click(hist);                                          // 히스토리 탭 활성화
+    expect(screen.getByTestId("ck-board").textContent).toContain("과거 기록 · 전망 아님");  // 무전망 브랜드(캐던스 배지)
     // DOM 순서: news → earnings → guru → history
     const after = (a: Element, b: Element) => a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING;
     expect(after(news, earn)).toBeTruthy();
@@ -340,28 +348,28 @@ describe("CockpitEntry (ASK-6 v5)", () => {
     stubApis({ sections: SECTIONS });
     const onPick = vi.fn();
     render(<CockpitEntry onPick={onPick} />);
-    const earn = await screen.findByTestId("ck-sec-earnings_radar");
-    fireEvent.click(within(earn).getAllByText(/서프라이즈 흐름 같이 볼까요/)[0]);
+    fireEvent.click(await screen.findByTestId("ck-sec-earnings_radar"));   // 어닝 탭으로
+    fireEvent.click(screen.getAllByText(/서프라이즈 흐름 같이 볼까요/)[0]);
     expect(onPick).toHaveBeenCalledWith("엔비디아 최근 8개 분기 컨센서스 대비 실제 EPS 서프라이즈를 정리해줘");
   });
 
-  it("칼럼은 상위 6개만 접어서 보여주고, 더 보기로 전체(≤20)를 펼친다", async () => {
-    const many = Array.from({ length: 9 }, (_, i) => ({
+  it("리스트는 상위 8개만 접어서 보여주고, 더 보기로 전체(≤20)를 펼친다", async () => {
+    const many = Array.from({ length: 11 }, (_, i) => ({
       kind: "macro", question: `심층 질문 ${i}번을 같이 볼까요?`, query: `질문 ${i} 살펴봐`,
       hook: `훅 ${i}`, citations: [{ source: "FRED", url: "http://z", tool: "fred__macro_panel" }],
     }));
     stubApis({ sections: [{ scope: "news_feed", cards: many }] });
     render(<CockpitEntry onPick={vi.fn()} />);
-    const col = await screen.findByTestId("ck-news");
-    expect(col.querySelectorAll(".tb-row").length).toBe(6);          // 접힘: 상위 6
-    const more = screen.getByTestId("ck-news-more");
+    const panel = await screen.findByTestId("ck-board-panel");
+    expect(panel.querySelectorAll(".tt-row").length).toBe(8);        // 접힘: 상위 8
+    const more = screen.getByTestId("ck-board-more");
     expect(more.textContent).toContain("3개 더 보기");
     fireEvent.click(more);
-    expect(col.querySelectorAll(".tb-row").length).toBe(9);          // 펼침: 전체
-    const ranks = [...col.querySelectorAll(".tb-rank")].map((el) => el.textContent);
-    expect(ranks[8]).toBe("9");                                      // 순위 연속
+    expect(panel.querySelectorAll(".tt-row").length).toBe(11);       // 펼침: 전체
+    const ranks = [...panel.querySelectorAll(".tt-rank")].map((el) => el.textContent);
+    expect(ranks[10]).toBe("11");                                    // 순위 연속
     fireEvent.click(more);                                           // 접기
-    expect(col.querySelectorAll(".tb-row").length).toBe(6);
+    expect(panel.querySelectorAll(".tt-row").length).toBe(8);
   });
 
   it("모르는 스코프의 섹션은 건너뛴다", async () => {

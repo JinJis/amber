@@ -774,44 +774,40 @@ select.input { appearance: none; }
   border-radius: 999px; }
 .eg-new-err { font-size: 11px; color: var(--danger, #d66); }
 
-/* v7: 트렌드 보드 — 정적 3단 랭킹 칼럼 (마키 폐기: 흐르는 카드가 스캔이 안 됨).
-   섹션 = 칼럼, 카드 = 순위 행(순위 번호 + 실측 🔥 탭 수). 모바일은 1단 스택. */
-.tb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px;
-  align-items: start; }
-.tb-col { display: flex; flex-direction: column; min-width: 0;
-  border: 1px solid var(--line-2); border-radius: 13px; background: var(--panel); overflow: hidden; }
-.tb-h { display: flex; align-items: center; gap: 8px; padding: 11px 13px 9px;
-  border-bottom: 1px solid var(--line-3); }
-.tb-t { font-size: 13.5px; font-weight: 700; color: var(--text); letter-spacing: -.01em; }
-.tb-sub { margin-left: auto; font-size: 9px; color: var(--faint); border: 1px solid var(--line-3);
-  border-radius: 999px; padding: 2px 7px; white-space: nowrap; flex: none; }
-.tb-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.tb-row { display: flex; align-items: stretch; border-bottom: 1px solid var(--line-3); }
-.tb-row:last-child { border-bottom: none; }
-.tb-main { display: flex; align-items: flex-start; gap: 9px; flex: 1; min-width: 0;
-  text-align: left; background: none; border: none; padding: 9px 4px 9px 12px; cursor: pointer;
+/* v8: 트렌드 보드 — 탭 + 단일 랭킹 리스트 (토스증권 실시간 랭킹 패턴).
+   탭 하나 = 리스트 하나(시선 경쟁 제거), 큰 순위 번호(상위 3 앰버), 실측 🔥 수치. */
+.tt-tabs { display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px;
+  scrollbar-width: none; }
+.tt-tabs::-webkit-scrollbar { display: none; }
+.tt-tab { flex: none; padding: 7px 13px; font-size: 12.5px; font-weight: 600; font-family: inherit;
+  border: 1px solid var(--line-2); border-radius: 999px; background: var(--panel);
+  color: var(--text-2); cursor: pointer; transition: all .13s; }
+.tt-tab:hover { border-color: var(--ink); color: var(--text); }
+.tt-tab.on { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
+.tt-panel { border: 1px solid var(--line-2); border-radius: 13px; background: var(--panel);
+  overflow: hidden; }
+.tt-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.tt-row { border-bottom: 1px solid var(--line-3); }
+.tt-row:last-child { border-bottom: none; }
+.tt-main { display: flex; align-items: center; gap: 13px; width: 100%; min-width: 0;
+  text-align: left; background: none; border: none; padding: 11px 16px; cursor: pointer;
   font-family: inherit; transition: background .12s; }
-.tb-main:hover { background: var(--rail-active); }
-.tb-rank { font-size: 11px; font-weight: 700; color: var(--faint); flex: none; width: 14px;
-  padding-top: 2px; text-align: center; font-feature-settings: "tnum" 1; }
-.tb-row:nth-child(-n+3) .tb-rank { color: var(--accent-fg); }   /* 상위 3개는 앰버 강조 */
-.tb-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.tb-q { font-size: 12.5px; line-height: 1.45; color: var(--text); font-weight: 500;
+.tt-main:hover { background: var(--rail-active); }
+.tt-rank { flex: none; width: 20px; text-align: center; font-size: 14px; font-weight: 700;
+  color: var(--faint); font-feature-settings: "tnum" 1; }
+.tt-rank.hot { color: var(--accent); font-size: 15px; }   /* 상위 3 — 앰버 강조 */
+.tt-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tt-q { font-size: 13.5px; line-height: 1.45; color: var(--text); font-weight: 500;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.tb-meta { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.tb-taps { font-size: 10px; color: var(--accent-fg); background: var(--evidence-bg);
+.tt-meta { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tt-taps { font-size: 10px; color: var(--accent-fg); background: var(--evidence-bg);
   border-radius: 999px; padding: 1px 7px; flex: none; font-feature-settings: "tnum" 1; }
-.tb-hook { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden;
+.tt-hook { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; }
-.tb-src { flex: none; align-self: stretch; background: none; border: none;
-  border-left: 1px solid var(--line-3); color: var(--faint); font-size: 9.5px; cursor: pointer;
-  padding: 0 10px; max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: inherit; transition: color .12s, background .12s; }
-.tb-src:hover { color: var(--accent-fg); background: var(--accent-bg); }
-.tb-more { width: 100%; background: var(--panel-2); border: none; border-top: 1px solid var(--line-3);
-  color: var(--muted); font-size: 11px; padding: 8px; cursor: pointer; font-family: inherit;
+.tt-more { width: 100%; background: var(--panel-2); border: none; border-top: 1px solid var(--line-3);
+  color: var(--muted); font-size: 11px; padding: 9px; cursor: pointer; font-family: inherit;
   transition: color .12s, background .12s; }
-.tb-more:hover { color: var(--accent-fg); background: var(--accent-bg); }
+.tt-more:hover { color: var(--accent-fg); background: var(--accent-bg); }
 
 /* 분석 카드 리스트 */
 .qc-list { display: flex; flex-direction: column; gap: 9px; }
