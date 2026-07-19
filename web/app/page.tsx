@@ -17,7 +17,8 @@ export default async function Home({ searchParams }: { searchParams?: Record<str
       const providers = {
         google: Boolean(process.env.AUTH_GOOGLE_ID),
         kakao: Boolean(process.env.AUTH_KAKAO_ID),
-        dev: process.env.AUTH_DEV_LOGIN === "true" && process.env.NODE_ENV !== "production",
+        // ENV (deploy env), not NODE_ENV — the standalone build is NODE_ENV=production even locally.
+        dev: process.env.AUTH_DEV_LOGIN === "true" && process.env.ENV !== "production",
       };
       return <Chat name="게스트" image={null} guest providers={providers} features={features} />;
     }

@@ -3,6 +3,7 @@
 // 설정 — profile · 요금제 · 사용량 · 계정. The account hub every LLM chat app has: edit your
 // display name/avatar, see your plan and what each tier offers, and your metered usage.
 
+import { signOut } from "next-auth/react";
 import { useEffect, useState } from "react";
 
 import BillingPanel from "./BillingPanel";
@@ -131,7 +132,12 @@ export function Settings({ name, email, image }: { name: string; email: string; 
           </div>
           {email.endsWith("@noemail.local") && <EmailLink />}{/* AUTH-4: 센티널 → 이메일 연결 */}
           <div className="st-account">
-            <a className="btn ghost" href="/api/auth/signout">로그아웃</a>
+            {/* Auth.js JWT session = a cookie; logout just clears it. signOut() POSTs to the
+                signout endpoint (CSRF handled) and redirects — no built-in confirm PAGE whose
+                form-submit was being blocked. callbackUrl "/" → 세션 없음 → 로그인 화면. */}
+            <button className="btn ghost" type="button" onClick={() => {
+              if (confirm("로그아웃할까요?")) void signOut({ callbackUrl: "/" });
+            }}>로그아웃</button>
           </div>
         </section>
       )}

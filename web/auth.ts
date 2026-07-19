@@ -42,7 +42,12 @@ providers.push(
     },
   }),
 );
-if (process.env.AUTH_DEV_LOGIN === "true" && process.env.NODE_ENV !== "production") {
+// Gate on ENV (the platform's deploy-environment signal, same as web/instrumentation.ts and
+// studio-api's ENV=production), NOT NODE_ENV: the web is shipped as a Next standalone build, so
+// NODE_ENV is "production" even in local docker — gating on it hard-disabled dev login everywhere,
+// not just in real prod. A live deploy sets ENV=production (services refuse dev-default secrets
+// under it), so dev login stays impossible in production; locally ENV is unset → it works.
+if (process.env.AUTH_DEV_LOGIN === "true" && process.env.ENV !== "production") {
   providers.push(
     Credentials({
       name: "Dev",
