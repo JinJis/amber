@@ -480,66 +480,82 @@ async def pipelines(request: Request, msg: str = ""):
         "</div></div>"
     )
 
-    # --- Macro Trends (ask-feed) 카드: studio DB의 news_feed 캐시 상태 + 수동 갱신 ---
-    mt_status, mt_meta = "아직 생성 전", ""
-    try:
-        eng = ENGINES.get("studio")
-        if eng is not None:
-            with eng.connect() as conn:
-                row = conn.execute(sa_text(
-                    "SELECT generated_at, payload FROM ask_feed_cache WHERE scope='news_feed'"
-                )).first()
-            if row:
-                import json as _json
-                n_cards = len((_json.loads(row[1]) or {}).get("cards") or [])
-                mt_status = f"카드 <b>{n_cards}</b>개"
-                mt_meta = f"<span class=pill>generated_at <b>{_esc(str(row[0])[:19])}</b></span>"
-    except Exception:  # noqa: BLE001 — 첫 부팅엔 테이블이 없을 수 있음
-        pass
-    macro_card = (
-        "<div class=card><h3>🌍 Macro Trends (ask-feed)</h3>"
-        f"<div class=flow><span class=pill>{mt_status}</span>{mt_meta}"
-        "<span class=pill>5분마다 자동 갱신</span></div>"
-        "<div class=sub>미국·한국 실시간 뉴스 + 거시지표(금리·물가·고용)에서 물어보기 첫 화면의 질문 카드를 "
-        "만들어요. 전 유저 공통 1행 캐시(studio <code>ask_feed_cache</code>, scope=news_feed) — 접속 시 "
-        "오래됐으면 자동으로 1회 갱신(read-through)되고, 여기서 즉시 돌릴 수도 있어요. 데이터가 그대로면 "
-        "(서명 동일) LLM 호출 없이 끝나요.</div>"
-        "<div class=opsrow><form class=ops method=post action=/ops/askfeed/refresh>"
-        "<button class=p>지금 갱신 ▶</button></form></div></div>"
+    # --- 홈 트렌드 피드 (ask-feed) 통합 카드: 4개 스코프의 캐시 상태·신선도·카드 프리뷰 + 수동 갱신 ---
+    # 백그라운드 인프로세스 루프(studio-api)라 Procrastinate 큐(/queue)엔 안 뜨므로, 여기서 생성 시각·
+    # 신선도·실제 생성된 카드 프리뷰를 보고, 전체 payload는 DB 브라우저에서 본다.
+    # (scope, 라벨, cadence 라벨, stale 임계 초) — 표시 순서 그대로.
+    _feed_scopes = (
+        ("news_feed", "🌍 Macro Trends", "뉴스 5분", 600),        # 5분 주기 → 10분 넘으면 오래됨
+        ("earnings_radar", "📅 어닝 레이더", "섹션 1시간", 7200),   # 1시간 주기 → 2시간 넘으면 오래됨
+        ("guru_flows", "🐘 투자거장·수급", "섹션 1시간", 7200),
+        ("history_lab", "🕰️ 히스토리 랩", "섹션 1시간", 7200),
     )
-
-    # --- 홈 마키 섹션(어닝·거장·히스토리) 카드: 섹션 캐시 상태 + 수동 갱신 ---
-    sec_rows_html = ""
+    feed_rows_html = ""
     try:
+        from datetime import datetime as _dt
+        import json as _json
+        by_scope: dict[str, tuple] = {}
         eng = ENGINES.get("studio")
         if eng is not None:
-            import json as _json
             with eng.connect() as conn:
-                for scope, label in (("earnings_radar", "📅 어닝 레이더"),
-                                     ("guru_flows", "🐘 투자거장·수급"),
-                                     ("history_lab", "🕰️ 히스토리 랩")):
-                    row = conn.execute(sa_text(
-                        "SELECT generated_at, payload FROM ask_feed_cache WHERE scope=:s"),
-                        {"s": scope}).first()
-                    if row:
-                        n = len((_json.loads(row[1]) or {}).get("cards") or [])
-                        meta = f"<span class=pill>{_esc(str(row[0])[:19])}</span>"
-                    else:
-                        n, meta = 0, "<span class=pill>아직 생성 전</span>"
-                    sec_rows_html += (f"<div class=flow><span class=pill>{_esc(label)}</span>"
-                                      f"<span class=pill>카드 <b>{n}</b>개</span>{meta}</div>")
+                for r in conn.execute(sa_text(
+                        "SELECT scope, generated_at, payload FROM ask_feed_cache "
+                        "WHERE scope IN ('news_feed','earnings_radar','guru_flows','history_lab')")).all():
+                    by_scope[r[0]] = (r[1], r[2])
+        for scope, label, cadence, stale_after in _feed_scopes:
+            row = by_scope.get(scope)
+            if not row:
+                # 아직 캐시 행이 없는 스코프 — '생성 전' 배지 + 안내
+                feed_rows_html += (
+                    "<div class=feedrow style='margin:8px 0'><div class=flow>"
+                    f"<span class=pill>{_esc(label)}</span>{badge('생성 전')}"
+                    f"<span class=pill>{_esc(cadence)}</span></div>"
+                    "<div class=sub>(아직 생성 안 됨)</div></div>")
+                continue
+            gen_at, payload = row
+            cards = (_json.loads(payload) if payload else {}).get("cards") or []
+            gen_str = str(gen_at)[:16].replace("T", " ")           # yyyy-mm-dd hh:mm
+            # 신선도: generated_at(UTC naive)과 지금을 비교, cadence별 임계로 판정.
+            fresh = ""
+            try:
+                g = _dt.fromisoformat(str(gen_at).replace("Z", ""))
+                age = (_dt.utcnow() - g).total_seconds()
+                fresh = badge("신선", "ok") if age <= stale_after else badge("오래됨", "warn")
+            except Exception:  # noqa: BLE001 — 파싱 불가한 시각이면 배지 생략
+                pass
+            # 실제 생성된 카드 프리뷰 — 상위 3개의 question (≈60자 절단, 이스케이프)
+            qs = [(c.get("question") or "").strip() for c in cards[:3] if isinstance(c, dict)]
+            qs = [q for q in qs if q]
+            if qs:
+                prev = "".join(
+                    f"<div class=sub style='margin:1px 0 0 2px'>· {_esc(q[:60] + ('…' if len(q) > 60 else ''))}</div>"
+                    for q in qs)
+            else:
+                prev = "<div class=sub>(아직 생성 안 됨)</div>"
+            feed_rows_html += (
+                "<div class=feedrow style='margin:8px 0'><div class=flow>"
+                f"<span class=pill>{_esc(label)}</span>"
+                f"<span class=pill>카드 <b>{len(cards)}</b>개</span>"
+                f"<span class=pill>{_esc(gen_str)}</span>{fresh}"
+                f"<span class=pill>{_esc(cadence)}</span></div>"
+                f"{prev}</div>")
     except Exception:  # noqa: BLE001 — 첫 부팅엔 테이블이 없을 수 있음
         pass
-    sections_card = (
-        "<div class=card><h3>🗂️ 홈 마키 섹션 (어닝·거장·히스토리)</h3>"
-        + sec_rows_html +
-        "<div class=sub>탐구 첫 화면의 <b>어닝 레이더·투자거장·수급·히스토리 랩</b> 마키를 만들어요. "
-        "각각 시장 전체 공유 캐시(studio <code>ask_feed_cache</code>, scope=earnings_radar/guru_flows/"
-        "history_lab) — 1시간마다 자동 갱신 + 접속 시 오래됐으면 read-through 킥, 데이터 그대로면(서명 동일) "
-        "LLM 없이 끝나요. 히스토리 랩의 지수 가격 백필(^GSPC·^KS11·^VIX)은 아래 <b>가격(OHLCV)</b> "
-        "파이프라인에 포함돼요.</div>"
-        "<div class=opsrow><form class=ops method=post action=/ops/askfeed/refresh-sections>"
-        "<button class=p>지금 갱신 ▶</button></form></div></div>"
+    feed_card = (
+        "<div class=card><h3>🏠 홈 트렌드 피드 (ask-feed)</h3>"
+        + (feed_rows_html or "<div class=sub>아직 생성된 피드가 없어요.</div>")
+        + "<div class=sub>물어보기 첫 화면의 질문 카드를 만들어요 — 뉴스·거시(5분)와 어닝·거장·히스토리 "
+          "섹션(1시간)을 시장 전체 공유 캐시(studio <code>ask_feed_cache</code>)에 쌓아요. 접속 시 오래됐으면 "
+          "read-through로 1회 갱신되고, 데이터가 그대로면(서명 동일) LLM 없이 끝나요. 히스토리 랩의 지수 "
+          "가격 백필(^GSPC·^KS11·^VIX)은 아래 <b>가격(OHLCV)</b> 파이프라인에 포함돼요.</div>"
+        "<div class=sub muted>백그라운드 인프로세스 루프(studio-api)라 Procrastinate 큐(<a href=/queue>/queue</a>)엔 "
+        "안 뜨고, 생성 시각·프리뷰는 여기서, 전체 payload는 "
+        "<a href='/db/studio/ask_feed_cache'>DB 브라우저</a>에서 봐요.</div>"
+        "<div class=opsrow>"
+        "<form class=ops method=post action=/ops/askfeed/refresh><button class=p>뉴스 갱신 ▶</button></form>"
+        "<form class=ops method=post action=/ops/askfeed/refresh-sections><button class=p>섹션 갱신 ▶</button></form>"
+        "<form class=ops method=post action=/ops/askfeed/refresh-all><button class=p>전부 갱신 ▶</button></form>"
+        "</div></div>"
     )
 
     # --- 회사 로고: 유니버스 자동 채우기(하이브리드 해석기) + 놓친 종목 수동 업로드 ---
@@ -635,7 +651,7 @@ S&amp;P·코스피·코스닥 전체는 직접 입력란에 티커를 붙여넣�
   <div class=card><h3>RAG search</h3><div class=sub>시맨틱 프로브</div>
     <form class=ops method=post action=/ops/rag/search>
       <input name=query placeholder="semantic query" size=22 required><button class=p>Search</button></form></div>"""
-    tools = "<h2>도구</h2><div class=grid>" + macro_card + sections_card + logo_card + rag_tools + "</div>"
+    tools = "<h2>도구</h2><div class=grid>" + feed_card + logo_card + rag_tools + "</div>"
 
     body = (_flash(msg)
             + "<p class=hint>모든 데이터 파이프라인을 한곳에서 — 무엇을 어떤 경로로 수집해 어디에 쌓는지, "
@@ -1662,6 +1678,35 @@ async def ops_askfeed_refresh_sections(request: Request):
             msg = f"섹션 갱신 {j.get('refreshed', '?')}/{j.get('scopes', '?')} · {summary}"
     except Exception as exc:  # noqa: BLE001 — studio 미기동 등
         msg = f"섹션 갱신 실패: {type(exc).__name__}"
+    return RedirectResponse(f"/pipelines?msg={msg.replace(' ', '+')}", status_code=303)
+
+
+@app.post("/ops/askfeed/refresh-all")
+async def ops_askfeed_refresh_all(request: Request):
+    """홈 트렌드 피드 전부 갱신 — studio /ask-feed/refresh(뉴스) → /ask-feed/refresh-sections(섹션)를
+    차례로 호출하고 각 결과를 한 줄 메시지로 합쳐 /pipelines로 리다이렉트한다."""
+    parts: list[str] = []
+    try:
+        async with httpx.AsyncClient() as c:
+            r1 = await c.post(f"{settings.studio_url}/ask-feed/refresh",
+                              headers={"X-Service-Token": settings.service_token}, timeout=90)
+            j1 = r1.json() if r1.status_code == 200 else {}
+            if r1.status_code != 200:
+                parts.append(f"뉴스 실패(HTTP {r1.status_code})")
+            else:
+                parts.append(f"뉴스 {'갱신됨' if j1.get('refreshed') else '변화 없음'}·카드 {j1.get('cards', '?')}개")
+            r2 = await c.post(f"{settings.studio_url}/ask-feed/refresh-sections",
+                              headers={"X-Service-Token": settings.service_token}, timeout=200)
+            j2 = r2.json() if r2.status_code == 200 else {}
+            if r2.status_code != 200:
+                parts.append(f"섹션 실패(HTTP {r2.status_code})")
+            else:
+                by = j2.get("cards_by_scope") or {}
+                summary = " ".join(f"{k} {v}장" for k, v in by.items()) or "카드 없음"
+                parts.append(f"섹션 {j2.get('refreshed', '?')}/{j2.get('scopes', '?')}·{summary}")
+    except Exception as exc:  # noqa: BLE001 — studio 미기동 등
+        parts.append(f"전부 갱신 실패: {type(exc).__name__}")
+    msg = "전부 갱신 · " + " · ".join(parts)
     return RedirectResponse(f"/pipelines?msg={msg.replace(' ', '+')}", status_code=303)
 
 

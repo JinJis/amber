@@ -19,6 +19,53 @@ router = APIRouter()
 # --- DB browser (styled CRUD; no sqladmin) --------------------------------
 _PAGE = 50
 
+# Curated domain grouping for the /db index: DB key → ordered [(group title, [name substrings])].
+# Instead of one flat alphabetical chip list per DB, tables are bucketed by what they're FOR, so an
+# operator finds "the feed cache" or "billing tables" at a glance. A table lands in the FIRST group
+# whose substrings match; anything unmatched falls into "기타". Prod schemas drift, so this is a
+# best-effort map — new/unknown tables still show up (under 기타), never hidden.
+_DOMAIN_GROUPS: dict[str, list[tuple[str, list[str]]]] = {
+    "studio": [
+        ("피드·캐시", ["ask_feed", "card_tap", "desk_feed", "feed_cache"]),
+        ("대화", ["conversation", "message", "run", "agent"]),
+        ("관심종목·분석", ["watchlist", "pinned", "standing", "brief", "board"]),
+        ("결제·플랜", ["subscription", "invoice", "billing", "credit", "plan",
+                    "referral", "turn_usage", "upstream_usage"]),
+        ("유저·인증", ["user", "otp", "guest"]),
+        ("공유", ["share"]),
+    ],
+    "controlplane": [
+        ("테넌시", ["tenant", "project"]),
+        ("키·활성화", ["api_key", "key", "activation", "entitlement"]),
+        ("계측·비용", ["usage", "meter", "quota", "provider", "cost"]),
+    ],
+    "datasets": [
+        ("재무·공시", ["financial", "fact", "filing", "disclosure", "fundamental", "xbrl"]),
+        ("시세·가격", ["price", "bar", "ohlcv", "corporate_action", "quote"]),
+        ("뉴스·문서·로고", ["news", "doc", "evidence", "logo", "article"]),
+        ("큐·잡·이력", ["job", "queue", "activity", "sweep", "run"]),
+    ],
+}
+
+
+def _group_tables(key: str, tables: list[str]) -> list[tuple[str, list[str]]]:
+    """Bucket a DB's tables into its curated domain groups (order preserved); every table lands in
+    the FIRST matching group, and anything unmatched goes to '기타'. DBs with no curated map render
+    as a single sorted group. Empty groups are dropped so headings never dangle."""
+    groups = _DOMAIN_GROUPS.get(key)
+    if not groups:
+        return [("전체", sorted(tables))] if tables else []
+    remaining = set(tables)
+    out: list[tuple[str, list[str]]] = []
+    for title, subs in groups:
+        matched = sorted(t for t in remaining if any(s in t for s in subs))
+        if matched:
+            out.append((title, matched))
+            remaining -= set(matched)
+    if remaining:
+        out.append(("기타", sorted(remaining)))
+    return out
+
 
 @router.get("/db", response_class=HTMLResponse)
 async def db_index(request: Request):
@@ -29,11 +76,21 @@ async def db_index(request: Request):
                       f"<div class=err>unavailable: {_esc(info['error'])}</div></div>")
             continue
         counts = _table_counts(key)
-        chips = "".join(
-            f"<span class=pill><a href='/db/{key}/{t}'>{_esc(t)}</a><span class=cnt>{_esc(counts.get(t, '?'))}</span></span>"
-            for t in info["meta"]) or "<span class=muted>(no tables)</span>"
-        cards += f"<div class=card><h3>{_esc(info['title'])} <span class=muted>{key}</span></h3>{chips}</div>"
-    body = ("<p class=hint>Every reflected service table — view, edit, create, delete in the panel theme.</p>"
+        groups = _group_tables(key, list(info["meta"]))
+        if groups:
+            inner = ""
+            for title, tbls in groups:
+                chips = "".join(
+                    f"<span class=pill><a href='/db/{key}/{t}'>{_esc(t)}</a>"
+                    f"<span class=cnt>{_esc(counts.get(t, '?'))}</span></span>"
+                    for t in tbls)
+                inner += (f"<div class=dbgroup style='margin-top:9px'>"
+                          f"<div class=sub style='margin:0 0 4px;font-weight:700'>{_esc(title)}</div>{chips}</div>")
+        else:
+            inner = "<span class=muted>(no tables)</span>"
+        cards += f"<div class=card><h3>{_esc(info['title'])} <span class=muted>{key}</span></h3>{inner}</div>"
+    body = ("<p class=hint>Every reflected service table — view, edit, create, delete in the panel theme. "
+            "도메인별로 묶어서 보여줘요.</p>"
             "<div class=grid>" + cards + "</div>")
     return HTMLResponse(page("/db", "DB browser", body))
 
