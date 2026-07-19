@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="512" height="512" role="img" aria-labelledby="finnote-icon-title">
+  <title id="finnote-icon-title">finnote</title>
+  <defs>
+    <clipPath id="fn-clip-a">
+      <path d="M13 88 C19.5 83.3 26 83.3 32.5 88 C39 92.7 45.5 92.7 52 88 C58.5 83.3 65 83.3 71.5 88 C78 92.7 84.5 92.7 91 88 L104 66 L124 66 L124 -20 L-20 -20 L-20 88 Z"/>
+    </clipPath>
+  </defs>
+  <rect width="120" height="120" rx="28" fill="#0E2A3F"/>
+  <path d="M33 88 Q44 58 64 36 Q74 27 72 42 Q69 65 86 88 L86 108 L33 108 Z" fill="#FFFCF6" clip-path="url(#fn-clip-a)"/>
+  <path d="M13 88 C19.5 83.3 26 83.3 32.5 88 C39 92.7 45.5 92.7 52 88 C58.5 83.3 65 83.3 71.5 88 C78 92.7 84.5 92.7 91 88 L99 73" fill="none" stroke="#5FD0E4" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M106 62 L105.9 77 L92.9 69.4 Z" fill="#FFC94D" stroke="#FFC94D" stroke-width="2.6" stroke-linejoin="round"/>
+</svg>

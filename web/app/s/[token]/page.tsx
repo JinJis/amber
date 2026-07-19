@@ -29,7 +29,7 @@ async function fetchShare(token: string): Promise<{ status: number; share: Share
 
 export async function generateMetadata({ params }: { params: { token: string } }): Promise<Metadata> {
   const { share } = await fetchShare(params.token);
-  const title = share ? `${share.title} · Amber` : "공유된 자료 · Amber";
+  const title = share ? `${share.title} · finnote` : "공유된 자료 · finnote";
   // For an answer share, the preview text IS the real answer lead (so text-only unfurls — e.g.
   // KakaoTalk/Telegram — show the content, not a generic blurb).
   const lead = share?.kind === "answer"

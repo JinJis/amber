@@ -1,94 +1,106 @@
-/* Amber — 브랜드 토큰(brand.css)이 유일한 색 원천. 아래 앱 토큰들은 전부 brand 토큰에서
-   직접 참조하거나 color-mix로 파생한다(새 hex 금지). 레이아웃 언어(중앙 칼럼·소프트 레일·
-   인라인 출처)는 유지, 팔레트·타이포만 Amber. 하드 제약: 그라데이션·그림자·글로우 없음. */
+/* finnote — 브랜드 토큰(brand.css)이 유일한 색 원천. 아래 앱 토큰들은 전부 brand 토큰에서
+   직접 참조하거나 color-mix로 파생한다(새 hex는 시장색·상태색 등 역할색만). 레이아웃 언어
+   (중앙 칼럼·소프트 레일·인라인 출처)는 유지, 팔레트·타이포는 finnote(종이 위 형광펜).
+   오션=조작 가능한 것, 하이라이터(노랑)=근거 전용, 심해=텍스트·배경. 하드 제약: 그라데이션·
+   글로우 없음, 그림자는 떠 있는 것(팝오버·시트)에만. */
 @import "./brand.css";
 
 :root {
-  --bg: var(--surface-sunk);                                     /* app backdrop (warm paper) */
-  --panel: var(--surface);                                       /* primary card / surface */
+  --bg: var(--ocean-50);                                         /* app backdrop — 바탕 */
+  --panel: var(--surface);                                       /* primary card / surface — 종이 */
   --panel-2: var(--surface-sunk);                                /* sidebar / subtle inset */
-  --panel-3: color-mix(in srgb, var(--surface) 55%, var(--surface-sunk));
+  --panel-3: color-mix(in srgb, var(--surface) 60%, var(--surface-sunk));
   --text: var(--text-primary);
-  --text-2: color-mix(in srgb, var(--text-primary) 78%, var(--text-secondary));
+  --text-2: color-mix(in srgb, var(--text-primary) 80%, var(--text-secondary));
   --muted: var(--text-secondary);
-  --faint: color-mix(in srgb, var(--text-secondary) 55%, var(--surface));
+  --faint: color-mix(in srgb, var(--text-secondary) 58%, var(--surface));
   --line: var(--border);
-  --line-2: color-mix(in srgb, var(--text-primary) 16%, transparent);
-  --line-3: color-mix(in srgb, var(--text-primary) 5%, transparent);
-  --ink: var(--amber-900);        /* primary action, active rail, user bubble */
-  --paper: var(--amber-900);
-  --on-ink: var(--amber-50);
-  --focus: var(--amber-900);
-  /* accent — citations/@groups/links = the evidence family (amber) */
-  --accent: var(--amber-600);
-  --accent-bg: var(--evidence-bg);
-  --accent-fg: var(--amber-800);
-  --rail-active: color-mix(in srgb, var(--amber-50) 60%, var(--surface));
+  --border-strong: #A8C6D3;
+  --line-2: var(--border-strong);
+  --line-3: color-mix(in srgb, var(--ink-800) 6%, transparent);
+  --ink: var(--ocean-700);        /* primary action, active rail, user bubble */
+  --on-ink: var(--paper);
+  --focus: var(--ocean-500);
+  --brand: var(--ocean-700);      /* 텍스트·버튼 배경 */
+  --graphic: var(--ocean-500);    /* 아이콘·보더·도형 */
+  /* accent — links/@groups/interactive = ocean (조작 가능한 것). 인용은 노랑(--evidence) 별도 */
+  --accent: var(--ocean-700);
+  --accent-bg: var(--ocean-100);
+  --accent-fg: var(--ocean-700);
+  --rail-active: color-mix(in srgb, var(--ocean-100) 55%, var(--surface));
+  /* market — KR 기본(상승 적색·하락 청색); US는 [data-market="us"]에서 반전. 보는 종목의 시장을 따른다 */
+  --up: #E5453A;
+  --down: #2A6BE0;
   /* trust signals (freshness) — functional semantics, not decoration */
-  --fresh: #1FA463;
-  --aging: var(--amber-400);
-  --stale: #D1483A;
+  --fresh: #15806A;
+  --aging: #A9711A;
+  --stale: #C8342A;
   --gap: var(--faint);
-  --danger: #D1483A;
-  /* guardrail label (visible, not fine print) — evidence family, muted */
-  --warn-fg: var(--amber-800);
-  --warn-bg: var(--evidence-bg);
-  --warn-line: color-mix(in srgb, var(--amber-400) 45%, var(--surface));
+  --danger: #C8342A;
+  /* guardrail label (visible, not fine print) — status warn(앰버-브라운), 근거색(노랑) 아님 */
+  --warn-fg: #A9711A;
+  --warn-bg: color-mix(in srgb, var(--hl-200) 55%, var(--surface));
+  --warn-line: color-mix(in srgb, var(--hl-500) 42%, var(--surface));
   --mark: var(--evidence-bg);     /* verbatim/verified highlight = the evidence tint */
-  --ui: var(--font-body);
-  --display: var(--font-display);
+  --ui: var(--font-ui);
+  --display: var(--font-ui);      /* 제목=Pretendard. 브랜드서체(Nunito)는 로고에만 */
   --mono: var(--font-mono);
-  --shadow-card: none;            /* brand: no drop shadows — borders do the separation */
-  --shadow-pop: none;
+  --shadow-card: none;            /* 카드는 보더로 구분 — 그림자 없음 */
+  --shadow-pop: var(--sh-2);      /* 떠 있는 것(팝오버·시트)에만 */
 }
-/* UXQ-1 다크모드 — 같은 토큰, Amber 다크 팔레트(brand.css 다크 값에서 파생).
+/* 시장 관행 — US는 상승 녹색/하락 적색으로 반전 (보는 종목의 시장을 따라 자동 전환) */
+[data-market="us"] { --up: #0F8A63; --down: #D5342A; }
+
+/* UXQ-1 다크모드 — 심해로 들어간다. 오션은 아쿠아(ocean-300)로, 형광펜만 그대로.
    html[data-theme]가 승자; 무속성이면 시스템. 문서 뷰어(.sv)는 실제 서류라 라이트 유지. */
 html[data-theme="dark"] {
-  --bg: var(--surface-sunk); --panel: var(--surface);
-  --panel-2: color-mix(in srgb, var(--surface) 55%, var(--surface-sunk));
-  --panel-3: color-mix(in srgb, var(--surface) 70%, var(--surface-sunk));
+  --bg: var(--ink-900); --panel: var(--surface); --panel-2: var(--surface-sunk);
+  --panel-3: color-mix(in srgb, var(--surface) 72%, var(--surface-sunk));
   --text: var(--text-primary);
-  --text-2: color-mix(in srgb, var(--text-primary) 78%, var(--text-secondary));
+  --text-2: color-mix(in srgb, var(--text-primary) 80%, var(--text-secondary));
   --muted: var(--text-secondary);
-  --faint: color-mix(in srgb, var(--text-secondary) 55%, var(--surface));
+  --faint: color-mix(in srgb, var(--text-secondary) 60%, var(--surface));
   --line: var(--border);
-  --line-2: color-mix(in srgb, var(--text-primary) 20%, transparent);
-  --line-3: color-mix(in srgb, var(--text-primary) 8%, transparent);
-  --ink: var(--amber-200); --paper: var(--amber-200); --on-ink: var(--amber-900);
-  --focus: var(--amber-200);
-  --accent: var(--amber-400); --accent-bg: var(--evidence-bg); --accent-fg: var(--amber-200);
-  --rail-active: color-mix(in srgb, var(--amber-400) 12%, transparent);
-  --fresh: #2BB673; --aging: var(--amber-400); --stale: #E06154;
+  --border-strong: #356279; --line-2: var(--border-strong);
+  --line-3: color-mix(in srgb, #E9F3F7 8%, transparent);
+  --ink: var(--ocean-300); --on-ink: var(--ink-900); --focus: var(--ocean-300);
+  --brand: var(--ocean-300); --graphic: var(--ocean-300);
+  --accent: var(--ocean-300); --accent-fg: var(--ocean-300);
+  --accent-bg: color-mix(in srgb, var(--ocean-300) 14%, transparent);
+  --rail-active: color-mix(in srgb, var(--ocean-300) 12%, transparent);
+  --up: #E5453A; --down: #4C8DFF;
+  --fresh: #2BB673; --aging: var(--hl-500); --stale: #E06154;
   --gap: var(--faint); --danger: #E06154;
-  --warn-fg: var(--amber-200); --warn-bg: var(--evidence-bg);
-  --warn-line: color-mix(in srgb, var(--amber-400) 40%, var(--surface));
+  --warn-fg: var(--hl-500); --warn-bg: rgba(255, 201, 77, .14);
+  --warn-line: color-mix(in srgb, var(--hl-500) 40%, var(--surface));
   --mark: var(--evidence-bg);
   --shadow-card: none;
-  --shadow-pop: none;
+  --shadow-pop: 0 6px 20px -8px rgba(0, 0, 0, .5);
 }
 @media (prefers-color-scheme: dark) {
   html:not([data-theme]) {
-  --bg: var(--surface-sunk); --panel: var(--surface);
-  --panel-2: color-mix(in srgb, var(--surface) 55%, var(--surface-sunk));
-  --panel-3: color-mix(in srgb, var(--surface) 70%, var(--surface-sunk));
+  --bg: var(--ink-900); --panel: var(--surface); --panel-2: var(--surface-sunk);
+  --panel-3: color-mix(in srgb, var(--surface) 72%, var(--surface-sunk));
   --text: var(--text-primary);
-  --text-2: color-mix(in srgb, var(--text-primary) 78%, var(--text-secondary));
+  --text-2: color-mix(in srgb, var(--text-primary) 80%, var(--text-secondary));
   --muted: var(--text-secondary);
-  --faint: color-mix(in srgb, var(--text-secondary) 55%, var(--surface));
+  --faint: color-mix(in srgb, var(--text-secondary) 60%, var(--surface));
   --line: var(--border);
-  --line-2: color-mix(in srgb, var(--text-primary) 20%, transparent);
-  --line-3: color-mix(in srgb, var(--text-primary) 8%, transparent);
-  --ink: var(--amber-200); --paper: var(--amber-200); --on-ink: var(--amber-900);
-  --focus: var(--amber-200);
-  --accent: var(--amber-400); --accent-bg: var(--evidence-bg); --accent-fg: var(--amber-200);
-  --rail-active: color-mix(in srgb, var(--amber-400) 12%, transparent);
-  --fresh: #2BB673; --aging: var(--amber-400); --stale: #E06154;
+  --border-strong: #356279; --line-2: var(--border-strong);
+  --line-3: color-mix(in srgb, #E9F3F7 8%, transparent);
+  --ink: var(--ocean-300); --on-ink: var(--ink-900); --focus: var(--ocean-300);
+  --brand: var(--ocean-300); --graphic: var(--ocean-300);
+  --accent: var(--ocean-300); --accent-fg: var(--ocean-300);
+  --accent-bg: color-mix(in srgb, var(--ocean-300) 14%, transparent);
+  --rail-active: color-mix(in srgb, var(--ocean-300) 12%, transparent);
+  --up: #E5453A; --down: #4C8DFF;
+  --fresh: #2BB673; --aging: var(--hl-500); --stale: #E06154;
   --gap: var(--faint); --danger: #E06154;
-  --warn-fg: var(--amber-200); --warn-bg: var(--evidence-bg);
-  --warn-line: color-mix(in srgb, var(--amber-400) 40%, var(--surface));
+  --warn-fg: var(--hl-500); --warn-bg: rgba(255, 201, 77, .14);
+  --warn-line: color-mix(in srgb, var(--hl-500) 40%, var(--surface));
   --mark: var(--evidence-bg);
   --shadow-card: none;
-  --shadow-pop: none;
+  --shadow-pop: 0 6px 20px -8px rgba(0, 0, 0, .5);
   }
 }
 
@@ -212,9 +224,14 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 .ctx-card-wrap.flash { animation: cite-flash 1.6s ease-out; }
 @keyframes cite-flash { 0% { box-shadow: 0 0 0 3px var(--ink); background: var(--panel-3); }
   100% { box-shadow: 0 0 0 0 transparent; } }
-.cite-ref { display: inline; border: none; background: none; padding: 0 1px; font-size: inherit;
-  color: var(--accent-fg, #3A5BC7); cursor: pointer; border-radius: 3px; font-variant-numeric: tabular-nums; }
-.cite-ref:hover, .cite-ref.hot { background: var(--ink); color: var(--on-ink); }
+/* 각주 칩 — 문장 안의 근거. 숫자는 근거 순서, 색은 로고 끝 화살촉과 같은 하이라이터.
+   누르면 근거 카드로. evidence 토큰으로 다크 자동 대응(light hl-200/hl-700 · dark rgba/hl-500). */
+.cite-ref { display: inline-block; border: none; font-family: var(--mono); font-size: 11px; line-height: 1.4;
+  vertical-align: .3em; margin: 0 1px; padding: 1px 5px; border-radius: 5px;
+  background: var(--evidence-bg); box-shadow: inset 0 -2px 0 var(--hl-500); color: var(--evidence);
+  cursor: pointer; border-radius: 5px; font-variant-numeric: tabular-nums;
+  transition: background .12s, color .12s; }
+.cite-ref:hover, .cite-ref.hot { background: var(--hl-500); color: var(--ink-800); box-shadow: inset 0 -2px 0 var(--hl-700); }
 /* 본문 수치 하이라이트 (CSS Custom Highlight API) */
 .ctxpane .artifacts { margin: 0; }
 .ctxpane .ctx-more > summary { cursor: pointer; list-style: revert; }
@@ -273,7 +290,7 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 .srcprev[role="button"] { cursor: pointer; }
 .srcprev[role="button"]:hover { border-color: var(--accent); }
 .sp-head { display: flex; align-items: center; gap: 7px; padding: 8px 10px; border-bottom: 1px solid var(--line-3); background: var(--panel-2); }
-.sp-n { color: var(--accent); font-size: 9px; flex: none; }
+.sp-n { color: var(--evidence); font-size: 9px; flex: none; font-weight: 700; }
 .sp-ic { font-size: 11px; flex: none; }
 .sp-title { font-size: 10.5px; font-weight: 600; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sp-page { font-size: 8.5px; color: #fff; background: #5A5A62; border-radius: 4px; padding: 1px 6px; flex: none; }
@@ -281,8 +298,9 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 .sp-doc { margin: 9px 10px; border: 1px solid var(--line-3); border-radius: 5px; background: #fff; padding: 9px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
 .sp-doc-sec { font-size: 7.5px; color: #B0B0B6; letter-spacing: .04em; margin-bottom: 6px; }
 .sp-skel { display: block; height: 5px; background: #EDEDF0; border-radius: 2px; margin: 4px 0; }
-.sp-quote { font-size: 9.5px; line-height: 1.5; color: var(--text-2); background: var(--mark);
-  border-left: 2px solid var(--aging); border-radius: 0 3px 3px 0; padding: 5px 7px; margin: 6px 0; }
+/* 원문 인용 = 본명조(원문의 말) + 왼쪽 하이라이터 씰. 답변(Pretendard)과 서체로 구분한다 */
+.sp-quote { font-family: var(--font-quote); font-size: 10px; line-height: 1.55; color: var(--text-2); background: var(--mark);
+  border-left: 3px solid var(--hl-500); border-radius: 0 3px 3px 0; padding: 5px 8px; margin: 6px 0; }
 /* browser chrome (web/news) */
 .sp-chrome { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-bottom: 1px solid var(--line-3); background: var(--panel-2); }
 .sp-dots { display: flex; gap: 3px; flex: none; }
@@ -293,7 +311,7 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 .sp-headline { font-size: 11px; font-weight: 700; line-height: 1.35; color: var(--text); }
 .sp-wmeta { font-size: 7.5px; color: #B0B0B6; margin-top: 3px; }
 .sp-wtext { font-size: 9.5px; color: var(--text-2); line-height: 1.6; margin-top: 7px; }
-.sp-wtext mark, .sv-web-text mark { background: var(--mark); border-radius: 2px; padding: 0 2px; color: var(--text-2); }
+.sp-wtext mark, .sv-web-text mark { background: var(--mark); box-shadow: inset 0 -2px 0 var(--hl-500); border-radius: 2px; padding: 0 2px; color: var(--text-2); }
 /* extracted data — the real figures the answer used (cited row highlighted) */
 .sp-table { width: 100%; border-collapse: collapse; font-size: 9px; color: var(--text-2); }
 .sp-table th { color: var(--faint); font-size: 8px; font-weight: 400; text-align: right; padding: 6px 10px 4px; border-bottom: 1px solid var(--line-3); }
@@ -347,8 +365,9 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 .pf-stat span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 .pf-stat b { font-size: 20px; }
 .pf-table { width: 100%; }
-.pf-table .up, .up { color: var(--success, #1FA463); }
-.pf-table .down, .down { color: var(--danger, #D1483A); }
+/* 시장색 — 보는 종목의 시장을 따른다(KR 상승 적색, US 상승 녹색; [data-market]로 자동 반전) */
+.pf-table .up, .up { color: var(--up); }
+.pf-table .down, .down { color: var(--down); }
 
 /* multi-board tabs */
 .board-tabs { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -576,7 +595,7 @@ a { color: var(--text); text-decoration-color: var(--muted); }
   font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
 .dw-stat-u { font-size: .42em; font-weight: 600; color: var(--muted); margin-left: 3px; }
 .dw-stat-d { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.dw-stat-d.up { color: var(--fresh); } .dw-stat-d.dn { color: var(--danger); }
+.dw-stat-d.up { color: var(--up); } .dw-stat-d.dn { color: var(--down); }
 .dw-stat.gauge .dw-stat-v { font-size: clamp(20px, 3vw, 34px); }
 .dw-gauge { position: relative; height: 6px; border-radius: 999px; margin: 2px 0 1px;
   background: linear-gradient(90deg, #D1483A, #D9A300 50%, #1FA463); }
@@ -591,7 +610,7 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 .dw-heat-name { font-size: 12px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dw-heat-sub { font-size: 10px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .dw-heat-pct { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.dw-heat-pct.up { color: var(--fresh); } .dw-heat-pct.dn { color: var(--danger); }
+.dw-heat-pct.up { color: var(--up); } .dw-heat-pct.dn { color: var(--down); }
 
 /* feed — vertical LIVE news stream (right rail) */
 .dw-feed { display: flex; flex-direction: column; height: 100%; }
@@ -618,15 +637,15 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 .dw-cal-date { font-size: 10.5px; color: var(--muted); font-family: var(--mono); }
 
 /* inline [n] anchors inside the prose — accent indigo (wireframe A/C) */
-.anch { font-family: var(--mono); font-size: 9px; color: var(--accent); cursor: help;
+.anch { font-family: var(--mono); font-size: 9px; color: var(--evidence); cursor: help;
   padding: 0 1px; vertical-align: super; line-height: 0; }
-.anch:hover { color: var(--accent-fg); }
+.anch:hover { color: var(--hl-700); }
 
 /* compact inline cite chips (under a message) */
 .cite-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .cite-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text);
   border: 1px solid var(--line-2); border-radius: 999px; padding: 2px 9px; background: var(--panel); font-family: var(--mono); }
-.cite-chip .cnum { color: var(--accent); font-size: 11px; }
+.cite-chip .cnum { color: var(--evidence); font-size: 11px; }
 
 .top { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel-3); }
 /* analyst identity: mascot + status dot + switcher (wireframe A header) */
@@ -954,15 +973,15 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .msg.assistant .md.article h3 { font-size: 14.5px; margin: 18px 0 8px; }
 .msg.assistant .md.article ul, .msg.assistant .md.article ol { margin: 8px 0 13px; }
 .msg.assistant .md.article table { margin: 12px 0; }
-.msg.assistant .md.article blockquote { border-left: 3px solid var(--accent);
-  margin: 12px 0; padding: 4px 0 4px 12px; color: var(--text-2); }
+.msg.assistant .md.article blockquote { border-left: 3px solid var(--hl-500); font-family: var(--font-quote);
+  margin: 12px 0; padding: 6px 0 6px 14px; color: var(--text-2); background: var(--surface-sunk); border-radius: 0 6px 6px 0; }
 /* LG-4: 본문 속 수치 원장 — 검증 수치 = .evidence-highlight(brand.css: 앰버 씰 + 하단
    보더가 load-bearing, 색 단독 의존 금지). hover → 원자료 대조 팝업 */
 .num-hl { position: relative; border-radius: 3px 3px 0 0; padding: 0 3px;
   font-variant-numeric: tabular-nums; transition: background .12s; }
 .num-hl[role="button"] { cursor: pointer; }
-.num-hl:hover { background: color-mix(in srgb, var(--amber-400) 28%, var(--evidence-bg)); }
-.num-hl.warn { background: var(--warn-bg); border-bottom: 2px dotted var(--amber-600); }
+.num-hl:hover { background: color-mix(in srgb, var(--hl-500) 42%, var(--evidence-bg)); }
+.num-hl.warn { background: var(--warn-bg); border-bottom: 2px dotted var(--warn-fg); }
 .num-tip { display: none; position: absolute; bottom: calc(100% + 8px); left: 50%;
   transform: translateX(-50%); z-index: 40; min-width: 190px; max-width: 300px; width: max-content;
   padding: 8px 11px; border-radius: 9px; background: var(--text); color: var(--panel);
@@ -973,7 +992,7 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
   border: 6px solid transparent; border-top-color: var(--text); }
 .nt-line { display: block; }
 .nt-ok { color: var(--fresh); font-weight: 600; }
-.nt-warn { color: var(--amber-200); font-weight: 600; }
+.nt-warn { color: var(--hl-500); font-weight: 600; }
 .nt-hint { display: block; margin-top: 2px; color: color-mix(in srgb, var(--panel) 60%, transparent); font-size: 10px; }
 .nt-pin { margin-top: 6px; font-size: 10px; background: rgba(255,255,255,.1); color: inherit;
   border: 1px solid rgba(255,255,255,.28); border-radius: 999px; padding: 2px 9px; cursor: pointer; }
@@ -1060,8 +1079,8 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .input { flex: 1; background: var(--panel); border: 1px solid var(--line-2); color: var(--text);
   padding: 13px 16px; border-radius: 14px; font-size: 15px; outline: none; font-family: inherit; }
 .input:focus { border-color: var(--focus); }
-/* primary action = ink (our identity) */
-.btn { background: var(--paper); color: var(--on-ink); border: 1px solid var(--ink); padding: 0 18px; border-radius: 12px; cursor: pointer; font-weight: 600; font-family: inherit; }
+/* primary action = ink (오션 700) — 한 화면에 기본 버튼은 하나만 */
+.btn { background: var(--ink); color: var(--on-ink); border: 1px solid var(--ink); padding: 0 18px; border-radius: 12px; cursor: pointer; font-weight: 600; font-family: inherit; }
 .btn:hover:not(:disabled) { filter: brightness(1.05); }
 .btn:disabled { opacity: .4; cursor: default; }
 .btn.ghost { background: var(--panel); border: 1px solid var(--line-2); color: var(--text); }
@@ -2164,3 +2183,35 @@ html[data-theme="dark"] img.ticker-logo, html[data-theme="dark"] .avatar:not(.mg
 .cmdk-kind { font-size: 10px; color: var(--muted); flex: none; }
 .cmdk-empty { padding: 18px 12px; font-size: 11.5px; color: var(--muted); text-align: center; }
 .cmdk-foot { padding: 8px 14px; border-top: 1px solid var(--line); font-size: 10px; color: var(--faint); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   finnote 시그니처 — 수면선(waterline) · 하이라이트 3종 · 지느러미 로딩
+   로고 01의 물결과 끝의 노란 표식을 제품 전체의 반복 요소로 확장한다.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* 수면선: 로고의 물결을 그대로 구분선으로 (섹션 사이·근거 위) */
+.waterline { height: 12px; background-image: var(--wave); background-repeat: repeat-x; background-position: left center; }
+.waterline.dim { opacity: .5; }
+
+/* 하이라이트 3종 — 근거 표시. 노란색은 근거에만 쓴다 */
+.hl { background: linear-gradient(transparent 56%, var(--hl-500) 56%, var(--hl-500) 94%, transparent 94%); padding: 0 1px; }
+.hl-block { background: var(--hl-200); box-shadow: inset 0 -2px 0 var(--hl-500); border-radius: 2px; padding: 0 2px; }
+.hl-num { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: .95em;
+  background: var(--ocean-100); border-radius: 5px; padding: 1px 5px; box-shadow: inset 0 0 0 1px rgba(22, 144, 174, .28); }
+
+/* 지느러미 로딩 — 스피너 대신 수면을 가르는 지느러미. 이 모션이 곧 로고다 */
+.fin-swim { position: relative; height: 16px; overflow: hidden; border-radius: var(--r-chip); }
+.fin-swim::before { content: ""; position: absolute; inset: 0; background-image: var(--wave);
+  background-repeat: repeat-x; background-position: left center; opacity: .55; }
+.fin-swim::after { content: ""; position: absolute; bottom: 4px; left: -26px; width: 16px; height: 16px;
+  background: center/contain no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M2.6 21.4 Q7 11 15 3.4 Q19.4 0.2 18 7 Q16 14.4 21.4 21.4 Z' fill='%2312708A'/%3E%3C/svg%3E");
+  animation: fin-swim 2.8s var(--e) infinite; }
+@keyframes fin-swim { from { left: -26px; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .fin-swim::after { animation: none; left: calc(50% - 8px); } }
+/* 다크에서는 지느러미를 아쿠아로 (심해 배경 위 반전) */
+html[data-theme="dark"] .fin-swim::after {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M2.6 21.4 Q7 11 15 3.4 Q19.4 0.2 18 7 Q16 14.4 21.4 21.4 Z' fill='%235FD0E4'/%3E%3C/svg%3E"); }
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) .fin-swim::after {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M2.6 21.4 Q7 11 15 3.4 Q19.4 0.2 18 7 Q16 14.4 21.4 21.4 Z' fill='%235FD0E4'/%3E%3C/svg%3E"); }
+}

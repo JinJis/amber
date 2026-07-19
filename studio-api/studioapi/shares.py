@@ -63,7 +63,7 @@ def _decode_png(data_url: str) -> bytes:
 def _share_urls(token: str, title: str) -> dict:
     """Ready-made SNS intent links — the public page URL rides every platform."""
     url = f"{settings.public_base_url.rstrip('/')}/s/{token}"
-    text = quote(f"{title} — 출처·기준일 포함 · Amber")
+    text = quote(f"{title} — 출처·기준일 포함 · finnote")
     u = quote(url)
     return {
         "page": url,

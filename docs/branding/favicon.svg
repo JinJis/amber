@@ -1,5 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 106" role="img" aria-labelledby="amber-favicon-title">
-  <title id="amber-favicon-title">Amber</title>
-  <path d="M52 0C78 0 100 20 102 46c2 30-21 59-50 59C23 105 0 80 2 48 4 21 26 0 52 0Z" fill="#EF9F27"/>
-  <rect x="24" y="45" width="40" height="14" rx="7" fill="#412402"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-labelledby="finnote-favicon-title">
+  <title id="finnote-favicon-title">finnote</title>
+  <defs>
+    <clipPath id="fn-clip-c">
+      <path d="M6 90 C17.5 84.7 29 84.7 40.5 90 C52 95.3 63.5 95.3 75 90 L106 56 L124 56 L124 -20 L-20 -20 L-20 90 Z"/>
+    </clipPath>
+  </defs>
+  <path d="M22 90 Q33 60 53 39 Q64 30 62 46 Q59 68 76 90 L76 112 L22 112 Z" fill="#0E2A3F" stroke="#0E2A3F" stroke-width="9" stroke-linejoin="round" clip-path="url(#fn-clip-c)"/>
+  <path d="M6 90 C17.5 84.7 29 84.7 40.5 90 C52 95.3 63.5 95.3 75 90 L98 65" fill="none" stroke="#1690AE" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M110 52 L105.3 72 L90.5 58.6 Z" fill="#FFC94D" stroke="#FFC94D" stroke-width="4.5" stroke-linejoin="round"/>
 </svg>

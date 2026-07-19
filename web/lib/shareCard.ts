@@ -74,7 +74,7 @@ export function provenanceStrip(a: Artifact, shortLink: string): { label: string
   return {
     label: isHistoryKind(a) ? "과거 기록 · 전망 아님" : null,
     source: `출처 ${a.source || "—"}${a.as_of ? ` · as of ${a.as_of}` : ""}`,
-    brand: `Amber · ${shortLink}`,
+    brand: `finnote · ${shortLink}`,
   };
 }
 
@@ -125,7 +125,7 @@ export function ogCardForAnswer(a: {
   const sources = [...new Set(cits.map((c) => c.source).filter(Boolean) as string[])];
   const asOf = cits.map((c) => c.as_of).filter(Boolean).sort().slice(-1)[0] ?? null;
   return {
-    title: a.title || "Amber 리서치",
+    title: a.title || "finnote 리서치",
     lead: plainText(a.content),
     sources,
     sourceCount: sources.length,
@@ -137,7 +137,7 @@ export function ogCardForAnswer(a: {
 /** Build the OG card model from a single-artifact share (pure — unit-tested). */
 export function ogCardForArtifact(a: Artifact): OgCard {
   return {
-    title: a.title || "Amber 자료",
+    title: a.title || "finnote 자료",
     lead: shareCardLines(a, 6).join("  ·  "),
     sources: a.source ? [a.source] : [],
     sourceCount: a.source ? 1 : 0,
@@ -147,28 +147,31 @@ export function ogCardForArtifact(a: Artifact): OgCard {
 }
 
 // --- the canvas draw (thin; not unit-tested — jsdom has no real 2D context) ----------------
-// Amber brand (docs/branding/brand.css): warm neutrals + the amber family. No gradients/shadows.
-const INK = "#1A1815", SUB = "#6B6459", MUTED = "#9C948A", LINE = "rgba(26,24,21,0.10)", BG = "#FFFFFF";
-const AMBER = "#EF9F27", AMBER_DEEP = "#BA7517", AMBER_INK = "#412402";
+// finnote brand (docs/branding/brand.css): 종이색 배경 + 심해/오션 + 하이라이터. 그라데이션·그림자 없음.
+const INK = "#0E2A3F", SUB = "#33566B", MUTED = "#5C7688", LINE = "#CBDDE5", BG = "#FFFCF6";
+const OCEAN = "#12708A", OCEAN_MID = "#1690AE", HL = "#FFC94D";
 
-/** The final mark (docs/branding/amber-mark.svg) drawn 1:1 on canvas — placement only,
- *  path data verbatim (viewBox 104×106, scaled to `size`). Never edit the geometry. */
+/** The finnote mark (docs/branding/finnote-mark.svg) drawn 1:1 on canvas — placement only,
+ *  path data verbatim (viewBox 120×120, scaled to `size`). Never edit the geometry.
+ *  지느러미는 수면선(clipPath)에서 잘리고, 물결이 절단면을 덮은 뒤 끝의 화살촉이 상승을 가리킨다. */
 function drawMark(ctx: CanvasRenderingContext2D, x: number, y: number, size: number) {
   ctx.save();
   ctx.translate(x, y);
-  ctx.scale(size / 104, size / 104);
-  ctx.fillStyle = AMBER;
-  ctx.fill(new Path2D("M52 0C78 0 100 20 102 46c2 30-21 59-50 59C23 105 0 80 2 48 4 21 26 0 52 0Z"));
-  const bar = (bx: number, by: number, w: number, h: number, r: number, fill: string) => {
-    ctx.fillStyle = fill;
-    const p = new Path2D();
-    p.moveTo(bx + r, by); p.arcTo(bx + w, by, bx + w, by + h, r); p.arcTo(bx + w, by + h, bx, by + h, r);
-    p.arcTo(bx, by + h, bx, by, r); p.arcTo(bx, by, bx + w, by, r); p.closePath();
-    ctx.fill(p);
-  };
-  bar(24, 38, 56, 5, 2.5, AMBER_DEEP);
-  bar(24, 50, 34, 8, 4, AMBER_INK);
-  bar(24, 64, 56, 5, 2.5, AMBER_DEEP);
+  ctx.scale(size / 120, size / 120);
+  // fin body — clipped to above the waterline (수면 아래는 그리지 않는다)
+  ctx.save();
+  ctx.clip(new Path2D("M6 84 C13.3 78.7 20.7 78.7 28 84 C35.3 89.3 42.7 89.3 50 84 C57.3 78.7 64.7 78.7 72 84 C79.3 89.3 86.7 89.3 94 84 L110 52 L124 52 L124 -20 L-20 -20 L-20 84 Z"));
+  ctx.fillStyle = INK; ctx.strokeStyle = INK; ctx.lineWidth = 7; ctx.lineJoin = "round";
+  const fin = new Path2D("M32 86 Q42 57 62 38 Q72 29 70 44 Q68 65 85 86 L85 106 L32 106 Z");
+  ctx.fill(fin); ctx.stroke(fin);
+  ctx.restore();
+  // waterline
+  ctx.strokeStyle = OCEAN_MID; ctx.lineWidth = 7.5; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.stroke(new Path2D("M6 84 C13.3 78.7 20.7 78.7 28 84 C35.3 89.3 42.7 89.3 50 84 C57.3 78.7 64.7 78.7 72 84 C79.3 89.3 86.7 89.3 94 84 L105 61"));
+  // arrowhead (근거 색 = 상승)
+  ctx.fillStyle = HL; ctx.strokeStyle = HL; ctx.lineWidth = 3; ctx.lineJoin = "round";
+  const arrow = new Path2D("M112 48 L112.9 65.2 L97.7 57.6 Z");
+  ctx.fill(arrow); ctx.stroke(arrow);
   ctx.restore();
 }
 
@@ -211,7 +214,7 @@ function wrapMeasured(ctx: CanvasRenderingContext2D, text: string, maxWidth: num
 }
 
 const SANS = `"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", ui-sans-serif, system-ui, sans-serif`;
-const DISPLAY = `"Inter Tight", "Pretendard", ui-sans-serif, system-ui, sans-serif`;
+const BRAND = `"Nunito", ui-sans-serif, system-ui, sans-serif`;   // 로고 워드마크 전용
 const MONO = `ui-monospace, "SF Mono", monospace`;
 
 /** Render the OG preview PNG for a share. One renderer for answers + artifacts (via OgCard). */
@@ -224,15 +227,17 @@ export async function renderOgCard(card: OgCard, shortLink: string): Promise<Blo
   const PX = 76, PY = 60, CW = W - PX * 2;
   ctx.textBaseline = "top";
 
-  // surface + a crisp left accent rail (editorial pop against the grayscale brand)
+  // surface (종이색) + a crisp left ocean rail (brand pop)
   ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = AMBER; ctx.fillRect(0, 0, 12, H);
+  ctx.fillStyle = OCEAN; ctx.fillRect(0, 0, 12, H);
 
-  // header: brand mark (left) + trust chip (right)
+  // header: brand mark (left) + trust chip (right). 워드마크는 fin=오션 / note=심해
   const brandY = PY;
-  drawMark(ctx, PX, brandY, 26);
-  ctx.font = `500 27px ${DISPLAY}`; ctx.fillStyle = INK;
-  ctx.fillText("amber", PX + 36, brandY);
+  drawMark(ctx, PX, brandY, 30);
+  ctx.font = `800 27px ${BRAND}`;
+  ctx.fillStyle = OCEAN_MID; ctx.fillText("fin", PX + 40, brandY + 1);
+  const finW = ctx.measureText("fin").width;
+  ctx.fillStyle = INK; ctx.fillText("note", PX + 40 + finW, brandY + 1);
   const chip = "✓ 출처와 함께";
   ctx.font = `500 22px ${MONO}`;
   const cw = ctx.measureText(chip).width, chipX = W - PX - cw - 28, chipY = brandY - 4;
@@ -276,7 +281,7 @@ export async function renderOgCard(card: OgCard, shortLink: string): Promise<Blo
   ctx.font = `400 24px ${MONO}`; ctx.fillStyle = MUTED;
   ctx.fillText(wrapMeasured(ctx, srcLine, CW - 260, 1)[0] ?? srcLine, PX, fy);
   ctx.font = `700 24px ${MONO}`; ctx.fillStyle = INK;
-  const link = shortLink || "amber";
+  const link = shortLink || "finnote";
   const lw = ctx.measureText(link).width;
   ctx.fillText(link, W - PX - lw, fy);
 

@@ -1,67 +1,111 @@
-/* Amber brand tokens — source of truth: docs/branding/brand.css (verbatim below).
-   Every color in the app derives from these tokens (globals.css maps its legacy
-   token names onto them). Do not hardcode hex values in components. */
+/* finnote brand tokens — source of truth.
+   finance + footnote. 답변보다 각주가 먼저인 투자 리서치 도구.
+   철학: 종이 위에 형광펜. 노란색(하이라이터)은 근거에만. 배경은 흰색이 아니라 종이색.
+   오션 계열 = 조작 가능한 것, 하이라이터 = 근거, 심해 = 텍스트·배경.
+   web/app/brand.css로 사본이 유지된다(둘 다 동기). 컴포넌트에서 hex 하드코딩 금지. */
 :root {
-  --amber-50: #FAEEDA;
-  --amber-200: #FAC775;
-  --amber-400: #EF9F27;
-  --amber-600: #BA7517;
-  --amber-800: #854F0B;
-  --amber-900: #412402;
+  /* ── brand scale ── */
+  --ink-900: #0A2133;
+  --ink-800: #0E2A3F;
+  --ink-600: #33566B;
+  --ink-400: #5C7688;
+  --ink-200: #9FBACB;
+  --ocean-700: #12708A;   /* 텍스트, 버튼 배경 */
+  --ocean-500: #1690AE;   /* 아이콘, 보더, 도형 */
+  --ocean-300: #5FD0E4;   /* 다크 모드 액션 */
+  --ocean-100: #D9F1F7;
+  --ocean-50: #EDF4F7;
+  --hl-500: #FFC94D;      /* 형광펜 — 근거 전용, 다른 용도 금지 */
+  --hl-200: #FFEFC4;
+  --hl-700: #A9711A;
+  --paper: #FFFCF6;
+  --rule: #CBDDE5;
 
-  --evidence: var(--amber-900);
-  --evidence-bg: var(--amber-50);
+  /* ── fonts ── */
+  --font-brand: 'Nunito', system-ui, sans-serif;   /* 로고·스플래시 전용 */
+  --font-ui: 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-quote: 'Noto Serif KR', 'Apple SD Gothic Neo', serif;   /* 원문 인용 */
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
-  --text-primary: #1A1815;
-  --text-secondary: #6B6459;
-  --surface: #FFFFFF;
-  --surface-sunk: #FBF9F5;
-  --border: rgba(26, 24, 21, 0.10);
+  /* ── space (4px grid) · radius · motion · elevation ── */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px;
+  --s6: 24px; --s7: 32px; --s8: 40px; --s9: 56px; --s10: 72px;
+  --r-chip: 8px; --r-ctl: 12px; --r-card: 20px; --r-sheet: 24px; --r-pill: 999px;
+  --e: cubic-bezier(.2, .7, .2, 1);
+  --t-fast: 120ms; --t: 200ms; --t-slow: 320ms;
+  --sh-1: 0 1px 2px rgba(14, 42, 63, .06);
+  --sh-2: 0 6px 20px -8px rgba(14, 42, 63, .22);
+  --sh-3: 0 18px 44px -14px rgba(14, 42, 63, .32);
+  /* 수면선 타일 — 로고 01의 물결을 구분선으로 */
+  --wave: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='12' viewBox='0 0 24 12'%3E%3Cpath d='M0 6C4 0 8 0 12 6c4 6 8 6 12 0' fill='none' stroke='%235FD0E4' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
 
-  --font-display: "Inter Tight", "Pretendard", system-ui, sans-serif;
-  --font-body: "Pretendard", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  /* ── legacy aliases — globals.css / Logo가 소비하는 이름들을 finnote 원색에 매핑 ── */
+  --evidence: var(--hl-700);       /* 근거 텍스트·마커 (읽는 색) */
+  --evidence-bg: var(--hl-200);    /* 근거 하이라이트 배경 */
+  --text-primary: var(--ink-800);
+  --text-secondary: var(--ink-400);
+  --surface: var(--paper);
+  --surface-sunk: #F5FAFC;
+  --border: var(--rule);
+  --font-display: var(--font-ui);  /* 제목=Pretendard. 브랜드 서체(Nunito)는 로고에만 */
+  --font-body: var(--font-ui);
+
+  /* logo — 지느러미가 배경 테마에 자동 대응(라이트=종이 위 심해 지느러미, 다크=심해 위 종이 지느러미).
+     명시 variant="invert"는 이 토큰과 무관하게 항상 반전을 강제한다. */
+  --logo-fin: var(--ink-800);
+  --logo-wave: var(--ocean-500);
+  --logo-foam: var(--ocean-100);
 }
 
+/* ── dark = 심해로 들어간다. 오션 700은 아쿠아 300으로, 형광펜만 그대로 ── */
 @media (prefers-color-scheme: dark) {
   :root {
-    --text-primary: #F5F2EC;
-    --text-secondary: #A39C90;
-    --surface: #1A1815;
-    --surface-sunk: #22201C;
-    --border: rgba(245, 242, 236, 0.12);
-    --evidence: var(--amber-200);
-    --evidence-bg: rgba(239, 159, 39, 0.14);
+    --text-primary: #E9F3F7;
+    --text-secondary: #87A5B7;
+    --surface: #123047;
+    --surface-sunk: #0D2839;
+    --border: #25455C;
+    --evidence: var(--hl-500);
+    --evidence-bg: rgba(255, 201, 77, .16);
+    --logo-fin: var(--paper);
+    --logo-wave: var(--ocean-300);
+    --logo-foam: transparent;
   }
 }
 
-.evidence-highlight {
-  background: var(--evidence-bg);
-  border-bottom: 2px solid var(--amber-400);
-  border-radius: 2px 2px 0 0;
-  padding: 0 2px;
-  color: inherit;
-}
-
-/* ── integration wiring (UXQ-1 theme toggle) ─────────────────────────────────────
-   The app lets the user override the system theme via html[data-theme] (vg_theme
-   cookie). Same token VALUES as the blocks above — no restyling, just plumbing so
-   the explicit toggle wins over prefers-color-scheme in both directions. */
+/* ── integration wiring (UXQ-1 theme toggle) ─────────────────────────────────
+   앱은 html[data-theme](vg_theme 쿠키)로 시스템 테마를 덮어쓴다. 값은 위 블록과
+   동일 — 재스타일 없이 명시 토글이 prefers-color-scheme를 양방향으로 이긴다. */
 html[data-theme="dark"] {
-  --text-primary: #F5F2EC;
-  --text-secondary: #A39C90;
-  --surface: #1A1815;
-  --surface-sunk: #22201C;
-  --border: rgba(245, 242, 236, 0.12);
-  --evidence: var(--amber-200);
-  --evidence-bg: rgba(239, 159, 39, 0.14);
+  --text-primary: #E9F3F7;
+  --text-secondary: #87A5B7;
+  --surface: #123047;
+  --surface-sunk: #0D2839;
+  --border: #25455C;
+  --evidence: var(--hl-500);
+  --evidence-bg: rgba(255, 201, 77, .16);
+  --logo-fin: var(--paper);
+  --logo-wave: var(--ocean-300);
+  --logo-foam: transparent;
 }
 html[data-theme="light"] {
-  --text-primary: #1A1815;
-  --text-secondary: #6B6459;
-  --surface: #FFFFFF;
-  --surface-sunk: #FBF9F5;
-  --border: rgba(26, 24, 21, 0.10);
-  --evidence: var(--amber-900);
-  --evidence-bg: var(--amber-50);
+  --text-primary: #0E2A3F;
+  --text-secondary: #5C7688;
+  --surface: #FFFCF6;
+  --surface-sunk: #F5FAFC;
+  --border: #CBDDE5;
+  --evidence: var(--hl-700);
+  --evidence-bg: var(--hl-200);
+  --logo-fin: var(--ink-800);
+  --logo-wave: var(--ocean-500);
+  --logo-foam: var(--ocean-100);
+}
+
+/* 근거 하이라이트(레거시 클래스명 유지) = 종이 위 형광펜 씰 */
+.evidence-highlight {
+  background: var(--evidence-bg);
+  box-shadow: inset 0 -2px 0 var(--hl-500);
+  border-radius: 2px;
+  padding: 0 2px;
+  color: inherit;
 }

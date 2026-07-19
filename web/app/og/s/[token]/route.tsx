@@ -13,18 +13,15 @@ import type { Artifact, Citation } from "@/lib/types";
 export const runtime = "nodejs";
 
 const W = 1200, H = 630;
-// Amber brand (docs/branding/brand.css): warm neutrals + the amber family. No gradients/shadows.
-const INK = "#1A1815", SUB = "#6B6459", MUTED = "#9C948A", LINE = "rgba(26,24,21,0.10)", BG = "#FFFFFF";
-const AMBER = "#EF9F27", AMBER_DEEP = "#BA7517", AMBER_INK = "#412402";
+// finnote brand (docs/branding/brand.css): 종이색 배경 + 심해/오션 + 하이라이터. 그라데이션·그림자 없음.
+const INK = "#0E2A3F", SUB = "#33566B", MUTED = "#5C7688", LINE = "#CBDDE5", BG = "#FFFCF6";
+const OCEAN = "#12708A", OCEAN_MID = "#1690AE";
 
-// The final mark (docs/branding/amber-mark.svg) — placement only, never edit path data.
-function Mark({ size }: { size: number }) {
+// 지느러미 단독(docs/branding/finnote-mark-mono.svg) — satori-safe 단일 filled path. path 데이터 수정 금지.
+function FinIcon({ size, color }: { size: number; color: string }) {
   return (
-    <svg width={size} height={Math.round((size * 106) / 104)} viewBox="0 0 104 106">
-      <path d="M52 0C78 0 100 20 102 46c2 30-21 59-50 59C23 105 0 80 2 48 4 21 26 0 52 0Z" fill={AMBER} />
-      <rect x="24" y="38" width="56" height="5" rx="2.5" fill={AMBER_DEEP} />
-      <rect x="24" y="50" width="34" height="8" rx="4" fill={AMBER_INK} />
-      <rect x="24" y="64" width="56" height="5" rx="2.5" fill={AMBER_DEEP} />
+    <svg width={size} height={size} viewBox="0 0 24 24">
+      <path d="M2.6 21.4 Q7 11 15 3.4 Q19.4 0.2 18 7 Q16 14.4 21.4 21.4 Z" fill={color} />
     </svg>
   );
 }
@@ -36,8 +33,6 @@ async function fonts() {
   _fonts = [
     { name: "Pretendard", data: await readFile(path.join(dir, "Pretendard-Regular.otf")), weight: 400 as const },
     { name: "Pretendard", data: await readFile(path.join(dir, "Pretendard-Bold.otf")), weight: 700 as const },
-    // 워드마크 전용 (--font-display); 본문은 Pretendard 그대로
-    { name: "Inter Tight", data: await readFile(path.join(dir, "InterTight-Medium.ttf")), weight: 500 as const },
   ];
   return _fonts;
 }
@@ -61,7 +56,7 @@ export async function GET(_req: Request, { params }: { params: { token: string }
     source?: string; as_of?: string;
   };
 
-  const title: string = share?.title || "Amber 리서치";
+  const title: string = share?.title || "finnote 리서치";
   const lead = kind === "answer" ? plainText(payload.content ?? "")
     : kind === "quote" ? `“${payload.passage ?? ""}”`
     : plainText(String((payload as { title?: string }).title ?? ""));
@@ -81,13 +76,15 @@ export async function GET(_req: Request, { params }: { params: { token: string }
   return new ImageResponse(
     (
       <div style={{ width: W, height: H, display: "flex", background: BG, fontFamily: "Pretendard" }}>
-        <div style={{ width: 12, height: H, background: AMBER, display: "flex" }} />
+        <div style={{ width: 12, height: H, background: OCEAN, display: "flex" }} />
         <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: "52px 56px 44px" }}>
-          {/* header: brand + trust chip */}
+          {/* header: brand(지느러미 + 워드마크 fin=오션 / note=심해) + trust chip */}
           <div style={{ display: "flex", alignItems: "center" }}>
-            <Mark size={26} />
-            <div style={{ fontSize: 27, fontWeight: 500, fontFamily: "Inter Tight", letterSpacing: "-0.03em",
-              color: INK, marginLeft: 10, display: "flex" }}>amber</div>
+            <FinIcon size={26} color={OCEAN} />
+            <div style={{ display: "flex", marginLeft: 9, fontSize: 27, fontWeight: 700, letterSpacing: "-0.03em" }}>
+              <div style={{ display: "flex", color: OCEAN_MID }}>fin</div>
+              <div style={{ display: "flex", color: INK }}>note</div>
+            </div>
             <div style={{ marginLeft: "auto", fontSize: 21, color: SUB, border: `1.5px solid ${LINE}`,
               borderRadius: 19, padding: "6px 16px", display: "flex" }}>✓ 출처와 함께</div>
           </div>
@@ -130,9 +127,9 @@ export async function GET(_req: Request, { params }: { params: { token: string }
             ) : null}
             <div style={{ display: "flex", alignItems: "center" }}>
               <div style={{ display: "flex", fontSize: 22, color: MUTED, maxWidth: 860, overflow: "hidden" }}>{srcLine}</div>
-              <div style={{ display: "flex", marginLeft: "auto", fontSize: 22, fontWeight: 500,
-                fontFamily: "Inter Tight", letterSpacing: "-0.03em", color: INK }}>
-                amber
+              <div style={{ display: "flex", marginLeft: "auto", fontSize: 22, fontWeight: 700, letterSpacing: "-0.03em" }}>
+                <div style={{ display: "flex", color: OCEAN_MID }}>fin</div>
+                <div style={{ display: "flex", color: INK }}>note</div>
               </div>
             </div>
           </div>

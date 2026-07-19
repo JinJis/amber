@@ -1,4 +1,4 @@
-# Amber — 출처가 보이는 AI 투자 리서치 (investment-agent data platform)
+# finnote — 출처가 보이는 AI 투자 리서치 (investment-agent data platform)
 
 A **personal research desk**: the user staffs **standing analysts** (agents) on their own
 **watchlists** of companies. Every analyst works **only from licensed, point-in-time, fully-cited

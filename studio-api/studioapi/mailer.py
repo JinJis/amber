@@ -41,7 +41,7 @@ async def send_email(to: str, subject: str, html: str) -> bool:
 
 async def send_otp(to: str, code: str) -> bool:
     return await send_email(
-        to, f"Amber 로그인 코드 {code}",
+        to, f"finnote 로그인 코드 {code}",
         f"<p>아래 6자리 코드를 입력해 주세요. <b>10분</b> 동안만 유효해요.</p>"
         f"<p style=\"font-size:28px;letter-spacing:6px\"><b>{code}</b></p>"
         f"<p>본인이 요청하지 않았다면 이 메일은 무시해도 돼요.</p>")

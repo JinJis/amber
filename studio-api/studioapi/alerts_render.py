@@ -40,7 +40,7 @@ _TRIGGER_META: dict[str, dict] = {
     "macro_indicator": {"label": "경제지표(CPI·고용)", "source": "FRED · BLS"},
     "filing_news": {"label": "공시·뉴스", "source": "DART · SEC EDGAR"},
     "price_threshold": {"label": "가격·밸류 임계치", "source": "Yahoo Finance · KIS"},
-    "digest": {"label": "정기 요약", "source": "Amber"},
+    "digest": {"label": "정기 요약", "source": "finnote"},
 }
 _FORBIDDEN = ("매수", "매도", "목표가", "사세요", "파세요", "전망", "예측", "target price")
 
@@ -183,7 +183,7 @@ def _widget_fresh_payload(alert: NotificationAlert, spec: dict, api_key: str | N
     return {
         "title": f"🔔 {title} — 최신값",
         "body": _factual_guard(body),
-        "source": art.get("source") or spec.get("source") or "Amber",
+        "source": art.get("source") or spec.get("source") or "finnote",
         "as_of": str(art.get("as_of") or now.date().isoformat())[:10],
         "deeplink": deeplink,
     }
@@ -202,7 +202,7 @@ def render_message(alert: NotificationAlert, *, now: datetime | None = None, db=
     """
     now = now or datetime.utcnow()
     params = json.loads(alert.params) if alert.params else {}
-    meta = _TRIGGER_META.get(alert.trigger_type, {"label": alert.trigger_type, "source": "Amber"})
+    meta = _TRIGGER_META.get(alert.trigger_type, {"label": alert.trigger_type, "source": "finnote"})
     target = _target_label(params)
     spec = json.loads(alert.source_spec) if alert.source_spec else {}
 
@@ -226,7 +226,7 @@ def render_message(alert: NotificationAlert, *, now: datetime | None = None, db=
             return {
                 "title": f"🔔 {alert.name} — 주기성 위젯 {len(specs)}개 최신값",
                 "body": _factual_guard("이 보드의 주기성 위젯 최신값입니다 (사실·출처만):\n" + "\n".join(lines)),
-                "source": "Amber 대시보드",
+                "source": "finnote 대시보드",
                 "as_of": now.date().isoformat(),
                 "deeplink": spec.get("deeplink") or (f"/?board={alert.board_id}" if alert.board_id else f"/?alert={alert.id}"),
             }

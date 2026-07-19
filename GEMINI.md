@@ -18,7 +18,7 @@
 > - **UX spec (chat-first, all new screens):** [`docs/UX_SPEC.md`](./docs/UX_SPEC.md)
 > - **How the services fit together (current state):** [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
 > - **GCP 배포·운영 (VM·비용·백업·런북):** [`docs/INFRA.md`](./docs/INFRA.md) (+ [`deploy/`](./deploy/))
-> - **브랜드 (Amber — 로고·토큰; 로고 경로 데이터 수정 금지):** [`docs/branding/`](./docs/branding/) — 소스 오브 트루스는 `brand.css`·`Logo.tsx`·SVG 4종; 웹은 `web/app/brand.css`·`web/components/Logo.tsx`로 복사돼 있음(둘 다 동기 유지)
+> - **브랜드 (finnote — finance+footnote; 수면 위 지느러미 로고·토큰; 로고 경로 데이터 수정 금지):** [`docs/branding/`](./docs/branding/) — 소스 오브 트루스는 `brand.css`·`Logo.tsx`·SVG 4종(`finnote-mark`·`finnote-mark-mono`·`finnote-icon`·`favicon`); 웹은 `web/app/brand.css`·`web/components/Logo.tsx`로 복사돼 있음(둘 다 동기 유지). 디자인 템플릿 전체 명세: [`docs/finnote-design-template_final.html`](./docs/finnote-design-template_final.html)
 > - **Product idea / vision:** [`docs/IDEA.md`](./docs/IDEA.md)
 > - **Data expansion plans:** [`docs/DATA_EXPANSION.md`](./docs/DATA_EXPANSION.md)
 >

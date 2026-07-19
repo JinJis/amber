@@ -1,6 +1,6 @@
 "use client";
 
-// ── Amber design-system primitives ─────────────────────────────────────────
+// ── finnote design-system primitives ────────────────────────────────────────
 // Single source of truth for the recurring UI patterns from the wireframes
 // (see docs/deprecate/DESIGN_SYSTEM.md — design docs being rewritten). Every screen composes these instead of re-deriving
 // markup/classes, so the visual language stays unified. Tokens live in globals.css
@@ -89,20 +89,20 @@ export function TrustLegend() {
 }
 
 // ── Guardrail label ──────────────────────────────────────────────────────────
-// The trust brand, shown not hidden (invariant #5). Amber callout.
+// The trust brand, shown not hidden (invariant #5). 가드레일 라벨(warn 톤, 근거색 아님).
 export function GuardrailLabel({ icon = "🛡", children }: { icon?: string; children: ReactNode }) {
   return <div className="guard">{icon} {children}</div>;
 }
 
 // ── Historical label (M1 / HL-7, UX_SPEC §6.4) ───────────────────────────────
-// The descriptive-statistics badge for History Lab artifacts. Deliberately NOT amber — it marks
-// safe-by-design content (aggregates of the historical record), not a refusal. Fixed copy,
+// The descriptive-statistics badge for History Lab artifacts. Deliberately NOT the evidence
+// yellow — it marks safe-by-design content (aggregates of the historical record), not a refusal. Fixed copy,
 // non-dismissable; base_rates/analogue renderers show it unconditionally (ROADMAP §2 invariant).
 export function HistoricalLabel() {
   return <span className="histlabel" title="과거에 있었던 사례를 정리한 통계예요 — 미래 예측이 아니에요">⏳ 과거 기록 · 전망 아님</span>;
 }
 
-// ── Brand mark (Amber) — compact contexts use the mark, never a redrawn variant ──
+// ── Brand mark (finnote) — compact contexts use the mark, never a redrawn variant ──
 import { Logo } from "./Logo";
 export function Mascot({ size }: { size?: number }) {
   return <Logo variant="mark" size={size ?? 18} />;

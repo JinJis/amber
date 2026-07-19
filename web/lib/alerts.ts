@@ -49,7 +49,7 @@ export const TRIGGERS: { type: TriggerType; label: string; source: string; hint:
   { type: "macro_indicator", label: "경제지표(CPI·고용)", source: "FRED · BLS", hint: "지표 발표 시" },
   { type: "filing_news", label: "공시·뉴스", source: "DART · SEC EDGAR", hint: "새 공시/뉴스" },
   { type: "price_threshold", label: "가격·밸류 임계치", source: "Yahoo Finance · KIS", hint: "임계치 도달 시" },
-  { type: "digest", label: "정기 요약", source: "Amber", hint: "주기적 요약" },
+  { type: "digest", label: "정기 요약", source: "finnote", hint: "주기적 요약" },
 ];
 
 export const CHANNELS: { kind: ChannelKind; label: string; icon: string }[] = [

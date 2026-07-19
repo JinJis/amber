@@ -68,7 +68,7 @@ async def _lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Amber Admin", lifespan=_lifespan)
+app = FastAPI(title="finnote Admin", lifespan=_lifespan)
 install_request_logging(app)
 
 from adminpanel import db_browser  # noqa: E402

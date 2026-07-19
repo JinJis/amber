@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-labelledby="finnote-mark-title">
+  <title id="finnote-mark-title">finnote</title>
+  <defs>
+    <clipPath id="fn-clip">
+      <path d="M6 84 C13.3 78.7 20.7 78.7 28 84 C35.3 89.3 42.7 89.3 50 84 C57.3 78.7 64.7 78.7 72 84 C79.3 89.3 86.7 89.3 94 84 L110 52 L124 52 L124 -20 L-20 -20 L-20 84 Z"/>
+    </clipPath>
+  </defs>
+  <path d="M6 84 C13.3 78.7 20.7 78.7 28 84 C35.3 89.3 42.7 89.3 50 84 C57.3 78.7 64.7 78.7 72 84 C79.3 89.3 86.7 89.3 94 84 L110 52 L110 118 L6 118 Z" fill="#D9F1F7"/>
+  <path d="M32 86 Q42 57 62 38 Q72 29 70 44 Q68 65 85 86 L85 106 L32 106 Z" fill="#0E2A3F" stroke="#0E2A3F" stroke-width="7" stroke-linejoin="round" clip-path="url(#fn-clip)"/>
+  <path d="M45 78 Q52 59 62 47" fill="none" stroke="#3E6C88" stroke-width="5.5" stroke-linecap="round" opacity=".45"/>
+  <path d="M6 84 C13.3 78.7 20.7 78.7 28 84 C35.3 89.3 42.7 89.3 50 84 C57.3 78.7 64.7 78.7 72 84 C79.3 89.3 86.7 89.3 94 84 L105 61" fill="none" stroke="#1690AE" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M112 48 L112.9 65.2 L97.7 57.6 Z" fill="#FFC94D" stroke="#FFC94D" stroke-width="3" stroke-linejoin="round"/>
+</svg>

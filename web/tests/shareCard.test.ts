@@ -35,7 +35,7 @@ describe("shareCard helpers", () => {
     const p = provenanceStrip(hist, "vg/s/aB3");
     expect(p.label).toBe("과거 기록 · 전망 아님");
     expect(p.source).toContain("SEC".length ? "출처" : "");
-    expect(p.brand).toContain("Amber · vg/s/aB3");
+    expect(p.brand).toContain("finnote · vg/s/aB3");
     expect(isHistoryKind(hist)).toBe(true);
 
     const table: Artifact = { kind: "table", title: "t", series: [], source: "SEC EDGAR", as_of: "2026-07-01", table: [["a", "b"]] };

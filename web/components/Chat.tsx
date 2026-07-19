@@ -692,7 +692,7 @@ export default function Chat({ name, email, image, features, guest = false, prov
                         const canRegen = i === messages.length - 1 && !busy && messages[i - 1]?.role === "user";
                         const shareThis = () => {
                           const q = messages[i - 1]?.role === "user" ? messages[i - 1].content : m.content;
-                          setShareMsg({ title: (m.hook || q || "Amber 리서치").slice(0, 90), msg: m });
+                          setShareMsg({ title: (m.hook || q || "finnote 리서치").slice(0, 90), msg: m });
                         };
                         return (
                           <div className="answer-foot">

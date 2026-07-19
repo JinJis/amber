@@ -37,7 +37,7 @@ export function ShareSheet({ a, answer, audit, onClose }: {
         const body = answer
           // SH-ANSWER: the whole answer — content + inline figures + citations + audit. No user
           // identity is ever included (no email / conversation id) — the payload is pure research.
-          ? { kind: "answer", title: answer.title || "Amber 리서치",
+          ? { kind: "answer", title: answer.title || "finnote 리서치",
               payload: { content: answer.content, artifacts: answer.artifacts ?? [],
                          citations: answer.citations ?? [], audit: answer.audit ?? null,
                          suggestions: (answer.suggestions ?? []).slice(0, 3) },
@@ -46,7 +46,7 @@ export function ShareSheet({ a, answer, audit, onClose }: {
               ? { kind: "quote", title: a!.title || "원문 인용",
                   payload: { passage: a!.passage, source: a!.source, doc_title: a!.doc_title, url: a!.url, as_of: a!.as_of },
                   audit: null }  // a verbatim quote has no computed numbers to audit
-              : { kind: "artifact", title: a!.title || "Amber 자료", payload: a, audit: audit ?? null };
+              : { kind: "artifact", title: a!.title || "finnote 자료", payload: a, audit: audit ?? null };
         const r = await fetch("/api/shares", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -59,7 +59,7 @@ export function ShareSheet({ a, answer, audit, onClose }: {
     })();
   }, [a, answer, audit]);
 
-  const previewTitle = answer?.title || a?.title || "Amber 자료";
+  const previewTitle = answer?.title || a?.title || "finnote 자료";
   const previewSrc = (answer?.citations ?? []).filter((c) => c.used || c.index != null).length;
   const canNative = typeof navigator !== "undefined" && !!navigator.share;
 
@@ -67,7 +67,7 @@ export function ShareSheet({ a, answer, audit, onClose }: {
     if (!urls) return;
     try {
       await navigator.share({ title: previewTitle,
-        text: `${previewTitle} — 출처·기준일 포함 · Amber`, url: urls.page });
+        text: `${previewTitle} — 출처·기준일 포함 · finnote`, url: urls.page });
     } catch { /* 사용자가 시트를 닫음 — 무해 */ }
   }
 

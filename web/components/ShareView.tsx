@@ -62,8 +62,8 @@ export function ShareView({ status, share }: { status: number; share: Share | nu
         ) : (
           <div className="share-tomb">
             <h1>{status === 410 ? "게시자가 이 공유를 해제했거나 만료되었습니다" : "존재하지 않는 공유입니다"}</h1>
-            <p>Amber에서 출처가 달린 최신 자료를 직접 확인해보세요.</p>
-            <a className="share-cta big" href="/">Amber 열기 →</a>
+            <p>finnote에서 출처가 달린 최신 자료를 직접 확인해보세요.</p>
+            <a className="share-cta big" href="/">finnote 열기 →</a>
           </div>
         )}
       </main>

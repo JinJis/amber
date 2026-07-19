@@ -118,7 +118,7 @@ export default function DeskHome({ onPick, onChanged, onShareBriefing }: {
       c.hook, `${c.citations![0].source ?? ""}${c.citations![0].as_of ? ` · ${c.citations![0].as_of}` : ""}`])];
     onShareBriefing({
       kind: "table", title: `오늘의 데스크 브리핑${day ? ` · ${day}` : ""}`, series: [],
-      table, source: "Amber 데스크", as_of: day || null,
+      table, source: "finnote 데스크", as_of: day || null,
     });
   }
 

@@ -2,7 +2,7 @@
 
 // Live Context source previews — wireframe "화면 상세" Live panel. Instead of a title
 // list, each cited source renders in its NATIVE form with the cited passage highlighted:
-//   filing → a mini document page (page badge + amber-highlighted line)
+//   filing → a mini document page (page badge + 하이라이터로 칠한 인용 줄)
 //   web/news → browser chrome (URL bar) + headline + highlighted phrase
 //   data/metric → an extracted-data card with the computation
 // Clicking a preview opens the full SourceViewer. "정말 거기 그렇게 써 있다"를 눈으로 확인 = 신뢰.
