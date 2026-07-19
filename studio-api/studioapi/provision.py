@@ -30,11 +30,11 @@ async def _admin(method: str, path: str, json: dict | None = None) -> dict:
         return resp.json()
 
 
-async def _activate_defaults(project_id: str, connectors: list[str] | None = None) -> None:
-    """Activate connectors on a project (idempotent — the control-plane no-ops an already-active one).
-    Defaults to DEFAULT_CONNECTORS (the free set); the system feed project passes the full set so
-    background feeds can reach premium sources (fmp earnings/estimates, kis flows)."""
-    for connector_id in (connectors if connectors is not None else DEFAULT_CONNECTORS):
+async def _activate_defaults(project_id: str) -> None:
+    """Activate the default (free-set) connectors on a USER project (idempotent — the control-plane
+    no-ops an already-active one). The system feed project does NOT use this — it is marked internal
+    (SYS-1) and entitled to the whole governed catalog by the gateway, no activation list to maintain."""
+    for connector_id in DEFAULT_CONNECTORS:
         try:
             await _admin("POST", f"/admin/projects/{project_id}/activations", {"connector_id": connector_id})
         except Exception:  # noqa: BLE001 — best-effort: already active / connector absent / mocked-off in tests
@@ -65,28 +65,19 @@ def system_api_key_cached() -> str | None:
 _system_backfill_done = False
 
 
-async def _all_connector_ids() -> list[str]:
-    """The FULL catalog connector set. The platform's own feed project is entitled to EVERYTHING —
-    it is NOT a plan-limited user, so it must not inherit the free-tier set (that's what left 어닝
-    레이더=fmp unentitled and 0장). Source of truth = the data-plane catalog (invariant #8); falls
-    back to the known set (incl. era-news gdelt/nyt_archive, which sit in no plan) if the control-plane
-    catalog is briefly unavailable at boot."""
-    try:
-        cat = await _admin("GET", "/admin/catalog")
-        ids = [c["id"] for c in (cat.get("connectors") or []) if c.get("id")]
-        if ids:
-            return ids
-    except Exception as exc:  # noqa: BLE001 — control-plane/catalog not ready → use the known fallback
-        log.warning("system project: catalog fetch failed, using fallback connector set: %s", exc)
-    from studioapi.plans import FREE_CONNECTORS, PREMIUM_CONNECTORS
-    return list(FREE_CONNECTORS) + list(PREMIUM_CONNECTORS) + ["gdelt", "nyt_archive"]
+async def _mark_project_internal(project_id: str) -> None:
+    """SYS-1: mark a control-plane project as INTERNAL. The gateway then entitles it to the whole
+    governed catalog (skips the activation check) while still metering/rate-limiting/auditing it — so
+    the platform's own feed pipelines 'just run' without carrying (and drifting out of sync with) a
+    commercial activation list. This is what makes 어닝 레이더(fmp)·한국 수급(kis)·era-news(gdelt/nyt)
+    reachable to the feed regardless of any user plan. Raises on failure (caller decides best-effort)."""
+    await _admin("PATCH", f"/admin/projects/{project_id}", {"internal": True})
 
 
-async def _backfill_system_connectors() -> None:
-    """Backfill: a system project provisioned BEFORE it was entitled to the full catalog only has the
-    free set activated — so 어닝 레이더(fmp)·한국 수급(kis)·era-news(gdelt/nyt) never generate.
-    Re-activate the full catalog once per process (idempotent — the control-plane no-ops already-active
-    ones). Self-heals every existing deployment on its next restart, no manual admin step."""
+async def _backfill_system_internal() -> None:
+    """Self-heal: a system project provisioned BEFORE the internal class existed only has the free
+    activation set — so the premium/era sections never generate. Mark it internal once per process
+    (idempotent). Every existing deployment fixes itself on its next restart, no manual admin step."""
     global _system_backfill_done
     if _system_backfill_done:
         return
@@ -100,17 +91,21 @@ async def _backfill_system_connectors() -> None:
         pid = None
     if not pid:
         return
-    await _activate_defaults(pid, await _all_connector_ids())
-    _system_backfill_done = True
+    try:
+        await _mark_project_internal(pid)
+        _system_backfill_done = True
+    except Exception as exc:  # noqa: BLE001 — control-plane not ready → retry on the next call/boot
+        log.warning("system project: mark-internal deferred (control-plane not ready): %s", exc)
 
 
 async def ensure_system_project() -> str | None:
     """Provision (once) the dedicated system tenant/project/key for background feeds and cache it in
     ServiceState. Best-effort: if the control-plane is unreachable (boot-ordering) it returns None and
     the caller degrades to `_any_api_key` until a later attempt succeeds. Idempotent via the KV cache."""
+    global _system_backfill_done
     cached = system_api_key_cached()
     if cached:
-        await _backfill_system_connectors()   # full-catalog backfill for pre-existing system projects
+        await _backfill_system_internal()   # SYS-1: mark pre-existing system projects internal
         return cached
     async with _system_lock:
         cached = system_api_key_cached()  # double-check under the lock
@@ -123,17 +118,20 @@ async def ensure_system_project() -> str | None:
         except Exception as exc:  # noqa: BLE001 — control-plane not ready yet → degrade, retry next boot
             log.warning("system project provisioning deferred (control-plane not ready): %s", exc)
             return None
-        # 시스템 피드 키는 유저 플랜이 아니라 플랫폼 — 카탈로그 전체를 엔타이틀해야 모든 섹션
-        # (어닝=fmp·한국 수급=kis·era-news=gdelt/nyt 등)이 실제로 생성된다. 유저 플랜(FREE/PREMIUM)
-        # 분류와 무관하게 전 커넥터를 활성화한다.
-        await _activate_defaults(project["id"], await _all_connector_ids())
-        global _system_backfill_done
-        _system_backfill_done = True   # fresh project already has the full set — skip the backfill path
+        # Cache FIRST so a later mark-internal failure can never cause a re-mint (tenant leak) next boot.
         state = {"tenant_id": tenant["id"], "project_id": project["id"], "api_key": key["api_key"]}
         with SessionLocal() as db:
             db.merge(ServiceState(key=_SYSTEM_STATE_KEY, value=_json.dumps(state)))
             db.commit()
-        log.info("system project provisioned: %s", project["id"])
+        # SYS-1: the system feed project is infrastructure, not a commercial tenant — mark it internal so
+        # the gateway entitles it to the whole governed catalog (no activation bookkeeping, new connectors
+        # auto-available). Best-effort: the backfill path retries on the next boot if this fails now.
+        try:
+            await _mark_project_internal(project["id"])
+            _system_backfill_done = True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("system project: initial mark-internal deferred: %s", exc)
+        log.info("system project provisioned (internal): %s", project["id"])
         return key["api_key"]
 
 

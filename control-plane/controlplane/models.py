@@ -35,6 +35,13 @@ class Project(Base):
     # PLAN-2: the product plan tier (guest|free|pro), set by studio's apply_plan. Drives the
     # per-key gateway rate limit (abuse backstop). NULL = legacy/ops project → global default.
     plan: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    # SYS-1: an INTERNAL project is the platform's own infrastructure (the background feed pipelines),
+    # NOT a commercial tenant. The gateway exempts it from the entitlement (activation) check — it is
+    # entitled to the whole governed catalog by definition — while STILL metering/rate-limiting/auditing
+    # it. Set server-side only (admin API); a user can never mark their own project internal. Keeping
+    # this SEPARATE from `plan` is deliberate: commercial gating (per-user, per-plan activations) and
+    # "this is platform infra that just runs" are different concepts and must not be conflated.
+    internal: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

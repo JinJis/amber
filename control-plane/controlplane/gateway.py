@@ -41,25 +41,33 @@ try:
 except Exception:  # noqa: BLE001 — a bad override never takes the gateway down
     _PLAN_RATES = dict(_PLAN_RATE_DEFAULTS)
 
-_plan_cache: dict[str, tuple[float, str | None]] = {}   # project_id → (expires, plan)
+_plan_cache: dict[str, tuple[float, tuple[str | None, bool]]] = {}   # project_id → (expires, (plan, internal))
 _PLAN_CACHE_TTL = 60.0
 
 
-def _project_plan(project_id: str) -> str | None:
-    """The project's plan tier, cached ~60s — one tiny lookup per key per minute, not per call."""
+def _project_meta(project_id: str) -> tuple[str | None, bool]:
+    """The project's (plan tier, internal flag), cached ~60s — one tiny lookup per key per minute, not
+    per call. `internal` marks the platform's own infra projects (SYS-1), which skip the entitlement
+    check below (they are entitled to the whole governed catalog by definition)."""
     hit = _plan_cache.get(project_id)
     if hit and hit[0] > time.monotonic():
         return hit[1]
     with SessionLocal() as db:
         row = db.get(Project, project_id)
-        plan = getattr(row, "plan", None) if row else None
-    _plan_cache[project_id] = (time.monotonic() + _PLAN_CACHE_TTL, plan)
-    return plan
+        meta = (getattr(row, "plan", None), bool(getattr(row, "internal", False))) if row else (None, False)
+    _plan_cache[project_id] = (time.monotonic() + _PLAN_CACHE_TTL, meta)
+    return meta
 
 
 def _rate_limit_for(project_id: str) -> int | None:
-    plan = _project_plan(project_id)
+    plan, _ = _project_meta(project_id)
     return _PLAN_RATES.get(plan) if plan else None
+
+
+def invalidate_project_meta(project_id: str) -> None:
+    """Drop the cached (plan, internal) — called after an admin PATCH so the change takes effect
+    immediately instead of after the TTL (mirrors invalidate_entitlement for activations)."""
+    _plan_cache.pop(project_id, None)
 
 
 # CR-4: TTL-cache the resolved key so an identical X-API-KEY doesn't hit the DB every request.
@@ -232,8 +240,15 @@ def _resolve_entitlement(project_id, key_id, method: str, path: str, market: str
         return None, 0, settings.datasets_url, None
     cands = candidate_connectors(method, path, market)
     cand_ids = [c["connector_id"] for c in cands]
-    active = _enabled_connectors(project_id)   # CR-4: cached full activation set (in-memory)
-    chosen = next((c for c in cands if c["connector_id"] in active), None)
+    _plan, internal = _project_meta(project_id)
+    if internal:
+        # SYS-1: the platform's own feed pipelines are infrastructure, not commercial tenants — entitled
+        # to the whole governed catalog by definition. Skip the activation check (still metered / rate-
+        # limited / audited below — invariant #2 fully intact). The first candidate serves the path.
+        chosen = cands[0] if cands else None
+    else:
+        active = _enabled_connectors(project_id)   # CR-4: cached full activation set (in-memory)
+        chosen = next((c for c in cands if c["connector_id"] in active), None)
     if chosen is None:
         _audit(project_id, key_id, ACTION_DENIED, f"{method} {path} market={market} needs one of {cand_ids}")
         raise HTTPException(403, f"Not entitled — activate one of {cand_ids} for this project.")

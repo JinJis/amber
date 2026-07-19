@@ -25,7 +25,7 @@ def setup_module(_module):
 
 
 def _mock_cp(tenant="t1", project="p1", key="vgk_1"):
-    """Mock the control-plane provisioning chain. Returns (tenant_route, activations_route)."""
+    """Mock the control-plane provisioning chain. Returns (tenant_route, activations_route, patch_route)."""
     tenant_route = respx.post("http://cp.test/admin/tenants").mock(
         return_value=httpx.Response(200, json={"id": tenant}))
     respx.post(f"http://cp.test/admin/tenants/{tenant}/projects").mock(
@@ -34,7 +34,9 @@ def _mock_cp(tenant="t1", project="p1", key="vgk_1"):
         return_value=httpx.Response(200, json={"api_key": key}))
     activations = respx.post(f"http://cp.test/admin/projects/{project}/activations").mock(
         return_value=httpx.Response(200, json={}))
-    return tenant_route, activations
+    patch_route = respx.patch(f"http://cp.test/admin/projects/{project}").mock(  # SYS-1: internal marking
+        return_value=httpx.Response(200, json={"id": project, "internal": True}))
+    return tenant_route, activations, patch_route
 
 
 # --- ME-2: reconcile version column ------------------------------------------------------------
@@ -43,7 +45,7 @@ async def test_me2_reconcile_fires_once_per_version(monkeypatch):
     monkeypatch.setattr(settings, "control_plane_url", "http://cp.test")
     monkeypatch.setattr(settings, "connectors_reconcile_ver", "1")
     monkeypatch.setattr(settings, "plan_enforce_connectors", False)
-    _, activations = _mock_cp()
+    _, activations, _ = _mock_cp()
     from studioapi.provision import ensure_user
 
     with SessionLocal() as db:
@@ -91,7 +93,9 @@ async def test_me5_system_key_provisioned_cached_and_preferred(monkeypatch):
     with SessionLocal() as db:
         assert _bg_api_key(db) == _any_api_key(db)
 
-    tenant_route, _ = _mock_cp(tenant="tsys", project="psys", key="vgk_sys")
+    import studioapi.provision as _P
+    _P._system_backfill_done = False
+    tenant_route, _, _ = _mock_cp(tenant="tsys", project="psys", key="vgk_sys")
     key = await ensure_system_project()
     assert key == "vgk_sys"
     assert system_api_key_cached() == "vgk_sys"
@@ -105,40 +109,34 @@ async def test_me5_system_key_provisioned_cached_and_preferred(monkeypatch):
         assert _bg_api_key(db) == "vgk_sys"
 
 
-def _mock_catalog(ids: list[str]) -> None:
-    """control-plane의 카탈로그 프록시(GET /admin/catalog) — 전체 커넥터 목록."""
-    respx.get("http://cp.test/admin/catalog").mock(
-        return_value=httpx.Response(200, json={"connectors": [{"id": i} for i in ids]}))
-
-
 @respx.mock
-async def test_system_project_entitled_to_full_catalog(monkeypatch):
-    """시스템 피드 키는 유저 플랜이 아니라 플랫폼 — 카탈로그 전체(fmp·kis·gdelt·nyt 포함)를
-    엔타이틀해야 모든 섹션이 생성된다. (FREE만 활성이던 버그가 어닝 레이더를 0장으로 만들었다.)"""
+async def test_system_project_marked_internal(monkeypatch):
+    """SYS-1: 시스템 피드 프로젝트는 커머셜 테넌트가 아니라 플랫폼 인프라 — activation 목록을 만들지
+    않고 INTERNAL로 표시된다(게이트웨이가 카탈로그 전체를 엔타이틀). 어닝 레이더가 0장이던 근본을 제거."""
     import json as _json
 
     monkeypatch.setattr(settings, "control_plane_url", "http://cp.test")
-    from studioapi.provision import _SYSTEM_STATE_KEY, ensure_system_project
+    import studioapi.provision as P
 
     with SessionLocal() as db:
-        db.query(ServiceState).filter(ServiceState.key == _SYSTEM_STATE_KEY).delete()
+        db.query(ServiceState).filter(ServiceState.key == P._SYSTEM_STATE_KEY).delete()
         db.commit()
+    P._system_backfill_done = False
 
-    catalog_ids = ["sec_edgar", "yahoo", "fred", "google_news", "market_history",
-                   "fmp", "kis", "gdelt", "nyt_archive"]
-    _mock_catalog(catalog_ids)
-    _, activations = _mock_cp(tenant="tsys2", project="psys2", key="vgk_sys2")
-    key = await ensure_system_project()
+    _, activations, patch_route = _mock_cp(tenant="tsys2", project="psys2", key="vgk_sys2")
+    key = await P.ensure_system_project()
     assert key == "vgk_sys2"
-    activated = {_json.loads(c.request.content)["connector_id"] for c in activations.calls}
-    assert activated == set(catalog_ids)                   # 유저 플랜 무관 — 카탈로그 전체
-    assert {"fmp", "kis", "gdelt", "nyt_archive"} <= activated   # 어떤 플랜에도 없는 것까지
+    # 커머셜 activation 목록을 만들지 않는다 — 엔타이틀은 게이트웨이의 internal 예외가 담당
+    assert activations.call_count == 0
+    # 대신 internal=True 로 한 번 표시된다
+    assert patch_route.called
+    assert _json.loads(patch_route.calls.last.request.content) == {"internal": True}
 
 
 @respx.mock
-async def test_existing_system_project_backfills_full_catalog(monkeypatch):
-    """이미 프로비저닝된(캐시된) 시스템 프로젝트도 재시작 시 카탈로그 전체(fmp·kis·gdelt·nyt)를
-    백필로 활성화한다 — 전체 엔타이틀 이전에 만들어진 배포가 자가치유되도록(수동 admin 없이)."""
+async def test_existing_system_project_backfilled_internal(monkeypatch):
+    """SYS-1: internal 클래스 이전에 만들어진 캐시된 시스템 프로젝트도 재시작 시 internal로 백필된다 —
+    수동 admin 없이 자가치유. 프로세스당 1회."""
     import json as _json
 
     monkeypatch.setattr(settings, "control_plane_url", "http://cp.test")
@@ -152,17 +150,16 @@ async def test_existing_system_project_backfills_full_catalog(monkeypatch):
         db.commit()
     P._system_backfill_done = False   # 새 프로세스 부팅 흉내
 
-    _mock_catalog(["sec_edgar", "fmp", "kis", "gdelt", "nyt_archive", "market_history"])
-    activations = respx.post("http://cp.test/admin/projects/pold/activations").mock(
-        return_value=httpx.Response(200, json={}))
+    patch_route = respx.patch("http://cp.test/admin/projects/pold").mock(
+        return_value=httpx.Response(200, json={"internal": True}))
     key = await P.ensure_system_project()               # 캐시 히트 → 백필만
     assert key == "vgk_old"
-    backfilled = {_json.loads(c.request.content)["connector_id"] for c in activations.calls}
-    assert {"fmp", "kis", "gdelt", "nyt_archive"} <= backfilled   # 플랜 밖 커넥터까지 백필
-    # 한 프로세스에서 두 번째 호출은 재활성화하지 않는다(프로세스당 1회)
-    before = activations.call_count
+    assert patch_route.called
+    assert _json.loads(patch_route.calls.last.request.content) == {"internal": True}
+    # 한 프로세스에서 두 번째 호출은 다시 PATCH 하지 않는다(프로세스당 1회)
+    before = patch_route.call_count
     await P.ensure_system_project()
-    assert activations.call_count == before
+    assert patch_route.call_count == before
 
 
 async def test_me5_provision_degrades_when_control_plane_down(monkeypatch):

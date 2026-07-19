@@ -82,6 +82,7 @@ def _add_missing_columns() -> None:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {decl}"))
 
     add_cols("projects", {"plan": "VARCHAR(24)"})            # PLAN-2: per-plan gateway rate tier
+    add_cols("projects", {"internal": "BOOLEAN DEFAULT FALSE"})   # SYS-1: internal/system project class
     add_cols("llm_usage", {"project_id": "VARCHAR(40)"})     # METER-1: per-user cost attribution
     add_cols("llm_usage", {                                  # COST-2: usage_metadata breakdowns
         "cached_input_tokens": "INTEGER DEFAULT 0",

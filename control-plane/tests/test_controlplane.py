@@ -108,6 +108,31 @@ def test_gateway_entitlement_and_metering():
 
 
 @respx.mock
+def test_gateway_internal_project_skips_entitlement():
+    """SYS-1: an INTERNAL project (the platform's own feed infra) reaches a governed path WITHOUT
+    activating the connector — the gateway entitles it to the whole catalog — while STILL metering it
+    (invariant #2). A non-internal project without the activation stays 403. The admin PATCH that flips
+    `internal` also invalidates the gateway's cached (plan, internal), so the change is live immediately."""
+    catalog_index.set_catalog(CATALOG)
+    respx.route(method="GET", url__regex=_PRICES).mock(return_value=httpx.Response(200, json={"ticker": "MSFT"}))
+    pid, key = _make_project("SysFeed")
+    H = {"X-API-KEY": key}
+
+    # baseline: a normal project without the activation is denied (and this caches (None, internal=False))
+    assert client.get("/prices?market=US", headers=H).status_code == 403
+
+    # mark internal — the PATCH invalidates the cache, so the very next call is entitled with NO activation
+    r = client.patch(f"/admin/projects/{pid}", headers=ADMIN, json={"internal": True})
+    assert r.status_code == 200 and r.json()["internal"] is True
+    r = client.get("/prices?market=US", headers=H)
+    assert r.status_code == 200 and r.headers.get("x-connector") == "yahoo"
+
+    # still on the metered/audited gateway path — internal exempts entitlement ONLY, not metering
+    gateway.flush_usage_sync()
+    assert client.get(f"/admin/projects/{pid}/usage", headers=ADMIN).json()["total_calls"] >= 1
+
+
+@respx.mock
 def test_gateway_rate_limit(monkeypatch):
     catalog_index.set_catalog(CATALOG)
     monkeypatch.setattr(gateway, "_limiter", RateLimiter(1))

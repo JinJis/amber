@@ -65,9 +65,10 @@ async def create_project(tenant_id: str, body: NameIn) -> dict:
 
 class ProjectPatchIn(BaseModel):
     plan: str | None = None      # guest | free | pro — drives the gateway's per-key rate tier
+    internal: bool | None = None # SYS-1: mark as platform infra (gateway skips entitlement) — server-side only
 
 
-@router.patch("/projects/{project_id}", summary="Update a project (PLAN-2: set its plan tier)")
+@router.patch("/projects/{project_id}", summary="Update a project (PLAN-2: plan tier / SYS-1: internal)")
 async def patch_project(project_id: str, body: ProjectPatchIn) -> dict:
     with SessionLocal() as db:
         p = db.get(Project, project_id)
@@ -75,8 +76,14 @@ async def patch_project(project_id: str, body: ProjectPatchIn) -> dict:
             raise HTTPException(404, "Unknown project.")
         if body.plan is not None:
             p.plan = body.plan
+        if body.internal is not None:
+            p.internal = body.internal
         db.commit()
-        return {"id": p.id, "tenant_id": p.tenant_id, "name": p.name, "plan": p.plan}
+        result = {"id": p.id, "tenant_id": p.tenant_id, "name": p.name, "plan": p.plan, "internal": p.internal}
+    # the gateway caches (plan, internal) ~60s — invalidate so a plan/internal change is live now.
+    from controlplane.gateway import invalidate_project_meta
+    invalidate_project_meta(project_id)
+    return result
 
 
 @router.post("/projects/{project_id}/keys", summary="Create an API key (shown once)")
