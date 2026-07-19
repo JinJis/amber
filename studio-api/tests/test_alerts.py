@@ -213,6 +213,28 @@ def test_onboarding_flag(monkeypatch):
 
 
 @respx.mock
+def test_onboarding_reset_is_dev_only(monkeypatch):
+    """DELETE /users/onboarded (개발용 '온보딩 다시 보기')는 onboarded를 False로 되돌리되,
+    ENV=production에서는 404 — dev 로그인과 같은 게이트로 프로덕션 노출을 원천 차단."""
+    _cfg(monkeypatch); _mock_control_plane()
+    email = "onbreset@u.com"
+    client.post("/users/onboarded", headers=_hdr(email))
+    assert client.get("/users/me", headers=_hdr(email)).json()["onboarded"] is True
+
+    # dev (ENV != production): 되돌아간다
+    monkeypatch.setattr(settings, "env", "dev")
+    assert client.delete("/users/onboarded", headers=_hdr(email)).json()["onboarded"] is False
+    assert client.get("/users/me", headers=_hdr(email)).json()["onboarded"] is False
+
+    # production: 하드 게이트 → 404, 플래그는 그대로
+    client.post("/users/onboarded", headers=_hdr(email))
+    monkeypatch.setattr(settings, "env", "production")
+    assert client.delete("/users/onboarded", headers=_hdr(email)).status_code == 404
+    monkeypatch.setattr(settings, "env", "dev")
+    assert client.get("/users/me", headers=_hdr(email)).json()["onboarded"] is True
+
+
+@respx.mock
 def test_templates_and_from_template(monkeypatch):
     _cfg(monkeypatch); _mock_control_plane()
     email = "alt7@u.com"

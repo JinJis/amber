@@ -49,10 +49,11 @@ export function toCitation(ev: any): Citation {
 }
 
 
-export default function Chat({ name, email, image, features, guest = false, providers }: {
+export default function Chat({ name, email, image, features, guest = false, providers, dev = false }: {
   name: string; email?: string; image?: string | null; features: Features;
   // GUEST-2: 익명 체험 모드 — 온보딩 스킵, 게스트 필 표시, 한도 도달 시 가입 월(GuestWall)
   guest?: boolean; providers?: { google: boolean; kakao: boolean; dev?: boolean };
+  dev?: boolean;  // 로컬/스테이징(ENV≠production) — Settings의 개발용 액션 노출용
 }) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -597,7 +598,7 @@ export default function Chat({ name, email, image, features, guest = false, prov
 
       <div className="main">
         {view === "settings" ? (
-          <Settings name={name} email={email ?? name} image={image} />
+          <Settings name={name} email={email ?? name} image={image} dev={dev} />
         ) : view === "watch" ? (
           <Watchlists embedded onChanged={loadHandles} initialId={watchFocus} />
         ) : view === "dashboard" && features.dashboard ? (

@@ -207,6 +207,20 @@ async def users_onboarded(user: User = Depends(current_user)) -> dict:
     return {"email": user.email, "onboarded": True}
 
 
+@app.delete("/users/onboarded", tags=["Users"], dependencies=[Depends(require_service)])
+async def users_onboarded_reset(user: User = Depends(current_user)) -> dict:
+    """DEV-ONLY: onboarded 플래그를 되돌려(False) 온보딩 흐름을 새 이메일 없이 다시 보이게 한다.
+    실배포(ENV=production)에서는 404 — dev 로그인과 같은 게이트(ENV)로, 프로덕션에 절대 노출 안 됨."""
+    if settings.env.lower() in ("production", "prod"):
+        raise HTTPException(404, "not found")
+    with SessionLocal() as db:
+        u = db.get(User, user.email)
+        if u is not None:
+            u.onboarded = False
+            db.commit()
+    return {"email": user.email, "onboarded": False}
+
+
 @app.post("/conversations/{conversation_id}/stop", tags=["Conversations"],
           dependencies=[Depends(require_service)])
 async def stop_run(conversation_id: str, user: User = Depends(current_actor)) -> dict:

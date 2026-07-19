@@ -42,13 +42,14 @@ function Avatar({ image, name, size = 72 }: { image?: string | null; name: strin
   return <span className="avatar mg" style={{ ...px, fontSize: Math.round(size * 0.42) }} aria-hidden>{initial}</span>;
 }
 
-export function Settings({ name, email, image }: { name: string; email: string; image?: string | null }) {
+export function Settings({ name, email, image, dev = false }: { name: string; email: string; image?: string | null; dev?: boolean }) {
   const [me, setMe] = useState<Me | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [tab, setTab] = useState<"profile" | "plan" | "usage" | "invite">("profile");
   const [editName, setEditName] = useState(name);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [resetting, setResetting] = useState(false);  // dev: 온보딩 다시 보기 진행중
   // UXQ-1: 테마 — 쿠키(vg_theme) + <html data-theme> 즉시 적용. auto=속성 제거(시스템 추종).
   const [theme, setTheme] = useState<"auto" | "light" | "dark">(() => {
     if (typeof document === "undefined") return "auto";
@@ -138,6 +139,20 @@ export function Settings({ name, email, image }: { name: string; email: string; 
             <button className="btn ghost" type="button" onClick={() => {
               if (confirm("로그아웃할까요?")) void signOut({ callbackUrl: "/" });
             }}>로그아웃</button>
+            {/* DEV-ONLY(ENV≠production): 새 이메일 없이 온보딩을 다시 보기. studio의 DELETE
+                /users/onboarded가 프로덕션에서 404로 막으므로 표시·호출 모두 로컬에서만 유효. */}
+            {dev && (
+              <button className="btn ghost" type="button" disabled={resetting} onClick={async () => {
+                if (!confirm("온보딩을 다시 볼까요? (개발용 — 이 계정의 온보딩 상태를 초기화해요)")) return;
+                setResetting(true);
+                try {
+                  const r = await fetch("/api/onboarded", { method: "DELETE" });
+                  if (r.ok) { window.location.href = "/"; return; }  // 리로드 → /api/me onboarded=false → 온보딩
+                  alert("초기화에 실패했어요 (프로덕션에서는 막혀 있어요).");
+                } catch { alert("초기화 요청에 실패했어요."); }
+                setResetting(false);
+              }}>{resetting ? "초기화 중…" : "🔧 온보딩 다시 보기"}</button>
+            )}
           </div>
         </section>
       )}

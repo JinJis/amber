@@ -26,6 +26,8 @@ export default async function Home({ searchParams }: { searchParams?: Record<str
     const callbackUrl = q ? `/?q=${encodeURIComponent(q)}` : "/";
     return <SignIn callbackUrl={callbackUrl} />;
   }
+  // dev = 로컬/스테이징(ENV≠production) — Settings의 "온보딩 다시 보기" 개발용 액션 노출용.
   return <Chat name={session.user.name ?? session.user.email} email={session.user.email}
-    image={session.user.image ?? null} features={getFeatures()} />;
+    image={session.user.image ?? null} features={getFeatures()}
+    dev={process.env.ENV !== "production"} />;
 }
