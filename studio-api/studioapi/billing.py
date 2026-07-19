@@ -231,7 +231,7 @@ async def _charge_invoice(inv_id: str) -> bool:
     if inv.total > 0:
         try:
             res = await gateway().charge(decrypt_key(cust.billing_key_enc), cust.customer_key,
-                                         inv.order_id, inv.total, "ValueGraph Pro 구독")
+                                         inv.order_id, inv.total, "Amber Pro 구독")
             payment_key = res.get("paymentKey")
         except Exception as exc:  # noqa: BLE001 — 카드 거절 등: 호출부가 던닝 처리
             logger.warning("billing: charge failed inv=%s: %s", inv.id, exc)
@@ -463,6 +463,6 @@ async def _dunning_mail(sub_id: str, attempt: int) -> None:
         user = db.get(User, sub.user_email) if sub else None
     if user is None or not getattr(user, "email_verified", False):
         return
-    await send_email(user.email, "ValueGraph 결제가 실패했어요",
+    await send_email(user.email, "Amber 결제가 실패했어요",
                      "<p>Pro 구독 결제가 실패했어요. 카드 정보를 확인해 주세요 — "
                      "며칠 안에 다시 시도하고, 계속 실패하면 Pro가 일시 해제돼요.</p>")

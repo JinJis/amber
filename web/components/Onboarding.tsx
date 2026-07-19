@@ -12,6 +12,7 @@
 // ask-feed 첫 화면이 관심종목에서 나오므로, 등록이 곧 온보딩이다.
 
 import { useMemo, useState, useEffect } from "react";
+import { Logo } from "./Logo";
 import { PRESETS } from "@/lib/presets";
 import { FIX_CITATIONS, FIX_FOLLOWUPS, FIX_QCARDS, FIX_TRUST } from "@/lib/onboardingFixtures";
 import type { AskCard } from "@/components/QCard";
@@ -127,7 +128,7 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
     <div className="onb-backdrop">
       <div className="onb">
         <div className="onb-top">
-          <div className="onb-brand"><span className="mascot" aria-hidden /> ValueGraph</div>
+          <div className="onb-brand"><Logo size={20} /></div>
           <div className="onb-progress">{STEPS.map((s, i) => <span key={s} className={`onb-dot ${i <= step ? "on" : ""}`} />)}</div>
           <span />
         </div>

@@ -434,7 +434,7 @@ export function TradeChart(
   const hasDrawings = (userAnn?.lines?.length || 0) + (userAnn?.hlines?.length || 0) > 0;
 
   // PH-VIZ-6: export the chart as a self-describing PNG — title header + a sourced footer
-  // (source · as_of · value-graph) so the snapshot can be cited/shared like any source card.
+  // (source · as_of · amber) so the snapshot can be cited/shared like any source card.
   function exportPng() {
     const chart = chartRef.current;
     if (!chart) return;
@@ -455,7 +455,7 @@ export function TradeChart(
     ctx.drawImage(shot, 0, headH);
     ctx.fillStyle = "#86868C";
     ctx.font = `${11 * dpr}px ui-sans-serif, system-ui, sans-serif`;
-    const foot = `${a.source || "출처"}${a.as_of ? ` · as of ${a.as_of}` : ""} · value-graph`;
+    const foot = `${a.source || "출처"}${a.as_of ? ` · as of ${a.as_of}` : ""} · amber`;
     ctx.fillText(foot, pad, headH + shot.height + footH / 2);
     const link = document.createElement("a");
     link.href = out.toDataURL("image/png");

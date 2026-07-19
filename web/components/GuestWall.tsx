@@ -1,6 +1,7 @@
 "use client";
 
 import { signIn } from "next-auth/react";
+import { Logo } from "./Logo";
 
 // GUEST-2: 게스트 체험 한도 도달 시의 가입 월. 핵심 락인: (1) 지금까지의 대화는 서버(게스트
 // 세션)에 있고 가입 직후 claim으로 그대로 이어진다(GUEST-3), (2) 아직 못 물어본 마지막 질문은
@@ -15,7 +16,7 @@ export default function GuestWall({ message, pending, providers }: {
   return (
     <div className="guest-wall" role="dialog" aria-modal="true" aria-label="가입 안내">
       <div className="gw-card">
-        <div className="signin-brand"><span className="mascot" aria-hidden /><b>ValueGraph</b></div>
+        <div className="signin-brand"><Logo size={24} /></div>
         <h2 className="gw-h">{message}</h2>
         <p className="gw-sub">지금까지 나눈 대화는 가입하면 그대로 이어져요. 3초면 돼요.</p>
         <div className="gw-actions">

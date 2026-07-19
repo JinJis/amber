@@ -296,8 +296,8 @@ async def verify_channel(channel: str, user: User = Depends(current_user)) -> di
         ).scalars().first()
         if c is None:
             raise HTTPException(404, "Channel not connected.")
-        payload = {"title": "🔔 ValueGraph 연결 확인", "body": "이 채널로 알림을 받을 수 있어요.",
-                   "source": "ValueGraph", "as_of": datetime.utcnow().date().isoformat(), "deeplink": "/"}
+        payload = {"title": "🔔 Amber 연결 확인", "body": "이 채널로 알림을 받을 수 있어요.",
+                   "source": "Amber", "as_of": datetime.utcnow().date().isoformat(), "deeplink": "/"}
         status = channels_mod.send(channel, json.loads(c.config or "{}"), payload)
         c.verified = status in ("sent", "simulated")
         db.commit()

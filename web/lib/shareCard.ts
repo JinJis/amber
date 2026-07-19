@@ -74,7 +74,7 @@ export function provenanceStrip(a: Artifact, shortLink: string): { label: string
   return {
     label: isHistoryKind(a) ? "과거 기록 · 전망 아님" : null,
     source: `출처 ${a.source || "—"}${a.as_of ? ` · as of ${a.as_of}` : ""}`,
-    brand: `ValueGraph · ${shortLink}`,
+    brand: `Amber · ${shortLink}`,
   };
 }
 
@@ -125,7 +125,7 @@ export function ogCardForAnswer(a: {
   const sources = [...new Set(cits.map((c) => c.source).filter(Boolean) as string[])];
   const asOf = cits.map((c) => c.as_of).filter(Boolean).sort().slice(-1)[0] ?? null;
   return {
-    title: a.title || "ValueGraph 리서치",
+    title: a.title || "Amber 리서치",
     lead: plainText(a.content),
     sources,
     sourceCount: sources.length,
@@ -137,7 +137,7 @@ export function ogCardForAnswer(a: {
 /** Build the OG card model from a single-artifact share (pure — unit-tested). */
 export function ogCardForArtifact(a: Artifact): OgCard {
   return {
-    title: a.title || "ValueGraph 자료",
+    title: a.title || "Amber 자료",
     lead: shareCardLines(a, 6).join("  ·  "),
     sources: a.source ? [a.source] : [],
     sourceCount: a.source ? 1 : 0,
@@ -147,7 +147,30 @@ export function ogCardForArtifact(a: Artifact): OgCard {
 }
 
 // --- the canvas draw (thin; not unit-tested — jsdom has no real 2D context) ----------------
-const INK = "#17181B", SUB = "#55565C", MUTED = "#8C8C93", LINE = "#E4E4E8", BG = "#FFFFFF";
+// Amber brand (docs/branding/brand.css): warm neutrals + the amber family. No gradients/shadows.
+const INK = "#1A1815", SUB = "#6B6459", MUTED = "#9C948A", LINE = "rgba(26,24,21,0.10)", BG = "#FFFFFF";
+const AMBER = "#EF9F27", AMBER_DEEP = "#BA7517", AMBER_INK = "#412402";
+
+/** The final mark (docs/branding/amber-mark.svg) drawn 1:1 on canvas — placement only,
+ *  path data verbatim (viewBox 104×106, scaled to `size`). Never edit the geometry. */
+function drawMark(ctx: CanvasRenderingContext2D, x: number, y: number, size: number) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(size / 104, size / 104);
+  ctx.fillStyle = AMBER;
+  ctx.fill(new Path2D("M52 0C78 0 100 20 102 46c2 30-21 59-50 59C23 105 0 80 2 48 4 21 26 0 52 0Z"));
+  const bar = (bx: number, by: number, w: number, h: number, r: number, fill: string) => {
+    ctx.fillStyle = fill;
+    const p = new Path2D();
+    p.moveTo(bx + r, by); p.arcTo(bx + w, by, bx + w, by + h, r); p.arcTo(bx + w, by + h, bx, by + h, r);
+    p.arcTo(bx, by + h, bx, by, r); p.arcTo(bx, by, bx + w, by, r); p.closePath();
+    ctx.fill(p);
+  };
+  bar(24, 38, 56, 5, 2.5, AMBER_DEEP);
+  bar(24, 50, 34, 8, 4, AMBER_INK);
+  bar(24, 64, 56, 5, 2.5, AMBER_DEEP);
+  ctx.restore();
+}
 
 /** Greedy word-wrap by MEASURED width; breaks over-long tokens (URLs / space-less CJK runs) by
  *  character, and ellipsizes the last line when the text overflows `maxLines`. Canvas-only. */
@@ -187,8 +210,9 @@ function wrapMeasured(ctx: CanvasRenderingContext2D, text: string, maxWidth: num
   return lines.slice(0, maxLines);
 }
 
-const SANS = `"Space Grotesk", "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", ui-sans-serif, system-ui, sans-serif`;
-const MONO = `"Space Mono", ui-monospace, monospace`;
+const SANS = `"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", ui-sans-serif, system-ui, sans-serif`;
+const DISPLAY = `"Inter Tight", "Pretendard", ui-sans-serif, system-ui, sans-serif`;
+const MONO = `ui-monospace, "SF Mono", monospace`;
 
 /** Render the OG preview PNG for a share. One renderer for answers + artifacts (via OgCard). */
 export async function renderOgCard(card: OgCard, shortLink: string): Promise<Blob> {
@@ -202,13 +226,13 @@ export async function renderOgCard(card: OgCard, shortLink: string): Promise<Blo
 
   // surface + a crisp left accent rail (editorial pop against the grayscale brand)
   ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = INK; ctx.fillRect(0, 0, 12, H);
+  ctx.fillStyle = AMBER; ctx.fillRect(0, 0, 12, H);
 
   // header: brand mark (left) + trust chip (right)
   const brandY = PY;
-  ctx.fillStyle = INK; ctx.fillRect(PX, brandY + 2, 22, 22);
-  ctx.font = `700 26px ${SANS}`; ctx.fillStyle = INK;
-  ctx.fillText("ValueGraph", PX + 34, brandY);
+  drawMark(ctx, PX, brandY, 26);
+  ctx.font = `500 27px ${DISPLAY}`; ctx.fillStyle = INK;
+  ctx.fillText("amber", PX + 36, brandY);
   const chip = "✓ 출처와 함께";
   ctx.font = `500 22px ${MONO}`;
   const cw = ctx.measureText(chip).width, chipX = W - PX - cw - 28, chipY = brandY - 4;
@@ -252,7 +276,7 @@ export async function renderOgCard(card: OgCard, shortLink: string): Promise<Blo
   ctx.font = `400 24px ${MONO}`; ctx.fillStyle = MUTED;
   ctx.fillText(wrapMeasured(ctx, srcLine, CW - 260, 1)[0] ?? srcLine, PX, fy);
   ctx.font = `700 24px ${MONO}`; ctx.fillStyle = INK;
-  const link = shortLink || "valuegraph";
+  const link = shortLink || "amber";
   const lw = ctx.measureText(link).width;
   ctx.fillText(link, W - PX - lw, fy);
 

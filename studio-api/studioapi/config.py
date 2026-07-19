@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     connectors_reconcile_ver: str = "1"                  # CONNECTORS_RECONCILE_VER
     # AUTH-2: 이메일 OTP 로그인 발송 (Resend). 키 없으면 dev 모드 — 코드가 로그로만 남는다.
     resend_api_key: str = ""                             # RESEND_API_KEY
-    email_from: str = "ValueGraph <login@valuegraph.app>"  # EMAIL_FROM (Resend 도메인 인증 필요)
+    email_from: str = "Amber <login@valuegraph.app>"  # EMAIL_FROM (Resend 도메인 인증 필요)
     # BILL: 토스페이먼츠 빌링 — 시크릿 키 없으면 FakeGateway(로컬/테스트). 빌링키는 Fernet 암호화.
     billing_enabled: bool = False                        # BILLING_ENABLED (스케줄러 틱 게이트)
     toss_secret_key: str = ""                            # TOSS_SECRET_KEY

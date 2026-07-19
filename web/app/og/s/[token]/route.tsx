@@ -13,15 +13,31 @@ import type { Artifact, Citation } from "@/lib/types";
 export const runtime = "nodejs";
 
 const W = 1200, H = 630;
-const INK = "#17181B", SUB = "#55565C", MUTED = "#8C8C93", LINE = "#E4E4E8", BG = "#FFFFFF";
+// Amber brand (docs/branding/brand.css): warm neutrals + the amber family. No gradients/shadows.
+const INK = "#1A1815", SUB = "#6B6459", MUTED = "#9C948A", LINE = "rgba(26,24,21,0.10)", BG = "#FFFFFF";
+const AMBER = "#EF9F27", AMBER_DEEP = "#BA7517", AMBER_INK = "#412402";
 
-let _fonts: { name: string; data: Buffer; weight: 400 | 700 }[] | null = null;
+// The final mark (docs/branding/amber-mark.svg) — placement only, never edit path data.
+function Mark({ size }: { size: number }) {
+  return (
+    <svg width={size} height={Math.round((size * 106) / 104)} viewBox="0 0 104 106">
+      <path d="M52 0C78 0 100 20 102 46c2 30-21 59-50 59C23 105 0 80 2 48 4 21 26 0 52 0Z" fill={AMBER} />
+      <rect x="24" y="38" width="56" height="5" rx="2.5" fill={AMBER_DEEP} />
+      <rect x="24" y="50" width="34" height="8" rx="4" fill={AMBER_INK} />
+      <rect x="24" y="64" width="56" height="5" rx="2.5" fill={AMBER_DEEP} />
+    </svg>
+  );
+}
+
+let _fonts: { name: string; data: Buffer; weight: 400 | 500 | 700 }[] | null = null;
 async function fonts() {
   if (_fonts) return _fonts;
   const dir = path.join(process.cwd(), "assets", "fonts");
   _fonts = [
     { name: "Pretendard", data: await readFile(path.join(dir, "Pretendard-Regular.otf")), weight: 400 as const },
     { name: "Pretendard", data: await readFile(path.join(dir, "Pretendard-Bold.otf")), weight: 700 as const },
+    // 워드마크 전용 (--font-display); 본문은 Pretendard 그대로
+    { name: "Inter Tight", data: await readFile(path.join(dir, "InterTight-Medium.ttf")), weight: 500 as const },
   ];
   return _fonts;
 }
@@ -45,7 +61,7 @@ export async function GET(_req: Request, { params }: { params: { token: string }
     source?: string; as_of?: string;
   };
 
-  const title: string = share?.title || "ValueGraph 리서치";
+  const title: string = share?.title || "Amber 리서치";
   const lead = kind === "answer" ? plainText(payload.content ?? "")
     : kind === "quote" ? `“${payload.passage ?? ""}”`
     : plainText(String((payload as { title?: string }).title ?? ""));
@@ -65,12 +81,13 @@ export async function GET(_req: Request, { params }: { params: { token: string }
   return new ImageResponse(
     (
       <div style={{ width: W, height: H, display: "flex", background: BG, fontFamily: "Pretendard" }}>
-        <div style={{ width: 12, height: H, background: INK, display: "flex" }} />
+        <div style={{ width: 12, height: H, background: AMBER, display: "flex" }} />
         <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: "52px 56px 44px" }}>
           {/* header: brand + trust chip */}
           <div style={{ display: "flex", alignItems: "center" }}>
-            <div style={{ width: 22, height: 22, background: INK, display: "flex" }} />
-            <div style={{ fontSize: 26, fontWeight: 700, color: INK, marginLeft: 12, display: "flex" }}>ValueGraph</div>
+            <Mark size={26} />
+            <div style={{ fontSize: 27, fontWeight: 500, fontFamily: "Inter Tight", letterSpacing: "-0.03em",
+              color: INK, marginLeft: 10, display: "flex" }}>amber</div>
             <div style={{ marginLeft: "auto", fontSize: 21, color: SUB, border: `1.5px solid ${LINE}`,
               borderRadius: 19, padding: "6px 16px", display: "flex" }}>✓ 출처와 함께</div>
           </div>
@@ -113,8 +130,9 @@ export async function GET(_req: Request, { params }: { params: { token: string }
             ) : null}
             <div style={{ display: "flex", alignItems: "center" }}>
               <div style={{ display: "flex", fontSize: 22, color: MUTED, maxWidth: 860, overflow: "hidden" }}>{srcLine}</div>
-              <div style={{ display: "flex", marginLeft: "auto", fontSize: 22, fontWeight: 700, color: INK }}>
-                valuegraph
+              <div style={{ display: "flex", marginLeft: "auto", fontSize: 22, fontWeight: 500,
+                fontFamily: "Inter Tight", letterSpacing: "-0.03em", color: INK }}>
+                amber
               </div>
             </div>
           </div>

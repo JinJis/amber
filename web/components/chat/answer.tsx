@@ -92,7 +92,7 @@ function NumHighlight({ row, cit, children, setHoverCite, onEvidence }: {
   const [pinned, setPinned] = useState(false);
   const derived = !!cit?.computation;
   return (
-    <span className={`num-hl ${row.supported ? "" : "warn"}`} data-testid="num-hl"
+    <span className={`num-hl ${row.supported ? "evidence-highlight" : "warn"}`} data-testid="num-hl"
       role={cit ? "button" : undefined} tabIndex={cit ? 0 : undefined}
       onMouseEnter={() => cit?.index != null && setHoverCite(cit.index)}
       onMouseLeave={() => setHoverCite(null)}

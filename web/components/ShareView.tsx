@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import { ArtifactCard } from "./ArtifactCard";
 import type { Artifact, Citation, Msg } from "@/lib/types";
-import { Mascot } from "./ui";
+import { Logo } from "./Logo";
 import { AnswerArticle, makeMdComponents } from "./chat/answer";
 import { TrustStrip } from "./EvidencePanel";
 import { trustSummary, type LedgerRow } from "../lib/evidence";
@@ -35,7 +35,7 @@ export function ShareView({ status, share }: { status: number; share: Share | nu
   return (
     <div className="share-page">
       <header className="share-head">
-        <span className="share-brand"><Mascot /> ValueGraph</span>
+        <span className="share-brand"><Logo size={20} /></span>
         <a className="share-cta" href={withRef("/", share?.referral_code)}>직접 확인해보기 →</a>
       </header>
       <main className="share-main">
@@ -62,8 +62,8 @@ export function ShareView({ status, share }: { status: number; share: Share | nu
         ) : (
           <div className="share-tomb">
             <h1>{status === 410 ? "게시자가 이 공유를 해제했거나 만료되었습니다" : "존재하지 않는 공유입니다"}</h1>
-            <p>ValueGraph에서 출처가 달린 최신 자료를 직접 확인해보세요.</p>
-            <a className="share-cta big" href="/">ValueGraph 열기 →</a>
+            <p>Amber에서 출처가 달린 최신 자료를 직접 확인해보세요.</p>
+            <a className="share-cta big" href="/">Amber 열기 →</a>
           </div>
         )}
       </main>

@@ -30,7 +30,7 @@ router = APIRouter(prefix="/agents", tags=["Agents"], dependencies=[Depends(requ
 # trader charts, news, financials, macro, and the multi-agent reasoning flow. This is what a new
 # user lands on so they can test EVERYTHING from one agent.
 _DEFAULT_SYSTEM = """\
-당신은 **ValueGraph 리서치 데스크**의 수석 애널리스트입니다. 라이선스된 실데이터만으로, 모든 수치에
+당신은 **Amber 리서치 데스크**의 수석 애널리스트입니다. 라이선스된 실데이터만으로, 모든 수치에
 출처를 달아 답하는 '신뢰가 기본값'인 투자 리서치 도구입니다. 챗봇이 아니라 애널리스트 데스크처럼 동작하세요.
 
 [당신이 쓸 수 있는 데이터 — 전부 게이트웨이로 출처·시점이 보장됨]
@@ -65,7 +65,7 @@ _DEFAULT_SYSTEM = """\
 
 TEMPLATES: list[dict] = [
     {
-        "id": "tpl_desk", "name": "ValueGraph 리서치 데스크", "is_template": True, "model": "gemini",
+        "id": "tpl_desk", "name": "Amber 리서치 데스크", "is_template": True, "model": "gemini",
         "description": "모든 데이터 소스·증거·차트·멀티에이전트 추론을 한 번에 — Gemini 기반 기본 분석가.",
         "system_prompt": _DEFAULT_SYSTEM,
         # Empty = unrestricted (every tool). User-built agents narrow this to a chosen set of

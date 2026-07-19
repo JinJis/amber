@@ -1,6 +1,6 @@
 "use client";
 
-// ── ValueGraph design-system primitives ────────────────────────────────────
+// ── Amber design-system primitives ─────────────────────────────────────────
 // Single source of truth for the recurring UI patterns from the wireframes
 // (see docs/deprecate/DESIGN_SYSTEM.md — design docs being rewritten). Every screen composes these instead of re-deriving
 // markup/classes, so the visual language stays unified. Tokens live in globals.css
@@ -102,9 +102,10 @@ export function HistoricalLabel() {
   return <span className="histlabel" title="과거에 있었던 사례를 정리한 통계예요 — 미래 예측이 아니에요">⏳ 과거 기록 · 전망 아님</span>;
 }
 
-// ── Pixel mascot ──────────────────────────────────────────────────────────--
+// ── Brand mark (Amber) — compact contexts use the mark, never a redrawn variant ──
+import { Logo } from "./Logo";
 export function Mascot({ size }: { size?: number }) {
-  return <span className="mascot" aria-hidden style={size ? { width: size, height: size } : undefined} />;
+  return <Logo variant="mark" size={size ?? 18} />;
 }
 
 // ── Modal shell ───────────────────────────────────────────────────────────--

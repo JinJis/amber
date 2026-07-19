@@ -129,10 +129,10 @@ def page(active: str, title: str, body: str, refresh: bool = False) -> str:
     return (
         "<!doctype html><html><head><meta charset=utf-8>"
         "<meta name=viewport content='width=device-width,initial-scale=1'>"
-        f"<title>VG Admin · {_esc(title)}</title>{STYLE}</head><body>"
+        f"<title>Amber Admin · {_esc(title)}</title>{STYLE}</head><body>"
         "<div class=app>"
         "<aside class=side>"
-        "<div class=brand><span class=dot></span>VALUE·GRAPH</div>"
+        "<div class=brand><span class=dot></span>AMBER</div>"
         f"{nav}"
         "<div class=sp></div>"
         "<div class=foot>admin · ops console<br>out-of-band · not in request path</div>"

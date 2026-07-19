@@ -1,10 +1,23 @@
 import "./globals.css";
 import type { ReactNode } from "react";
-import type { Viewport } from "next";
+import type { Metadata, Viewport } from "next";
 
-export const metadata = {
-  title: "ValueGraph",
-  description: "Ask anything about markets, stocks, news, and the economy — with sources.",
+export const metadata: Metadata = {
+  title: "Amber",
+  description: "출처가 보이는 AI 투자 리서치 — 모든 답 옆에 근거 원문을 하이라이트해서 보여드려요.",
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/icon-32.png", sizes: "32x32", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
+  manifest: "/site.webmanifest",
+  openGraph: {
+    title: "Amber",
+    description: "출처가 보이는 AI 투자 리서치 — 근거 없는 답은 없어요.",
+    images: [{ url: "/og.png", width: 1200, height: 630 }],
+  },
 };
 
 // Mobile: full-viewport, notch-safe, no accidental zoom-on-input; the app renders as a
@@ -15,8 +28,8 @@ export const viewport: Viewport = {
   maximumScale: 5,
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#F4F4F6" },
-    { media: "(prefers-color-scheme: dark)", color: "#111214" },
+    { media: "(prefers-color-scheme: light)", color: "#FBF9F5" },
+    { media: "(prefers-color-scheme: dark)", color: "#1A1815" },
   ],
 };
 
@@ -24,10 +37,17 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="ko">
       <head>
+        {/* Two fonts only (brand): Inter Tight (display) + Pretendard (body·Korean,
+            dynamic-subset = Korean subsetting). Mono falls back to system ui-monospace. */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
+        <link rel="preconnect" href="https://cdn.jsdelivr.net" crossOrigin="" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&display=swap"
+          rel="stylesheet"
+        />
+        <link
+          href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard-dynamic-subset.min.css"
           rel="stylesheet"
         />
       </head>

@@ -2,6 +2,7 @@
 
 // BILL-2: 토스 requestBillingAuth 성공 착지 — authKey를 서버로 넘겨 빌링키 발급 + 첫 결제.
 import { useEffect, useState } from "react";
+import { Logo } from "../../../components/Logo";
 
 export default function BillingSuccess() {
   const [msg, setMsg] = useState("결제를 진행하고 있어요…");
@@ -23,7 +24,7 @@ export default function BillingSuccess() {
   }, []);
   return (
     <main className="signin"><div className="signin-card">
-      <div className="signin-brand"><span className="mascot" aria-hidden /><b>ValueGraph</b></div>
+      <div className="signin-brand"><Logo size={26} /></div>
       <h1 className="signin-h">{failed ? "결제 실패" : "Pro 시작"}</h1>
       <p className="signin-sub">{msg}</p>
       {failed && <a className="btn ghost" href="/">돌아가기</a>}

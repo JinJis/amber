@@ -42,7 +42,7 @@ class RegimeRenderer implements ISeriesPrimitivePaneRenderer {
         ctx.fillRect(left, 0, Math.max(1, hpr), bitmapSize.height);
         if (z.label) {
           ctx.save();
-          ctx.font = `${10 * vpr}px "Space Mono", ui-monospace, monospace`;
+          ctx.font = `${10 * vpr}px "ui-monospace", ui-monospace, monospace`;
           ctx.fillStyle = "rgba(26,27,30,0.55)";
           ctx.textBaseline = "top";
           ctx.fillText(z.label, left + 4 * hpr, 4 * vpr);

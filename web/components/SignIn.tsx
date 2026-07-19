@@ -1,4 +1,5 @@
 import { signIn } from "@/auth";
+import { Logo } from "./Logo";
 import EmailOtp from "./EmailOtp";
 
 // Sign-in / sign-up — one screen, social-first (Google · Kakao); each button appears only
@@ -15,7 +16,7 @@ export default function SignIn({ callbackUrl = "/" }: { callbackUrl?: string } =
   return (
     <main className="signin">
       <div className="signin-card">
-        <div className="signin-brand"><span className="mascot" aria-hidden /><b>ValueGraph</b></div>
+        <div className="signin-brand"><Logo size={26} /></div>
         <h1 className="signin-h">출처와 함께 답하는<br />투자 리서치 데스크</h1>
         <p className="signin-sub">시장·종목·뉴스·경제, 무엇이든 물어보세요 — 모든 답에 근거가 함께 가요.</p>
 

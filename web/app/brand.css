@@ -1,0 +1,67 @@
+/* Amber brand tokens — source of truth: docs/branding/brand.css (verbatim below).
+   Every color in the app derives from these tokens (globals.css maps its legacy
+   token names onto them). Do not hardcode hex values in components. */
+:root {
+  --amber-50: #FAEEDA;
+  --amber-200: #FAC775;
+  --amber-400: #EF9F27;
+  --amber-600: #BA7517;
+  --amber-800: #854F0B;
+  --amber-900: #412402;
+
+  --evidence: var(--amber-900);
+  --evidence-bg: var(--amber-50);
+
+  --text-primary: #1A1815;
+  --text-secondary: #6B6459;
+  --surface: #FFFFFF;
+  --surface-sunk: #FBF9F5;
+  --border: rgba(26, 24, 21, 0.10);
+
+  --font-display: "Inter Tight", "Pretendard", system-ui, sans-serif;
+  --font-body: "Pretendard", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text-primary: #F5F2EC;
+    --text-secondary: #A39C90;
+    --surface: #1A1815;
+    --surface-sunk: #22201C;
+    --border: rgba(245, 242, 236, 0.12);
+    --evidence: var(--amber-200);
+    --evidence-bg: rgba(239, 159, 39, 0.14);
+  }
+}
+
+.evidence-highlight {
+  background: var(--evidence-bg);
+  border-bottom: 2px solid var(--amber-400);
+  border-radius: 2px 2px 0 0;
+  padding: 0 2px;
+  color: inherit;
+}
+
+/* ── integration wiring (UXQ-1 theme toggle) ─────────────────────────────────────
+   The app lets the user override the system theme via html[data-theme] (vg_theme
+   cookie). Same token VALUES as the blocks above — no restyling, just plumbing so
+   the explicit toggle wins over prefers-color-scheme in both directions. */
+html[data-theme="dark"] {
+  --text-primary: #F5F2EC;
+  --text-secondary: #A39C90;
+  --surface: #1A1815;
+  --surface-sunk: #22201C;
+  --border: rgba(245, 242, 236, 0.12);
+  --evidence: var(--amber-200);
+  --evidence-bg: rgba(239, 159, 39, 0.14);
+}
+html[data-theme="light"] {
+  --text-primary: #1A1815;
+  --text-secondary: #6B6459;
+  --surface: #FFFFFF;
+  --surface-sunk: #FBF9F5;
+  --border: rgba(26, 24, 21, 0.10);
+  --evidence: var(--amber-900);
+  --evidence-bg: var(--amber-50);
+}

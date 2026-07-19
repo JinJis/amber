@@ -1,80 +1,101 @@
-/* ValueGraph — our identity: light grayscale surfaces, near-black ink for actions, and a
-   calm indigo accent for citations/@groups/links. Trust signals (freshness) are the only other
-   saturated color. Claude-like LAYOUT (centered column, soft rail, inline sources) — our PALETTE. */
+/* Amber — 브랜드 토큰(brand.css)이 유일한 색 원천. 아래 앱 토큰들은 전부 brand 토큰에서
+   직접 참조하거나 color-mix로 파생한다(새 hex 금지). 레이아웃 언어(중앙 칼럼·소프트 레일·
+   인라인 출처)는 유지, 팔레트·타이포만 Amber. 하드 제약: 그라데이션·그림자·글로우 없음. */
+@import "./brand.css";
+
 :root {
-  --bg: #E9E9EB;          /* app backdrop */
-  --panel: #ffffff;       /* primary card / surface */
-  --panel-2: #FAFAFB;     /* sidebar / subtle inset */
-  --panel-3: #FCFCFD;     /* faintest surface (chat scroll) */
-  --text: #26262A;        /* primary text */
-  --text-2: #4A4A50;      /* secondary body */
-  --muted: #86868C;       /* meta / labels */
-  --faint: #A6A6AC;       /* placeholder / faintest */
-  --line: #E4E4E7;        /* default hairline */
-  --line-2: #D8D8DC;      /* stronger card outline */
-  --line-3: #F0F0F2;      /* faintest divider */
-  --ink: #1A1B1E;         /* near-black — primary action, active rail, user bubble */
-  --paper: #1A1B1E;       /* primary action background */
-  --on-ink: #ffffff;      /* text on ink */
-  --focus: #1A1B1E;       /* active input border */
-  /* accent — citations, @groups, links (calm indigo, our color) */
-  --accent: #6E72B0;
-  --accent-bg: #EEF0F6;
-  --accent-fg: #5A5E86;
-  --rail-active: #EDEDF0;  /* subtle active nav highlight (light gray) */
-  /* trust signals — the only other saturated colors */
+  --bg: var(--surface-sunk);                                     /* app backdrop (warm paper) */
+  --panel: var(--surface);                                       /* primary card / surface */
+  --panel-2: var(--surface-sunk);                                /* sidebar / subtle inset */
+  --panel-3: color-mix(in srgb, var(--surface) 55%, var(--surface-sunk));
+  --text: var(--text-primary);
+  --text-2: color-mix(in srgb, var(--text-primary) 78%, var(--text-secondary));
+  --muted: var(--text-secondary);
+  --faint: color-mix(in srgb, var(--text-secondary) 55%, var(--surface));
+  --line: var(--border);
+  --line-2: color-mix(in srgb, var(--text-primary) 16%, transparent);
+  --line-3: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --ink: var(--amber-900);        /* primary action, active rail, user bubble */
+  --paper: var(--amber-900);
+  --on-ink: var(--amber-50);
+  --focus: var(--amber-900);
+  /* accent — citations/@groups/links = the evidence family (amber) */
+  --accent: var(--amber-600);
+  --accent-bg: var(--evidence-bg);
+  --accent-fg: var(--amber-800);
+  --rail-active: color-mix(in srgb, var(--amber-50) 60%, var(--surface));
+  /* trust signals (freshness) — functional semantics, not decoration */
   --fresh: #1FA463;
-  --aging: #D9A300;
+  --aging: var(--amber-400);
   --stale: #D1483A;
-  --gap: #A6A6AC;
+  --gap: var(--faint);
   --danger: #D1483A;
-  /* guardrail label (visible, not fine print) */
-  --warn-fg: #8A6A00;
-  --warn-bg: #FBF3DA;
-  --warn-line: #EFE0AE;
-  --mark: #FCEFC4;        /* verbatim highlight */
-  --ui: "Space Grotesk", -apple-system, system-ui, "Segoe UI", Inter, Roboto, "Apple SD Gothic Neo", sans-serif;
-  --mono: "Space Mono", "SF Mono", "JetBrains Mono", ui-monospace, "Roboto Mono", monospace;
-  --shadow-card: 0 1px 2px rgba(0,0,0,.04), 0 6px 20px rgba(0,0,0,.04);
-  --shadow-pop: 0 8px 26px rgba(0,0,0,.06);
+  /* guardrail label (visible, not fine print) — evidence family, muted */
+  --warn-fg: var(--amber-800);
+  --warn-bg: var(--evidence-bg);
+  --warn-line: color-mix(in srgb, var(--amber-400) 45%, var(--surface));
+  --mark: var(--evidence-bg);     /* verbatim/verified highlight = the evidence tint */
+  --ui: var(--font-body);
+  --display: var(--font-display);
+  --mono: var(--font-mono);
+  --shadow-card: none;            /* brand: no drop shadows — borders do the separation */
+  --shadow-pop: none;
 }
-/* UXQ-1 다크모드 — 같은 토큰, 매트 다크그레이 팔레트. html[data-theme]가 승자;
-   무속성이면 시스템(prefers-color-scheme)을 따른다. 문서 뷰어(.sv)는 실제 서류라 라이트 유지. */
+/* UXQ-1 다크모드 — 같은 토큰, Amber 다크 팔레트(brand.css 다크 값에서 파생).
+   html[data-theme]가 승자; 무속성이면 시스템. 문서 뷰어(.sv)는 실제 서류라 라이트 유지. */
 html[data-theme="dark"] {
-  --bg: #131417; --panel: #1C1D21; --panel-2: #17181B; --panel-3: #16171A;
-  --text: #E7E7EA; --text-2: #B9B9C0; --muted: #8A8A92; --faint: #64646C;
-  --line: #2A2B30; --line-2: #34353B; --line-3: #222327;
-  --ink: #E9E9EC; --paper: #E9E9EC; --on-ink: #17181B; --focus: #E9E9EC;
-  --accent: #9297D6; --accent-bg: #232532; --accent-fg: #ABAFE0;
-  --rail-active: #24252A;
-  --fresh: #2BB673; --aging: #E0B12F; --stale: #E06154; --gap: #64646C;
-  --danger: #E06154;
-  --warn-fg: #E3C36A; --warn-bg: #2A2413; --warn-line: #4A3F1C;
-  --mark: #4A3F1C;
-  --shadow-card: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
-  --shadow-pop: 0 8px 26px rgba(0,0,0,.5);
+  --bg: var(--surface-sunk); --panel: var(--surface);
+  --panel-2: color-mix(in srgb, var(--surface) 55%, var(--surface-sunk));
+  --panel-3: color-mix(in srgb, var(--surface) 70%, var(--surface-sunk));
+  --text: var(--text-primary);
+  --text-2: color-mix(in srgb, var(--text-primary) 78%, var(--text-secondary));
+  --muted: var(--text-secondary);
+  --faint: color-mix(in srgb, var(--text-secondary) 55%, var(--surface));
+  --line: var(--border);
+  --line-2: color-mix(in srgb, var(--text-primary) 20%, transparent);
+  --line-3: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --ink: var(--amber-200); --paper: var(--amber-200); --on-ink: var(--amber-900);
+  --focus: var(--amber-200);
+  --accent: var(--amber-400); --accent-bg: var(--evidence-bg); --accent-fg: var(--amber-200);
+  --rail-active: color-mix(in srgb, var(--amber-400) 12%, transparent);
+  --fresh: #2BB673; --aging: var(--amber-400); --stale: #E06154;
+  --gap: var(--faint); --danger: #E06154;
+  --warn-fg: var(--amber-200); --warn-bg: var(--evidence-bg);
+  --warn-line: color-mix(in srgb, var(--amber-400) 40%, var(--surface));
+  --mark: var(--evidence-bg);
+  --shadow-card: none;
+  --shadow-pop: none;
 }
 @media (prefers-color-scheme: dark) {
   html:not([data-theme]) {
-  --bg: #131417; --panel: #1C1D21; --panel-2: #17181B; --panel-3: #16171A;
-  --text: #E7E7EA; --text-2: #B9B9C0; --muted: #8A8A92; --faint: #64646C;
-  --line: #2A2B30; --line-2: #34353B; --line-3: #222327;
-  --ink: #E9E9EC; --paper: #E9E9EC; --on-ink: #17181B; --focus: #E9E9EC;
-  --accent: #9297D6; --accent-bg: #232532; --accent-fg: #ABAFE0;
-  --rail-active: #24252A;
-  --fresh: #2BB673; --aging: #E0B12F; --stale: #E06154; --gap: #64646C;
-  --danger: #E06154;
-  --warn-fg: #E3C36A; --warn-bg: #2A2413; --warn-line: #4A3F1C;
-  --mark: #4A3F1C;
-  --shadow-card: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
-  --shadow-pop: 0 8px 26px rgba(0,0,0,.5);
+  --bg: var(--surface-sunk); --panel: var(--surface);
+  --panel-2: color-mix(in srgb, var(--surface) 55%, var(--surface-sunk));
+  --panel-3: color-mix(in srgb, var(--surface) 70%, var(--surface-sunk));
+  --text: var(--text-primary);
+  --text-2: color-mix(in srgb, var(--text-primary) 78%, var(--text-secondary));
+  --muted: var(--text-secondary);
+  --faint: color-mix(in srgb, var(--text-secondary) 55%, var(--surface));
+  --line: var(--border);
+  --line-2: color-mix(in srgb, var(--text-primary) 20%, transparent);
+  --line-3: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --ink: var(--amber-200); --paper: var(--amber-200); --on-ink: var(--amber-900);
+  --focus: var(--amber-200);
+  --accent: var(--amber-400); --accent-bg: var(--evidence-bg); --accent-fg: var(--amber-200);
+  --rail-active: color-mix(in srgb, var(--amber-400) 12%, transparent);
+  --fresh: #2BB673; --aging: var(--amber-400); --stale: #E06154;
+  --gap: var(--faint); --danger: #E06154;
+  --warn-fg: var(--amber-200); --warn-bg: var(--evidence-bg);
+  --warn-line: color-mix(in srgb, var(--amber-400) 40%, var(--surface));
+  --mark: var(--evidence-bg);
+  --shadow-card: none;
+  --shadow-pop: none;
   }
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text);
   font-family: var(--ui); -webkit-font-smoothing: antialiased; }
-::selection { background: #C9D2E8; }
+::selection { background: var(--evidence-bg); }
 a { color: var(--text); text-decoration-color: var(--muted); }
 .mono, .ticker, .num { font-family: var(--mono); font-feature-settings: "tnum" 1; }
 
@@ -90,7 +111,6 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 .rail { border-right: 1px solid var(--line); background: var(--panel-2); display: flex; flex-direction: column;
   gap: 2px; padding: 12px 10px; }
 .rail-brand { display: flex; align-items: center; gap: 8px; padding: 4px 8px 10px; }
-.rail-brand .wordmark { font-size: 14px; font-weight: 600; letter-spacing: -.01em; color: var(--text); }
 /* New chat — Claude's prominent top action */
 .rail-new { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; margin: 0 0 10px;
   background: var(--panel); border: 1px solid var(--line-2); color: var(--text); cursor: pointer;
@@ -180,7 +200,7 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 /* ① 판정 */
 .ctx-trust { display: flex; flex-direction: column; gap: 3px; border: 1px solid var(--line-3);
   border-radius: 8px; padding: 7px 10px; background: var(--panel); font-size: 11px; }
-.ctx-trust.warn { border-color: #E8C36B; background: #FBF6E9; }
+.ctx-trust.warn { border-color: var(--warn-line); background: var(--warn-bg); }
 .ctx-trust.quiet { color: var(--muted); }
 .ct-verdict b { font-weight: 700; }
 .ct-warn { color: #A9791A; }
@@ -248,7 +268,7 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 
 .srcprev { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; margin-bottom: 11px; }
 .srcprev[role="button"] { cursor: pointer; }
-.srcprev[role="button"]:hover { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(110,114,176,.12); }
+.srcprev[role="button"]:hover { border-color: var(--accent); }
 .sp-head { display: flex; align-items: center; gap: 7px; padding: 8px 10px; border-bottom: 1px solid var(--line-3); background: var(--panel-2); }
 .sp-n { color: var(--accent); font-size: 9px; flex: none; }
 .sp-ic { font-size: 11px; flex: none; }
@@ -264,7 +284,7 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 .sp-chrome { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-bottom: 1px solid var(--line-3); background: var(--panel-2); }
 .sp-dots { display: flex; gap: 3px; flex: none; }
 .sp-dots i { width: 6px; height: 6px; border-radius: 50%; }
-.sp-dots i:nth-child(1) { background: #E0726A; } .sp-dots i:nth-child(2) { background: #E3B34E; } .sp-dots i:nth-child(3) { background: #7FB97F; }
+.sp-dots i { background: var(--line-2); }
 .sp-url { flex: 1; min-width: 0; background: #fff; border: 1px solid var(--line); border-radius: 5px; font-size: 8px; color: var(--muted); padding: 3px 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sp-web { padding: 9px 11px; }
 .sp-headline { font-size: 11px; font-weight: 700; line-height: 1.35; color: var(--text); }
@@ -610,14 +630,7 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 .desk-id { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .desk-id .fdot { flex: none; }
 .brand { font-weight: 700; letter-spacing: .4px; display: flex; align-items: center; gap: 9px; }
-/* pixel-character mascot — a tiny CSS pixel sprite; a real art asset replaces this later */
-.mascot { width: 18px; height: 18px; image-rendering: pixelated; flex: none;
-  background:
-    linear-gradient(var(--ink) 0 0) 3px 3px / 4px 4px no-repeat,
-    linear-gradient(var(--ink) 0 0) 11px 3px / 4px 4px no-repeat,
-    linear-gradient(var(--fresh) 0 0) 6px 11px / 6px 3px no-repeat,
-    repeating-conic-gradient(#C8C8CC 0 25%, #E4E4E7 0 50%) 0 0 / 6px 6px;
-  border: 1px solid var(--line-2); border-radius: 4px; }
+/* brand mark is the Logo component (docs/branding) — no CSS sprite */
 .who { color: var(--muted); font-size: 13px; }
 
 .agentbar { display: flex; align-items: center; gap: 8px; }
@@ -688,7 +701,7 @@ select.input { appearance: none; }
 .ask-hero { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .ask-eyebrow { font-size: 10px; letter-spacing: .22em; color: var(--muted);
   border: 1px solid var(--line-2); border-radius: 999px; padding: 3px 11px; background: var(--panel-2); }
-.ask-title { color: var(--text); font-size: 28px; font-weight: 600; letter-spacing: -.02em; margin: 2px 0 0; }
+.ask-title { color: var(--text); font-family: var(--display); font-size: 28px; font-weight: 600; letter-spacing: -.02em; margin: 2px 0 0; }
 .ask-trust { color: var(--text-2); font-size: 12.5px; margin: 0; }
 .ask-trust b { color: var(--text); font-weight: 600; }
 .ask-noforecast { color: var(--accent-fg); font-weight: 600; }
@@ -928,24 +941,25 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .msg.assistant .md.article table { margin: 12px 0; }
 .msg.assistant .md.article blockquote { border-left: 3px solid var(--accent);
   margin: 12px 0; padding: 4px 0 4px 12px; color: var(--text-2); }
-/* LG-4: 본문 속 수치 원장 — 검증된 숫자는 노랗게, hover → 원자료 대조 팝업 */
-.num-hl { position: relative; background: var(--mark); border-radius: 3px; padding: 0 3px;
+/* LG-4: 본문 속 수치 원장 — 검증 수치 = .evidence-highlight(brand.css: 앰버 씰 + 하단
+   보더가 load-bearing, 색 단독 의존 금지). hover → 원자료 대조 팝업 */
+.num-hl { position: relative; border-radius: 3px 3px 0 0; padding: 0 3px;
   font-variant-numeric: tabular-nums; transition: background .12s; }
 .num-hl[role="button"] { cursor: pointer; }
-.num-hl:hover { background: #F3DD8F; }
-.num-hl.warn { background: #FBE9D6; box-shadow: inset 0 -1.5px 0 #E0A24E; }
+.num-hl:hover { background: color-mix(in srgb, var(--amber-400) 28%, var(--evidence-bg)); }
+.num-hl.warn { background: var(--warn-bg); border-bottom: 2px dotted var(--amber-600); }
 .num-tip { display: none; position: absolute; bottom: calc(100% + 8px); left: 50%;
   transform: translateX(-50%); z-index: 40; min-width: 190px; max-width: 300px; width: max-content;
-  padding: 8px 11px; border-radius: 9px; background: var(--ink); color: #EDEDEF;
+  padding: 8px 11px; border-radius: 9px; background: var(--text); color: var(--panel);
   font-size: 11px; line-height: 1.55; font-weight: 400; white-space: normal; text-align: left;
-  box-shadow: 0 8px 24px rgba(0,0,0,.28); }
+  }
 .num-hl:hover .num-tip, .num-hl:focus-visible .num-tip { display: inline-block; }
 .num-tip::after { content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
-  border: 6px solid transparent; border-top-color: var(--ink); }
+  border: 6px solid transparent; border-top-color: var(--text); }
 .nt-line { display: block; }
-.nt-ok { color: #8FDDAF; font-weight: 600; }
-.nt-warn { color: #F2C36B; font-weight: 600; }
-.nt-hint { display: block; margin-top: 2px; color: rgba(237,237,239,.6); font-size: 10px; }
+.nt-ok { color: var(--fresh); font-weight: 600; }
+.nt-warn { color: var(--amber-200); font-weight: 600; }
+.nt-hint { display: block; margin-top: 2px; color: color-mix(in srgb, var(--panel) 60%, transparent); font-size: 10px; }
 .nt-pin { margin-top: 6px; font-size: 10px; background: rgba(255,255,255,.1); color: inherit;
   border: 1px solid rgba(255,255,255,.28); border-radius: 999px; padding: 2px 9px; cursor: pointer; }
 .nt-pin:hover { background: rgba(255,255,255,.2); }
@@ -1030,7 +1044,7 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .composer-meta .grow { flex: 1; }
 .input { flex: 1; background: var(--panel); border: 1px solid var(--line-2); color: var(--text);
   padding: 13px 16px; border-radius: 14px; font-size: 15px; outline: none; font-family: inherit; }
-.input:focus { border-color: var(--focus); box-shadow: 0 0 0 3px rgba(110,114,176,.12); }
+.input:focus { border-color: var(--focus); }
 /* primary action = ink (our identity) */
 .btn { background: var(--paper); color: var(--on-ink); border: 1px solid var(--ink); padding: 0 18px; border-radius: 12px; cursor: pointer; font-weight: 600; font-family: inherit; }
 .btn:hover:not(:disabled) { filter: brightness(1.05); }
@@ -1160,7 +1174,7 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .sv-quote, .sv-data { position: relative; font-size: 11.5px; color: var(--text); line-height: 1.85; background: var(--mark);
   border-left: 3px solid var(--aging); border-radius: 0 4px 4px 0; padding: 10px 13px; margin: 14px 0; }
 .sv-pin { position: absolute; left: -30px; top: 8px; width: 22px; height: 22px; border-radius: 50%; background: var(--accent);
-  color: #fff; font-size: 10px; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(110,114,176,.4); }
+  color: #fff; font-size: 10px; display: flex; align-items: center; justify-content: center; }
 .sv-data { white-space: pre-wrap; }
 .sv-data-note { font-size: 9px; color: var(--muted); margin-top: 10px; }
 .sv-stage .sp-table { font-size: 12px; }
@@ -1716,7 +1730,6 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
     padding: 10px 12px; padding-top: max(10px, env(safe-area-inset-top)); flex: none;
     background: var(--panel-2); border-bottom: 1px solid var(--line); }
   .m-topbar .m-brand { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; font-size: 15px; }
-  .m-topbar .m-brand .wordmark { font-size: 15px; }
   .m-menu, .m-newchat { background: none; border: none; font-size: 20px; line-height: 1;
     color: var(--text); cursor: pointer; padding: 4px; }
   .m-newchat { margin-left: auto; font-size: 18px; }
@@ -1776,7 +1789,6 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
     width: 100%; max-width: 100%; border-radius: 18px 18px 0 0; max-height: 92dvh; overflow-y: auto;
     padding-bottom: max(16px, env(safe-area-inset-bottom)); animation: sheet-up .26s cubic-bezier(.32,.72,0,1); }
 }
-.m-topbar .m-brand .wordmark { letter-spacing: -.01em; }
 
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
@@ -1824,7 +1836,7 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .signin-card { width: 100%; max-width: 400px; background: var(--panel); border: 1px solid var(--line);
   border-radius: 18px; padding: 34px 30px; box-shadow: 0 12px 40px rgba(0,0,0,.06); }
 .signin-brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; margin-bottom: 20px; }
-.signin-h { font-size: 24px; line-height: 1.28; letter-spacing: -.02em; margin: 0 0 8px; }
+.signin-h { font-family: var(--display); font-size: 24px; line-height: 1.28; letter-spacing: -.02em; margin: 0 0 8px; }
 .signin-sub { color: var(--text-2); font-size: 13.5px; line-height: 1.55; margin: 0 0 22px; }
 .signin-providers { display: flex; flex-direction: column; gap: 9px; }
 .signin-providers form { display: block; }
@@ -1989,7 +2001,6 @@ img, svg, video { max-width: 100%; }
 
 /* — small phones (≤380px: iPhone SE/13 mini, compact Galaxy A) — tighten without breaking — */
 @media (max-width: 380px) {
-  .m-topbar .m-brand .wordmark { font-size: 14px; }
   .signin-card { padding: 26px 20px; }
   .signin-h { font-size: 21px; }
   .msg.assistant .md.article { font-size: 14.5px; }

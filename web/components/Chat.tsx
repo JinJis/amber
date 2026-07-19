@@ -18,6 +18,7 @@ import { type LedgerRow } from "../lib/evidence";
 import { useIsMobile } from "../lib/useIsMobile";
 import { SourceViewer } from "./SourceViewer";
 import { Button, Chip, GuardrailLabel, Mascot, FreshnessDot } from "./ui";
+import { Logo } from "./Logo";
 import type { Features } from "../lib/features";
 import { FeaturesProvider } from "../lib/features-context";
 // 답변 본문 렌더링 클러스터 + 스트림 파트는 chat/ 하위로 분리(FE-2). 테스트가
@@ -499,12 +500,12 @@ export default function Chat({ name, email, image, features, guest = false, prov
       {/* Mobile top bar — always reachable (the rail is an off-canvas drawer on phones). */}
       <div className="m-topbar">
         <button className="m-menu" onClick={() => setDrawer(true)} aria-label="메뉴 열기">☰</button>
-        <span className="m-brand"><span className="mascot" aria-hidden /><span className="wordmark">ValueGraph</span></span>
+        <span className="m-brand"><Logo variant="mark" size={22} /></span>
         <button className="m-newchat" onClick={newChat} aria-label="새 탐구">✎</button>
       </div>
       {drawer && <div className="m-backdrop" onClick={() => setDrawer(false)} aria-hidden />}
       <nav className="rail" onClick={() => { if (isMobile) setDrawer(false); }}>
-        <div className="rail-brand"><span className="mascot" aria-hidden /><span className="wordmark">ValueGraph</span></div>
+        <div className="rail-brand"><Logo size={28} /></div>
         <button className="rail-new" onClick={newChat}>
           <span className="ic">✎</span><span>분석 시작하기</span>
         </button>
@@ -646,7 +647,7 @@ export default function Chat({ name, email, image, features, guest = false, prov
                         <button type="button" className="ans-share-top" title="이 답변 공유"
                           onClick={(e) => { e.stopPropagation();
                             const q = messages[i - 1]?.role === "user" ? messages[i - 1].content : m.content;
-                            setShareMsg({ title: (m.hook || q || "ValueGraph 리서치").slice(0, 90), msg: m }); }}>↗</button>
+                            setShareMsg({ title: (m.hook || q || "Amber 리서치").slice(0, 90), msg: m }); }}>↗</button>
                       )}
                       <div className="bubble">
                         {m.content
@@ -700,7 +701,7 @@ export default function Chat({ name, email, image, features, guest = false, prov
                               <button type="button" className="ans-share" title="이 답변을 공개 링크로 공유해요"
                                 onClick={(e) => { e.stopPropagation();
                                   const q = messages[i - 1]?.role === "user" ? messages[i - 1].content : m.content;
-                                  setShareMsg({ title: (m.hook || q || "ValueGraph 리서치").slice(0, 90), msg: m }); }}>
+                                  setShareMsg({ title: (m.hook || q || "Amber 리서치").slice(0, 90), msg: m }); }}>
                                 <span aria-hidden>↗</span> 공유
                               </button>
                             )}

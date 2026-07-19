@@ -16,6 +16,8 @@ WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
+# Amber 브랜드 정적 자산 (favicon·아이콘·manifest·og.png) — standalone은 public/을 자동 포함 안 함
+COPY --from=build /app/public ./public
 # V-1: 서버사이드 OG 카드의 한글 폰트 (standalone 트레이싱이 런타임 readFile을 못 따라감)
 COPY --from=build /app/assets ./assets
 EXPOSE 3000
