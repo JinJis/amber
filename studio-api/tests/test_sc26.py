@@ -105,6 +105,27 @@ async def test_me5_system_key_provisioned_cached_and_preferred(monkeypatch):
         assert _bg_api_key(db) == "vgk_sys"
 
 
+@respx.mock
+async def test_system_project_activates_premium_connectors(monkeypatch):
+    """어닝 레이더·한국 수급이 실제로 생성되려면 시스템 피드 키가 fmp·kis(프리미엄)까지 활성화해야
+    한다 — FREE만 활성이던 버그가 어닝 레이더를 통째로 0장으로 만들었다."""
+    import json as _json
+
+    monkeypatch.setattr(settings, "control_plane_url", "http://cp.test")
+    from studioapi.provision import _SYSTEM_STATE_KEY, ensure_system_project
+
+    with SessionLocal() as db:
+        db.query(ServiceState).filter(ServiceState.key == _SYSTEM_STATE_KEY).delete()
+        db.commit()
+
+    _, activations = _mock_cp(tenant="tsys2", project="psys2", key="vgk_sys2")
+    key = await ensure_system_project()
+    assert key == "vgk_sys2"
+    activated = {_json.loads(c.request.content)["connector_id"] for c in activations.calls}
+    assert {"fmp", "kis"} <= activated                     # 프리미엄 포함 (어닝·수급의 데이터원)
+    assert {"sec_edgar", "market_history", "google_news"} <= activated   # free도 함께
+
+
 async def test_me5_provision_degrades_when_control_plane_down(monkeypatch):
     """control-plane 미기동이면 None을 돌려주고 폴백에 맡긴다 — 부팅을 막지 않는다."""
     monkeypatch.setattr(settings, "control_plane_url", "http://127.0.0.1:1")  # nothing listening

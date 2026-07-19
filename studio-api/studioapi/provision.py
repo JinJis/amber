@@ -30,10 +30,11 @@ async def _admin(method: str, path: str, json: dict | None = None) -> dict:
         return resp.json()
 
 
-async def _activate_defaults(project_id: str) -> None:
-    """Activate every DEFAULT_CONNECTORS on a project (idempotent — the control-plane no-ops an
-    already-active one). Used at provision time AND to backfill when the default set grows."""
-    for connector_id in DEFAULT_CONNECTORS:
+async def _activate_defaults(project_id: str, connectors: list[str] | None = None) -> None:
+    """Activate connectors on a project (idempotent — the control-plane no-ops an already-active one).
+    Defaults to DEFAULT_CONNECTORS (the free set); the system feed project passes the full set so
+    background feeds can reach premium sources (fmp earnings/estimates, kis flows)."""
+    for connector_id in (connectors if connectors is not None else DEFAULT_CONNECTORS):
         try:
             await _admin("POST", f"/admin/projects/{project_id}/activations", {"connector_id": connector_id})
         except Exception:  # noqa: BLE001 — best-effort: already active / connector absent / mocked-off in tests
@@ -79,7 +80,10 @@ async def ensure_system_project() -> str | None:
         except Exception as exc:  # noqa: BLE001 — control-plane not ready yet → degrade, retry next boot
             log.warning("system project provisioning deferred (control-plane not ready): %s", exc)
             return None
-        await _activate_defaults(project["id"])
+        # 시스템 피드 키는 유저 플랜이 아니라 플랫폼 — 프리미엄(fmp 어닝 캘린더/컨센서스, kis 수급)까지
+        # 활성화해야 어닝 레이더·한국 수급 섹션이 실제로 생성된다(활성 안 하면 어닝 레이더가 0장).
+        from studioapi.plans import FREE_CONNECTORS, PREMIUM_CONNECTORS
+        await _activate_defaults(project["id"], list(FREE_CONNECTORS) + list(PREMIUM_CONNECTORS))
         state = {"tenant_id": tenant["id"], "project_id": project["id"], "api_key": key["api_key"]}
         with SessionLocal() as db:
             db.merge(ServiceState(key=_SYSTEM_STATE_KEY, value=_json.dumps(state)))

@@ -137,17 +137,24 @@ _HIST_DROP_EVENT = json.dumps({"daily_return_lte": -2.0})
 
 def _earnings_plan(tools: dict[str, dict]) -> list[tuple[str, dict, str]]:
     """어닝 레이더 — 미국 대표주들의 실적 캘린더(다가오는 발표일 eps_actual=null + ~50분기 비트/
-    미스 서프라이즈)와 일부 분기 컨센서스. 에디터가 D-day·서프라이즈 패턴·컨센 괴리를 엮게."""
+    미스 서프라이즈)와 일부 분기 컨센서스. fmp가 없으면(프리미엄 미활성/키 부재) SEC XBRL 실적
+    actuals(키불요)로 폴백 — 어닝 레이더가 통째로 비지 않도록. 에디터가 발표일·서프라이즈·EPS
+    추이를 엮게."""
     plan: list[tuple[str, dict, str]] = []
+    has_fmp = "fmp__earnings_calendar" in tools
     for tkr, name in _EARNINGS_BELLWETHERS:
-        if "fmp__earnings_calendar" in tools:
+        if has_fmp:
             plan.append(("fmp__earnings_calendar", {"ticker": tkr, "market": "US", "limit": 8},
                          f"{name} 실적 일정·서프라이즈 히스토리"))
-    for tkr, name in _EARNINGS_BELLWETHERS[:2]:
-        if "fmp__consensus_estimates" in tools:
-            plan.append(("fmp__consensus_estimates",
-                         {"ticker": tkr, "market": "US", "period": "quarter"},
-                         f"{name} 분기 컨센서스 추정치"))
+        elif "sec_edgar__earnings" in tools:   # 키불요 폴백 — 과거 실적(EPS actuals) 추이
+            plan.append(("sec_edgar__earnings", {"ticker": tkr, "market": "US", "limit": 8},
+                         f"{name} 과거 실적(EPS) 추이"))
+    if has_fmp:
+        for tkr, name in _EARNINGS_BELLWETHERS[:2]:
+            if "fmp__consensus_estimates" in tools:
+                plan.append(("fmp__consensus_estimates",
+                             {"ticker": tkr, "market": "US", "period": "quarter"},
+                             f"{name} 분기 컨센서스 추정치"))
     return plan
 
 
@@ -292,9 +299,11 @@ _NEWS_PROMPT = """당신은 글로벌 매크로 헤지펀드의 수석 스트래
 """
 
 _EARNINGS_PROMPT = """당신은 실적(어닝) 전담 애널리스트입니다. 아래는 방금 수집된 미국 대표주들의
-**실적 캘린더**(다가오는 발표일은 실제 EPS가 아직 없음(null) · 지난 분기들은 컨센서스 대비 실제
-EPS/매출과 서프라이즈% 히스토리)와 일부 **분기 컨센서스 추정치**입니다([n] 인덱스). 프로 투자자가
-"이번 실적 시즌에 이건 봐둬야 해"라며 눌러볼 어닝 레이더 카드를 {limit}개 이내로 만드세요.
+실적 데이터입니다([n] 인덱스). 소스에 따라 **실적 캘린더**(다가오는 발표일은 실제 EPS가 아직
+없음(null) · 지난 분기들은 컨센서스 대비 실제 EPS/매출과 서프라이즈% 히스토리)이거나 **과거 실적
+actuals**(공시 기준 분기별 실제 EPS/매출 추이)일 수 있습니다 — **스니펫에 실제로 있는 필드만 쓰세요.**
+발표일이 없으면 '발표 임박' 카드는 만들지 말고, 있는 데이터(EPS 추이·서프라이즈·컨센 괴리)로만
+만드세요. 프로 투자자가 "이건 봐둬야 해"라며 눌러볼 어닝 레이더 카드를 {limit}개 이내로 만드세요.
 
 깊이 — 단순히 "곧 실적 발표"만 나열하면 실격입니다. 데이터를 엮어 긴장을 드러내세요:
 - 다가오는 발표 × 과거 서프라이즈 패턴: "다음 발표가 임박했는데 최근 N개 분기 연속 비트/미스".

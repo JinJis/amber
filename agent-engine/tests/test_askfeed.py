@@ -285,6 +285,25 @@ def test_section_plans_are_marketwide_not_a_ticker_sweep():
     assert "daily_return_lte" in ev                          # base_rates event = JSON 문자열
 
 
+def test_earnings_plan_uses_fmp_else_sec_fallback():
+    # fmp 활성(엔타이틀) 시 fmp 캘린더+컨센서스; 없으면 키불요 SEC 실적으로 폴백(어닝 레이더가
+    # 통째로 비지 않도록 — 시스템 피드 키에 fmp 미활성이던 버그의 그레이스풀 폴백).
+    ep = AF._earnings_plan({t: {} for t in ["fmp__earnings_calendar", "fmp__consensus_estimates",
+                                            "sec_edgar__earnings"]})
+    names = [n for n, _, _ in ep]
+    assert "fmp__earnings_calendar" in names and "fmp__consensus_estimates" in names
+    assert "sec_edgar__earnings" not in names          # fmp 있으면 SEC 폴백은 안 씀
+
+    # fmp 없음 → SEC 실적 actuals로 폴백 (US 대표주)
+    fb = AF._earnings_plan({"sec_edgar__earnings": {}})
+    fbn = [n for n, _, _ in fb]
+    assert fbn and set(fbn) == {"sec_edgar__earnings"}
+    assert {a["ticker"] for _, a, _ in fb} >= {"AAPL", "NVDA"}
+
+    # 둘 다 없으면 빈 플랜(정직한 축소)
+    assert AF._earnings_plan({}) == []
+
+
 def test_section_plan_dispatch():
     assert AF._section_plan("earnings_radar", {"fmp__earnings_calendar": {}}) \
         == AF._earnings_plan({"fmp__earnings_calendar": {}})
