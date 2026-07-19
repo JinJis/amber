@@ -326,6 +326,25 @@ describe("CockpitEntry (ASK-6 v5)", () => {
     expect(onPick).toHaveBeenCalledWith("엔비디아 최근 8개 분기 컨센서스 대비 실제 EPS 서프라이즈를 정리해줘");
   });
 
+  it("칼럼은 상위 6개만 접어서 보여주고, 더 보기로 전체(≤20)를 펼친다", async () => {
+    const many = Array.from({ length: 9 }, (_, i) => ({
+      kind: "macro", question: `심층 질문 ${i}번을 같이 볼까요?`, query: `질문 ${i} 살펴봐`,
+      hook: `훅 ${i}`, citations: [{ source: "FRED", url: "http://z", tool: "fred__macro_panel" }],
+    }));
+    stubApis({ sections: [{ scope: "news_feed", cards: many }] });
+    render(<CockpitEntry onPick={vi.fn()} />);
+    const col = await screen.findByTestId("ck-news");
+    expect(col.querySelectorAll(".tb-row").length).toBe(6);          // 접힘: 상위 6
+    const more = screen.getByTestId("ck-news-more");
+    expect(more.textContent).toContain("3개 더 보기");
+    fireEvent.click(more);
+    expect(col.querySelectorAll(".tb-row").length).toBe(9);          // 펼침: 전체
+    const ranks = [...col.querySelectorAll(".tb-rank")].map((el) => el.textContent);
+    expect(ranks[8]).toBe("9");                                      // 순위 연속
+    fireEvent.click(more);                                           // 접기
+    expect(col.querySelectorAll(".tb-row").length).toBe(6);
+  });
+
   it("모르는 스코프의 섹션은 건너뛴다", async () => {
     stubApis({ sections: [{ scope: "news_feed", cards: NEWS }, { scope: "made_up_scope", cards: NEWS }] });
     render(<CockpitEntry onPick={vi.fn()} />);

@@ -50,7 +50,11 @@ function TrendColumn({ meta, cards, onPick, onEvidence }: {
   meta: SectionMeta; cards: AskCard[];
   onPick: (q: string) => void; onEvidence?: (cit: Citation) => void;
 }) {
-  const top = cards.slice(0, BOARD_TOP_N);
+  // 기본은 상위 6개(스캔 밀도) — 나머지는 "더 보기"로 펼친다. 생성분(섹션당 최대 20장)을
+  // 버리지 않으면서 첫 화면 밀도를 지키는 표준 패턴. 순위 번호는 펼쳐도 이어진다.
+  const [expanded, setExpanded] = useState(false);
+  const top = expanded ? cards : cards.slice(0, BOARD_TOP_N);
+  const hidden = cards.length - BOARD_TOP_N;
   return (
     <section className="tb-col" data-testid={meta.testId}>
       <div className="tb-h">
@@ -89,6 +93,13 @@ function TrendColumn({ meta, cards, onPick, onEvidence }: {
           );
         })}
       </ol>
+      {hidden > 0 && (
+        <button type="button" className="tb-more" data-testid={`${meta.testId}-more`}
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}>
+          {expanded ? "접기 ▴" : `${hidden}개 더 보기 ▾`}
+        </button>
+      )}
     </section>
   );
 }
