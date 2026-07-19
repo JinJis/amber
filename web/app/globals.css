@@ -218,6 +218,9 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 /* 본문 수치 하이라이트 (CSS Custom Highlight API) */
 .ctxpane .artifacts { margin: 0; }
 .ctxpane .ctx-more > summary { cursor: pointer; list-style: revert; }
+.ctxpane .ctx-more > summary.ctx-label { font-size: 11.5px; font-weight: 600; color: var(--text-2);
+  padding: 4px 2px; border-radius: 8px; transition: color .12s; }
+.ctxpane .ctx-more > summary.ctx-label:hover { color: var(--text); }
 .ctxpane .ctx-more > summary.ctx-label { margin-bottom: 0; }
 .ctxpane .ctx-more[open] > summary.ctx-label { margin-bottom: 8px; }
 .ctxpane .tool { font-size: 12px; }
@@ -1573,8 +1576,8 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 /* foldable header — collapsed shows only the latest step; click to expand the full trace */
 .tl-bar { display: flex; align-items: center; gap: 7px; width: 100%; text-align: left; background: none;
   border: none; cursor: pointer; padding: 2px 0 4px; font-family: inherit; }
-.tl-bar .tl-chev { font-size: 10px; color: var(--muted); width: 11px; flex: none; }
-.tl-bar .tl-bar-lbl { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.tl-bar .tl-chev { font-size: 12px; color: var(--accent-fg); width: 13px; flex: none; }
+.tl-bar .tl-bar-lbl { font-size: 12px; font-weight: 600; letter-spacing: .01em; color: var(--text-2); }
 .tl-bar:hover .tl-bar-lbl, .tl-bar:hover .tl-chev { color: var(--text); }
 .tl-step { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); line-height: 1.4; }
 .tl-step.active { color: var(--text); font-weight: 500; }
@@ -1583,8 +1586,13 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
   border-top-color: var(--accent); border-radius: 50%; animation: tl-spin .7s linear infinite; }
 @keyframes tl-spin { to { transform: rotate(360deg); } }
 .thinking-log { margin: 2px 0 8px; max-width: 680px; }
-.thinking-log > summary { cursor: pointer; font-size: 12px; color: var(--muted); padding: 4px 0; list-style: none; }
+.thinking-log > summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--text-2);
+  padding: 7px 12px 7px 10px; list-style: none; display: inline-flex; align-items: center; gap: 8px;
+  border: 1px solid var(--line-2); border-radius: 999px; background: var(--panel); transition: all .12s; }
 .thinking-log > summary::-webkit-details-marker { display: none; }
+.thinking-log > summary::before { content: "▸"; font-size: 11px; color: var(--accent-fg); }
+.thinking-log[open] > summary::before { content: "▾"; }
+.thinking-log > summary:hover { border-color: var(--ink); color: var(--text); }
 .thinking-log .tl-step { padding: 3px 0; font-size: 12px; }
 
 /* M-SHARE (SH-2/3) — share sheet + the public /s/{token} page */
@@ -1702,12 +1710,21 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
   gap: 8px 14px; flex-wrap: wrap; }
 .answer-foot .ctx-hint { margin: 0; }
 .answer-foot .af-spacer { flex: 1; }
-.ans-share { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500;
-  color: var(--text-2); background: var(--panel); border: 1px solid var(--line-2);
-  border-radius: 999px; padding: 6px 14px; cursor: pointer; white-space: nowrap;
-  transition: border-color .15s, color .15s, background .15s; }
-.ans-share:hover { border-color: var(--ink); color: var(--ink); background: var(--panel-2); }
-.ans-share span[aria-hidden] { font-size: 13px; }
+/* ── Kebab(⋯) 메뉴 — 답변 액션(복사·재생성·공유) 오른쪽 끝 모음 ── */
+.kebab { position: relative; display: inline-flex; }
+.kebab-btn { width: 32px; height: 32px; border-radius: 999px; border: 1px solid var(--line-2);
+  background: var(--panel); color: var(--text-2); font-size: 17px; line-height: 1; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; transition: all .12s; }
+.kebab-btn:hover, .kebab-btn[aria-expanded="true"] { border-color: var(--ink); color: var(--text); }
+.kebab-menu { position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 30; min-width: 132px;
+  display: flex; flex-direction: column; padding: 5px; border: 1px solid var(--line-2);
+  border-radius: 11px; background: var(--panel); }
+.kebab-item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  background: none; border: none; color: var(--text); font-size: 13px; font-family: inherit;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+.kebab-item:hover { background: var(--rail-active); }
+/* 답변 준비 중(본문 전) — 박스 없는 최소 표시 */
+.ans-pending { font-size: 12.5px; color: var(--muted); padding: 2px 0; }
 
 /* ── Mobile: the public share page is the SNS landing — most traffic is phones ─────────── */
 @media (max-width: 640px) {
@@ -1760,7 +1777,6 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
   .top { display: none; }                     /* the m-topbar is the only header — no double bar */
   .msg.assistant .md.article { font-size: 15px; line-height: 1.75; }   /* comfortable phone reading */
   .answer-foot { gap: 6px 10px; }
-  .ans-share { padding: 7px 15px; font-size: 12.5px; }   /* ≥40px tap target */
 
   /* composer docks at the very bottom, safe-area aware; 16px input = no iOS zoom-on-focus */
   .composer { padding: 10px 12px; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
@@ -2045,14 +2061,6 @@ img, svg, video { max-width: 100%; }
 .share-followups { display: flex; flex-direction: column; gap: 6px; }
 .share-followups .sf-label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .share-followups .fu-chip { text-decoration: none; }
-
-/* V-2 잔여: 답변 우상단 공유 진입점 — 긴 아티클에서도 공유가 한 시선 안에 */
-.ans-share-top { position: absolute; top: 6px; right: 6px; z-index: 2; width: 30px; height: 30px;
-  border-radius: 8px; border: 1px solid var(--line-2); background: var(--panel); color: var(--text-2);
-  font-size: 14px; cursor: pointer; opacity: 0; transition: opacity .15s, border-color .15s; }
-.answer-focusable:hover .ans-share-top, .ans-share-top:focus-visible { opacity: 1; }
-.ans-share-top:hover { border-color: var(--ink); color: var(--ink); }
-@media (pointer: coarse) { .ans-share-top { opacity: .75; } }   /* 터치엔 상시 노출 */
 
 /* ONB-LIVE + UX 확대: 온보딩을 더 크게, 프리뷰를 주인공으로 */
 .onb { width: 800px; }

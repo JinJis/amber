@@ -17,7 +17,7 @@ import { ContextPanel, evidenceOf, uniqueTools } from "./EvidencePanel";
 import { type LedgerRow } from "../lib/evidence";
 import { useIsMobile } from "../lib/useIsMobile";
 import { SourceViewer } from "./SourceViewer";
-import { Button, Chip, GuardrailLabel, Mascot, FreshnessDot } from "./ui";
+import { Button, Chip, GuardrailLabel, KebabMenu, Mascot, FreshnessDot } from "./ui";
 import { Logo } from "./Logo";
 import type { Features } from "../lib/features";
 import { FeaturesProvider } from "../lib/features-context";
@@ -633,7 +633,9 @@ export default function Chat({ name, email, image, features, guest = false, prov
                     <SubAgentCards subs={m.subagents!} />
                   )}
                   {m.role === "assistant" ? (
-                    // Click the answer to pin its evidence in the right context panel.
+                    m.content ? (
+                    // 답변 본문이 생겼을 때만 래퍼를 그린다(생성 전엔 위의 분석 과정만 보이고
+                    // 빈 답변 박스는 아예 없음). 답변을 클릭하면 우측 근거 패널에 고정.
                     <div
                       className="answer-focusable"
                       role="button"
@@ -643,35 +645,31 @@ export default function Chat({ name, email, image, features, guest = false, prov
                       onClick={() => { setFocusIdx(i); if (isMobile) setCtxSheet(true); }}
                       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setFocusIdx(i); if (isMobile) setCtxSheet(true); } }}
                     >
-                      {m.content && !(busy && i === messages.length - 1) && (
-                        <button type="button" className="ans-share-top" title="이 답변 공유"
-                          onClick={(e) => { e.stopPropagation();
-                            const q = messages[i - 1]?.role === "user" ? messages[i - 1].content : m.content;
-                            setShareMsg({ title: (m.hook || q || "Amber 리서치").slice(0, 90), msg: m }); }}>↗</button>
-                      )}
                       <div className="bubble">
-                        {m.content
-                          ? <AnswerArticle content={m.content} artifacts={m.artifacts}
-                              ledger={(m.audit?.ledger ?? []) as LedgerRow[]}
-                              streaming={busy && i === messages.length - 1}
-                              mdComponents={makeMdComponents(panelIdx === i ? hoverCite : null, setHoverCite, citeClickFor(i),
-                                { rows: (m.audit?.ledger ?? []) as LedgerRow[], citations: m.citations ?? [],
-                                  onEvidence: setViewer })}
-                              onEvidence={setViewer} onShare={(a) => setShareArt(a)} />
-                          : (busy && !(m.thinking?.length) ? "…" : "")}
+                        <AnswerArticle content={m.content} artifacts={m.artifacts}
+                          ledger={(m.audit?.ledger ?? []) as LedgerRow[]}
+                          streaming={busy && i === messages.length - 1}
+                          mdComponents={makeMdComponents(panelIdx === i ? hoverCite : null, setHoverCite, citeClickFor(i),
+                            { rows: (m.audit?.ledger ?? []) as LedgerRow[], citations: m.citations ?? [],
+                              onEvidence: setViewer })}
+                          onEvidence={setViewer} onShare={(a) => setShareArt(a)} />
                       </div>
-                      {/* Answer footer — one clean action row: evidence stats (left) + a clear
-                          공유 button (right). SH-ANSWER: 공유 snapshots the whole answer to a public
-                          link; shown on every finished answer (hidden only while still streaming). */}
+                      {/* Answer footer — evidence stats (left) + a "⋯" menu (far right) with
+                          복사·재생성·공유. SH-ANSWER: 공유 snapshots the whole answer to a public
+                          link; the row is hidden entirely while still streaming. */}
                       {(() => {
                         const nArt = m.artifacts?.length || 0;
                         const nUsed = evidenceOf(m).length;
                         const nTool = uniqueTools(m.tools).length;
                         const hasStats = nArt || nUsed || nTool;
                         const streaming = busy && i === messages.length - 1;
-                        const showShare = !!m.content && !streaming;
-                        // 답변이 다 작성되기 전엔 하단 액션 행 전체를 숨긴다(스트리밍 중 노출 금지).
-                        if (streaming || (!hasStats && !showShare)) return null;
+                        const showActions = !streaming;   // 본문이 있을 때만 이 블록이 그려짐
+                        if (streaming || (!hasStats && !showActions)) return null;
+                        const canRegen = i === messages.length - 1 && !busy && messages[i - 1]?.role === "user";
+                        const shareThis = () => {
+                          const q = messages[i - 1]?.role === "user" ? messages[i - 1].content : m.content;
+                          setShareMsg({ title: (m.hook || q || "Amber 리서치").slice(0, 90), msg: m });
+                        };
                         return (
                           <div className="answer-foot">
                             {hasStats ? (
@@ -682,33 +680,25 @@ export default function Chat({ name, email, image, features, guest = false, prov
                                 <span className="ch-go">{panelIdx === i ? "근거 패널에 표시 중" : "근거 패널에서 보기 →"}</span>
                               </div>
                             ) : <span className="af-spacer" />}
-                            {showShare && (
-                              <>
-                              <button type="button" className="ans-share" title="답변 텍스트 복사"
-                                onClick={async (e) => { e.stopPropagation();
-                                  try { await navigator.clipboard.writeText(m.content.replace(/\{\{figure:\d+\}\}/g, "")); } catch {} }}>
-                                ⧉ 복사
-                              </button>
-                              {i === messages.length - 1 && !busy && messages[i - 1]?.role === "user" && (
-                                <button type="button" className="ans-share" title="같은 질문으로 다시 생성"
-                                  onClick={(e) => { e.stopPropagation(); send(messages[i - 1].content); }}>
-                                  ↻ 재생성
-                                </button>
-                              )}
-                              </>
-                            )}
-                            {showShare && (
-                              <button type="button" className="ans-share" title="이 답변을 공개 링크로 공유해요"
-                                onClick={(e) => { e.stopPropagation();
-                                  const q = messages[i - 1]?.role === "user" ? messages[i - 1].content : m.content;
-                                  setShareMsg({ title: (m.hook || q || "Amber 리서치").slice(0, 90), msg: m }); }}>
-                                <span aria-hidden>↗</span> 공유
-                              </button>
+                            {showActions && (
+                              <KebabMenu label="답변 액션" items={[
+                                { key: "copy", label: "⧉ 복사", onClick: () => {
+                                  navigator.clipboard.writeText(m.content.replace(/\{\{figure:\d+\}\}/g, "")).catch(() => {}); } },
+                                ...(canRegen ? [{ key: "regen", label: "↻ 재생성",
+                                  onClick: () => send(messages[i - 1].content) }] : []),
+                                { key: "share", label: "↗ 공유", onClick: shareThis },
+                              ]} />
                             )}
                           </div>
                         );
                       })()}
                     </div>
+                    ) : (
+                      // 본문 없음 — 생각 과정/하위 에이전트가 이미 위에서 진행을 알린다.
+                      // 그 신호조차 없을 때만 최소 pending 한 줄(박스 아님).
+                      (busy && i === messages.length - 1 && !(m.thinking?.length) && !(m.subagents?.length))
+                        ? <div className="ans-pending">답변을 준비하고 있어요…</div> : null
+                    )
                   ) : (
                     <div className="bubble">{m.content}</div>
                   )}

@@ -6,7 +6,7 @@
 // markup/classes, so the visual language stays unified. Tokens live in globals.css
 // :root; these primitives own the structural classNames that consume them.
 
-import { ButtonHTMLAttributes, ReactNode, useEffect } from "react";
+import { ButtonHTMLAttributes, ReactNode, useEffect, useRef, useState } from "react";
 import { cadenceLabel } from "@/lib/alerts";
 
 // ── Button ──────────────────────────────────────────────────────────────────
@@ -106,6 +106,41 @@ export function HistoricalLabel() {
 import { Logo } from "./Logo";
 export function Mascot({ size }: { size?: number }) {
   return <Logo variant="mark" size={size ?? 18} />;
+}
+
+// ── Kebab menu (⋯) ─────────────────────────────────────────────────────────--
+// 한 답변의 액션(복사·재생성·공유)을 오른쪽 끝 "⋯" 안으로 모은다. 바깥 클릭·Esc로 닫힘.
+// 별도 팝오버 프리미티브가 없어 자체 구현(Modal은 전체 화면 백드롭이라 인라인 메뉴엔 과함).
+export type KebabItem = { key: string; label: string; onClick: () => void };
+export function KebabMenu({ items, label = "더보기" }: { items: KebabItem[]; label?: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onEsc);
+    return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onEsc); };
+  }, [open]);
+  if (!items.length) return null;
+  return (
+    <div className="kebab" ref={ref}>
+      <button type="button" className="kebab-btn" aria-haspopup="menu" aria-expanded={open}
+        title={label} aria-label={label}
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>⋯</button>
+      {open && (
+        <div className="kebab-menu" role="menu">
+          {items.map((it) => (
+            <button key={it.key} type="button" role="menuitem" className="kebab-item"
+              onClick={(e) => { e.stopPropagation(); setOpen(false); it.onClick(); }}>
+              {it.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Modal shell ───────────────────────────────────────────────────────────--
