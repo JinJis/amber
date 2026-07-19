@@ -7,7 +7,8 @@ import type { Citation } from "@/lib/types";
 import { TickerLogo } from "./TickerLogo";
 
 export type AskCard = { kind: string; question: string; query?: string | null; hook: string;
-                        ticker?: string | null; market?: string | null; citations?: Citation[] };
+                        ticker?: string | null; market?: string | null; citations?: Citation[];
+                        taps?: number };   // RC-2: 최근 7일 전 유저 탭 수 (홈 보드 랭킹 실측치)
 
 // per-kind emoji + short label — one warm mark per card.
 export const KIND: Record<string, { i: string; t: string }> = {
@@ -51,7 +52,7 @@ export function QCard({ c, name, onPick, onEvidence, nonInteractive }: {
       <button type="button" className="qc-main" tabIndex={tab} onClick={() => {
         // RC-1: 탭 신호(fire-and-forget) — 실패해도 UX 무영향
         try { fetch("/api/ask-feed/tap", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kind: c.kind, ticker: c.ticker ?? null }) }).catch(() => {}); } catch {}
+          body: JSON.stringify({ kind: c.kind, ticker: c.ticker ?? null, question: c.question }) }).catch(() => {}); } catch {}
         onPick(c.query || c.question);
       }}>
         <div className="qc-top">

@@ -1,13 +1,12 @@
 "use client";
 
-// ASK-6/9 탐구 엔트리 (v5). 접속 시 LLM 0회 — 뉴스 질문 피드는 백그라운드 캐시, 종목
-// 분석거리는 사용자가 종목을 "직접 눌렀을 때"만 온디맨드 생성(소스별 후보 → 다양성 큐레이션).
-// v5 레이아웃 — 섹션 세로 스택:
-//   ① 내 관심종목 파고들기 — 1차 depth는 관심 @그룹 아코디언. 그룹을 누르면 안의 종목 칩이
-//     토글되고, 종목을 누르면 그 자리에서 분석 카드 3~5개. 리스트 끝 ＋ 새 그룹은 관심
-//     페이지의 생성 플로우 그대로 — 만들면 관심 페이지로 이동해 종목을 채운다(onManageWatch).
-//   ② Macro Trends — 우→좌로 흐르는 질문 카드 마키(호버·포커스 시 정지, 모션 최소화
-//     설정에서는 가로 스크롤). 카드는 백그라운드 캐시 최대 20장.
+// ASK-6/9 탐구 엔트리 (v7). 접속 시 LLM 0회 — 모든 카드는 백그라운드 캐시, 종목 분석거리는
+// 사용자가 종목을 "직접 눌렀을 때"만 온디맨드 생성(소스별 후보 → 다양성 큐레이션).
+// v7 레이아웃:
+//   ① 내 관심종목 파고들기 — 관심 @그룹 칩 한 줄(가로 스크롤, ＋새그룹은 우측 sticky).
+//     그룹 탭 → 아래 패널에 종목 칩 토글, 종목 탭 → 그 자리에서 분석 카드 3~5개.
+//   ② 트렌드 보드 — Macro Trends·어닝 레이더·투자거장·수급·히스토리 랩을 3단 정적 칼럼으로.
+//     카드 = 순위 행: 서버가 실측 인기(최근 7일 전 유저 탭 수)로 정렬, 🔥 수치 노출(0이면 숨김).
 // 전역 규칙: 카드 탭 = 컴포저 채움(자동 전송 없음). 출처 탭 = 근거 뷰어. 미생성 = 정직한 공백.
 
 import { useEffect, useState, type ReactNode } from "react";
@@ -41,36 +40,55 @@ const SECTION_META: Record<string, SectionMeta> = {
   },
 };
 
-// 우→좌 마키(호버·포커스 시 정지). 카드가 4장 미만이면 흐르지 않는 정적 행 — 한두 장이
-// 뱅뱅 도는 어색한 루프 방지. 카드 탭 = 컴포저 채움, 출처 탭 = 근거 뷰어.
-function TrendMarquee({ meta, cards, onPick, onEvidence }: {
+// 정적 랭킹 보드 — 마키 폐기(우→좌 흐름은 스캔이 안 됨). 섹션 = 칼럼, 카드 = 순위 행.
+// 순서는 서버가 실측 인기(최근 7일 전 유저 탭 수, RC-2)로 정렬해 내려준다 — 동률은 LLM
+// 중요도(큐레이션 순서). 🔥 수치는 실측이라 0이면 숨긴다(날조 없음). 행 탭 = 컴포저 채움,
+// 출처 탭 = 근거 뷰어. 상위 6개만 — 스캔 가능한 밀도가 마키 20장보다 낫다.
+const BOARD_TOP_N = 6;
+
+function TrendColumn({ meta, cards, onPick, onEvidence }: {
   meta: SectionMeta; cards: AskCard[];
   onPick: (q: string) => void; onEvidence?: (cit: Citation) => void;
 }) {
+  const top = cards.slice(0, BOARD_TOP_N);
   return (
-    <section className="ask-sec" data-testid={meta.testId}>
-      <div className="ask-col-h">
-        <span className="ask-col-t">{meta.emoji} {meta.title}</span>
-        {meta.sub ? <span className="ask-col-sub mono">{meta.sub}</span> : null}
+    <section className="tb-col" data-testid={meta.testId}>
+      <div className="tb-h">
+        <span className="tb-t">{meta.emoji} {meta.title}</span>
+        {meta.sub ? <span className="tb-sub mono">{meta.sub}</span> : null}
       </div>
-      <p className="ask-col-desc">{meta.desc}</p>
-      <div className={`mq ${cards.length < 4 ? "mq-static" : ""}`} data-testid={`${meta.testId}-mq`}>
-        <div className="mq-track" style={{ animationDuration: `${Math.max(45, cards.length * 8)}s` }}>
-          <div className="mq-half">
-            {cards.map((c, i) => (
-              <div key={i} className="mq-card"><QCard c={c} onPick={onPick} onEvidence={onEvidence} /></div>
-            ))}
-          </div>
-          {/* 이어붙인 복제 절반 — 끊김 없는 루프용(aria-hidden + tabIndex=-1). */}
-          {cards.length >= 4 && (
-            <div className="mq-half mq-dup" aria-hidden>
-              {cards.map((c, i) => (
-                <div key={`d${i}`} className="mq-card"><QCard c={c} onPick={onPick} onEvidence={onEvidence} nonInteractive /></div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+      <ol className="tb-list">
+        {top.map((c, i) => {
+          const cit = c.citations?.[0];
+          return (
+            <li key={i} className="tb-row">
+              <button type="button" className="tb-main" onClick={() => {
+                try { fetch("/api/ask-feed/tap", { method: "POST", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ kind: c.kind, ticker: c.ticker ?? null, question: c.question }) }).catch(() => {}); } catch {}
+                onPick(c.query || c.question);
+              }}>
+                <span className="tb-rank mono" aria-hidden>{i + 1}</span>
+                <span className="tb-body">
+                  <span className="tb-q">{c.question}</span>
+                  <span className="tb-meta">
+                    {(c.taps ?? 0) > 0 && (
+                      <span className="tb-taps mono" data-testid="tb-taps"
+                        title={`최근 7일 동안 ${c.taps}번 열어본 질문이에요`}>🔥 {c.taps}</span>
+                    )}
+                    <span className="tb-hook">{c.hook}</span>
+                  </span>
+                </span>
+              </button>
+              {cit?.source ? (
+                <button type="button" className="tb-src" title="근거 보기"
+                  onClick={(e) => { e.stopPropagation(); onEvidence?.(cit); }}>
+                  {cit.source}
+                </button>
+              ) : null}
+            </li>
+          );
+        })}
+      </ol>
     </section>
   );
 }
@@ -222,7 +240,6 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence, onManage
     <div className="ask" data-testid="cockpit">
       {/* 히어로 */}
       <div className="ask-hero">
-        <div className="ask-eyebrow mono">RESEARCH DESK</div>
         <h1 className="ask-title">오늘, 무엇을 분석할까요?</h1>
         <p className="ask-trust">모든 답에는 <b>출처[n]</b>가 붙고, <span className="ask-noforecast">전망은 하지 않아요</span>.</p>
       </div>
@@ -335,12 +352,16 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence, onManage
           )}
         </section>
 
-        {/* ②~⑤ 마키 섹션 — Macro Trends + 어닝 레이더 + 투자거장·수급 + 히스토리 랩.
-            우→좌 흐름(호버·포커스 정지). studio가 내려준 순서대로, 아는 스코프만 그린다. */}
-        {sections.map((s) => (
-          <TrendMarquee key={s.scope} meta={SECTION_META[s.scope]} cards={s.cards}
-            onPick={onPick} onEvidence={onEvidence} />
-        ))}
+        {/* ② 트렌드 보드 — Macro Trends·어닝 레이더·투자거장·수급·히스토리 랩을 관심종목
+            아래 3단 칼럼으로. 정적 + 실측 인기 랭킹(서버 정렬). 아는 스코프만 그린다. */}
+        {sections.length > 0 && (
+          <div className="tb-grid" data-testid="ck-board">
+            {sections.map((s) => (
+              <TrendColumn key={s.scope} meta={SECTION_META[s.scope]} cards={s.cards}
+                onPick={onPick} onEvidence={onEvidence} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

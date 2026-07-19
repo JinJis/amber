@@ -1,5 +1,5 @@
-// ASK-6 탐구 엔트리 v5: 섹션 세로 스택 — ①관심 @그룹 아코디언(그룹 → 종목 칩 → 온디맨드
-// 분석 카드) + ＋ 새 그룹(생성 → 관심 페이지 이동) ②Macro Trends 마키(우→좌, 카드 복제 루프).
+// ASK-6 탐구 엔트리 v7: ①관심 @그룹 칩 한 줄(가로 스크롤 + ＋새그룹 우측 sticky) → 종목 칩 →
+// 온디맨드 분석 카드 ②트렌드 보드 — 3단 정적 랭킹 칼럼(서버 정렬 + 실측 🔥 탭 수, 마키 폐기).
 // 전역 규칙 = 카드 탭은 컴포저 채움, 출처 탭은 근거 뷰어(자동 전송 없음). 미생성/실패 =
 // 정직한 공백 (콘텐츠 날조 없음).
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -16,7 +16,7 @@ const TICKER_CARDS = [
 ];
 
 const NEWS = [
-  { kind: "macro", question: "물가 흐름을 최근 추이로 같이 볼까요?",
+  { kind: "macro", question: "물가 흐름을 최근 추이로 같이 볼까요?", taps: 12,
     query: "미국 CPI 3.1%가 최근 물가 추이에서 어디쯤인지 살펴봐", hook: "미 CPI 3.1%",
     citations: [{ source: "FRED", url: "http://z", tool: "fred__macro_panel" }] },
   { kind: "market", question: "코스피 급등, 수급으로 같이 볼까요?", query: "코스피 급등 수급 살펴봐",
@@ -186,35 +186,33 @@ describe("CockpitEntry (ASK-6 v5)", () => {
     expect(onManageWatch).toHaveBeenCalledWith("g-empty");
   });
 
-  it("Macro Trends 마키: 카드가 복제되어 흐르고, 탭 → 실행용 query가 컴포저로", async () => {
+  it("트렌드 보드는 정적: 카드는 한 벌, 마키 없음; 탭 → 실행용 query가 컴포저로", async () => {
     stubApis();
     const onPick = vi.fn(); const onQuestions = vi.fn();
     render(<CockpitEntry onPick={onPick} onQuestions={onQuestions} />);
     const newsSec = await screen.findByTestId("ck-news");
     expect(newsSec.textContent).toContain("Macro Trends");
-    expect(newsSec.textContent).toContain("🌍");
     expect(newsSec.textContent).toContain("미 CPI 3.1%");
     expect(newsSec.textContent).toContain("5분마다 갱신");
-    // 끊김 없는 루프: 4장 이상이면 카드가 두 벌 (복제 절반은 aria-hidden)
-    expect(screen.getByTestId("ck-news-mq").className).not.toContain("mq-static");
-    expect(screen.getAllByText(/물가 흐름을 최근 추이로/).length).toBe(2);
+    expect(screen.getByTestId("ck-board")).toBeTruthy();          // 정적 보드 (마키 폐기)
+    expect(document.querySelector(".mq-track")).toBeNull();       // 흐르는 트랙 없음
+    expect(screen.getAllByText(/물가 흐름을 최근 추이로/).length).toBe(1);   // 복제 없음 — 한 벌
     fireEvent.click(screen.getAllByText(/물가 흐름을 최근 추이로/)[0]);
     // F3: 컴포저에는 주체가 포함된 실행용 query가 들어간다 (표시용 question이 아니라)
     expect(onPick).toHaveBeenCalledWith("미국 CPI 3.1%가 최근 물가 추이에서 어디쯤인지 살펴봐");
     await waitFor(() => expect(onQuestions).toHaveBeenCalledWith(NEWS.map((c) => c.question)));
   });
 
-  it("마키 복제 절반은 aria-hidden + tabIndex=-1 (키보드/스크린리더 탭 순서 제외)", async () => {
+  it("랭킹: 순위 번호가 붙고, 실측 🔥 탭 수는 있을 때만 보인다", async () => {
     stubApis();
     render(<CockpitEntry onPick={vi.fn()} />);
-    const dup = (await screen.findByTestId("ck-news-mq")).querySelector(".mq-dup")!;
-    expect(dup.getAttribute("aria-hidden")).toBe("true");
-    const dupButtons = dup.querySelectorAll("button");
-    expect(dupButtons.length).toBeGreaterThan(0);
-    dupButtons.forEach((b) => expect(b.getAttribute("tabindex")).toBe("-1"));
-    // 진짜(보이는) 절반의 버튼은 탭 가능해야 한다 (tabIndex 없음)
-    const real = screen.getByTestId("ck-news-mq").querySelector(".mq-half:not(.mq-dup)")!;
-    real.querySelectorAll("button").forEach((b) => expect(b.getAttribute("tabindex")).toBeNull());
+    const newsSec = await screen.findByTestId("ck-news");
+    const ranks = [...newsSec.querySelectorAll(".tb-rank")].map((el) => el.textContent);
+    expect(ranks.slice(0, 4)).toEqual(["1", "2", "3", "4"]);      // 서버 정렬 순서 그대로 순위
+    const taps = screen.getAllByTestId("tb-taps");                 // 🔥 수치 — taps>0인 카드만
+    expect(taps.length).toBe(1);
+    expect(taps[0].textContent).toContain("12");
+    expect(taps[0].getAttribute("title")).toContain("최근 7일");
   });
 
   it("＋ 새 그룹: 중복 이름(409) → 영어 서버 메시지 대신 한국어 해요체 안내", async () => {
@@ -237,11 +235,10 @@ describe("CockpitEntry (ASK-6 v5)", () => {
     expect(screen.queryByText(/You already have/)).toBeNull();     // 영어 격식체 노출 금지
   });
 
-  it("카드가 4장 미만이면 마키 대신 정적 행 (복제 없음)", async () => {
+  it("카드가 적어도 보드는 그대로 정적 (복제·흐름 없음)", async () => {
     stubApis({ fewNews: true });
     render(<CockpitEntry onPick={vi.fn()} />);
-    const mq = await screen.findByTestId("ck-news-mq");
-    expect(mq.className).toContain("mq-static");
+    await screen.findByTestId("ck-news");
     expect(screen.getAllByText(/물가 흐름을 최근 추이로/).length).toBe(1);
   });
 
@@ -249,8 +246,8 @@ describe("CockpitEntry (ASK-6 v5)", () => {
     stubApis();
     const onPick = vi.fn(); const onEvidence = vi.fn();
     render(<CockpitEntry onPick={onPick} onEvidence={onEvidence} />);
-    await screen.findByTestId("ck-news");
-    fireEvent.click(screen.getAllByText("근거 보기 →")[0].closest("button")!);
+    const newsSec = await screen.findByTestId("ck-news");
+    fireEvent.click([...newsSec.querySelectorAll(".tb-src")][0]!);   // 행 끝 출처 버튼
     expect(onEvidence).toHaveBeenCalledWith(expect.objectContaining({ source: "FRED" }));
     expect(onPick).not.toHaveBeenCalled();                          // 출처는 컴포저를 채우지 않음
   });
@@ -302,7 +299,7 @@ describe("CockpitEntry (ASK-6 v5)", () => {
     expect(screen.queryByTestId("tk-005930")).toBeNull();
   });
 
-  it("v6 섹션: Macro Trends 뒤로 어닝·거장·히스토리 마키가 순서대로", async () => {
+  it("보드 칼럼: Macro Trends 뒤로 어닝·거장·히스토리가 순서대로", async () => {
     stubApis({ sections: SECTIONS });
     render(<CockpitEntry onPick={vi.fn()} />);
     const news = await screen.findByTestId("ck-news");

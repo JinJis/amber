@@ -154,6 +154,34 @@ def test_assemble_includes_section_marquees():
     assert out["news_feed"][0]["kind"] == "macro"             # backward-compat 필드 유지
 
 
+def test_assemble_ranks_cards_by_recent_taps():
+    """RC-2: 홈 보드 랭킹 — 카드별(질문 해시) 최근 7일 전 유저 탭 수를 실측으로 달고
+    핫한 순으로 정렬한다. 동률은 큐레이션 순서 유지, 수치는 taps 필드로 노출."""
+    from studioapi.askfeed import _qhash, hot_taps, rank_cards
+    from studioapi.models import CardTap
+
+    cards = [{"kind": "macro", "question": "질문 A", "hook": "a"},
+             {"kind": "market", "question": "질문 B", "hook": "b"},
+             {"kind": "micro", "question": "질문 C", "hook": "c"}]
+    with SessionLocal() as db:
+        _mk_user(db, "rk@u.com")
+        for _ in range(3):
+            db.add(CardTap(user_email="rk@u.com", kind="market", qhash=_qhash("질문 B")))
+        db.add(CardTap(user_email="rk@u.com", kind="micro", qhash=_qhash("질문 C")))
+        db.commit()
+        taps = hot_taps(db)
+    ranked = rank_cards(cards, taps)
+    assert [c["question"] for c in ranked] == ["질문 B", "질문 C", "질문 A"]   # 핫한 순
+    assert [c["taps"] for c in ranked] == [3, 1, 0]                            # 실측 수치 동봉
+    # 탭 엔드포인트가 question을 받으면 qhash가 저장된다
+    r = client.post("/ask-feed/tap", json={"kind": "macro", "question": "질문 A"},
+                    headers=_hdr("rk@u.com"))
+    assert r.status_code == 200
+    with SessionLocal() as db:
+        row = db.query(CardTap).filter(CardTap.qhash == _qhash("질문 A")).first()
+        assert row is not None
+
+
 def test_assemble_lists_tickers_without_cards_plus_news():
     with SessionLocal() as db:
         _mk_user(db, "asm@u.com")

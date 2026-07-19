@@ -297,23 +297,25 @@ def _assemble(db: Session, email: str) -> dict:
             entry["groups"].append(group)
 
     news = _payload_of(db.get(AskFeedCache, _NEWS_SCOPE))
-    # 홈 마키 섹션들 — Macro Trends(news_feed)를 맨 앞에 두고, 시장 전체 섹션 캐시를 순서대로.
-    # 카드가 있는 섹션만 (빈 섹션은 프런트가 그리지 않게 데이터 단계에서 제외). data-only —
-    # 제목·이모지·카피는 프런트가 scope로 매핑.
-    sections = [{"scope": _NEWS_SCOPE, "cards": news.get("cards") or [],
+    # 홈 보드 섹션들 — Macro Trends(news_feed)를 맨 앞에 두고, 시장 전체 섹션 캐시를 순서대로.
+    # 카드가 있는 섹션만. 각 카드에 실측 인기 수치(taps, 최근 7일 전 유저 탭)를 달고 핫한
+    # 순으로 정렬해 내려보낸다(RC-2) — 제목·이모지·카피는 프런트가 scope로 매핑.
+    taps = hot_taps(db)
+    news_ranked = rank_cards(news.get("cards") or [], taps)
+    sections = [{"scope": _NEWS_SCOPE, "cards": news_ranked,
                  "generated_at": news.get("generated_at")}]
     for s in _SECTION_SCOPES:
         p = _payload_of(db.get(AskFeedCache, s["scope"]))
         cards = p.get("cards") or []
         if cards:
-            sections.append({"scope": s["scope"], "cards": cards,
+            sections.append({"scope": s["scope"], "cards": rank_cards(cards, taps),
                              "generated_at": p.get("generated_at")})
     return {
         "groups": groups,
         "tickers": list(by_ticker.values()),
         "sections": sections,
         # backward-compat: Macro Trends 카드를 예전 필드로도 노출(구버전 프런트/기존 테스트).
-        "news_feed": news.get("cards") or [],
+        "news_feed": news_ranked,
         "news_generated_at": news.get("generated_at"),
     }
 
@@ -433,15 +435,40 @@ from studioapi.models import CardTap
 class TapIn(_BM):
     kind: str
     ticker: str | None = None
+    question: str | None = None   # RC-2: 카드 단위 인기 집계용 (서버는 해시만 저장)
+
+
+def _qhash(question: str | None) -> str | None:
+    """카드 식별 해시 — 질문 원문은 저장하지 않고 16자 해시만 (인기 집계 키)."""
+    import hashlib
+    q = (question or "").strip()
+    return hashlib.sha1(q.encode()).hexdigest()[:16] if q else None
 
 
 @router.post("/ask-feed/tap", summary="RC-1: 질문 카드 탭 기록 (개인화 신호)")
 async def record_tap(body: TapIn, user: User = Depends(current_user)) -> dict:
     with SessionLocal() as db:
         db.add(CardTap(user_email=user.email, kind=body.kind[:32],
-                       ticker=(body.ticker or None) and body.ticker[:32]))
+                       ticker=(body.ticker or None) and body.ticker[:32],
+                       qhash=_qhash(body.question)))
         db.commit()
     return {"ok": True}
+
+
+def hot_taps(db: Session, days: int = 7) -> dict[str, int]:
+    """홈 보드 랭킹 수치 — 최근 N일, 전 유저의 카드별(질문 해시) 탭 수 실측. 날조 없음:
+    집계가 0이면 0이고, UI는 0을 숨긴다(순위는 큐레이션 순서가 대신한다)."""
+    since = datetime.utcnow() - timedelta(days=days)
+    rows = db.execute(
+        select(CardTap.qhash, func.count()).where(CardTap.ts >= since, CardTap.qhash.is_not(None))
+        .group_by(CardTap.qhash)).all()
+    return {qh: int(n) for qh, n in rows}
+
+
+def rank_cards(cards: list[dict], taps: dict[str, int]) -> list[dict]:
+    """카드에 실측 `taps`를 달고 핫한 순으로 정렬 — 동률은 큐레이션 순서(LLM 중요도) 유지."""
+    annotated = [{**c, "taps": taps.get(_qhash(c.get("question")) or "", 0)} for c in cards]
+    return sorted(annotated, key=lambda c: -c["taps"])
 
 
 def rerank_by_taste(cards: list[dict], kind_counts: dict[str, int]) -> list[dict]:

@@ -699,8 +699,6 @@ select.input { appearance: none; }
 
 /* 히어로 */
 .ask-hero { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; }
-.ask-eyebrow { font-size: 10px; letter-spacing: .22em; color: var(--muted);
-  border: 1px solid var(--line-2); border-radius: 999px; padding: 3px 11px; background: var(--panel-2); }
 .ask-title { color: var(--text); font-family: var(--display); font-size: 28px; font-weight: 600; letter-spacing: -.02em; margin: 2px 0 0; }
 .ask-trust { color: var(--text-2); font-size: 12.5px; margin: 0; }
 .ask-trust b { color: var(--text); font-weight: 600; }
@@ -741,7 +739,11 @@ select.input { appearance: none; }
 
 /* v6: 관심 @그룹 칩 (1차 depth = 칩 나열, 누르면 아래 패널에서 종목 토글) */
 .eg-wrap { display: flex; flex-direction: column; gap: 12px; }
-.eg-chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+/* 칩은 한 줄 가로 스크롤 — 넘치면 칩들이 스크롤되고 ＋새그룹은 오른쪽 끝에 sticky로 고정 */
+.eg-chips { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center;
+  overflow-x: auto; overscroll-behavior-x: contain; padding-bottom: 2px;
+  scrollbar-width: thin; }
+.eg-chips > * { flex: none; }
 .eg-chip { display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px;
   border: 1px solid var(--line-2); border-radius: 999px; background: var(--panel);
   box-shadow: var(--shadow-card); cursor: pointer; font-family: inherit;
@@ -756,8 +758,13 @@ select.input { appearance: none; }
 .eg-count { font-size: 10px; color: var(--muted); border: 1px solid var(--line-3);
   border-radius: 999px; padding: 1px 7px; flex-shrink: 0; }
 .eg-chev { font-size: 10px; color: var(--muted); flex-shrink: 0; }
-/* ＋ 새 그룹 칩 — 관심 페이지 버튼 스타일을 칩 폭으로 (기본 width:100% 오버라이드) */
-.eg-add-chip { width: auto; border-radius: 999px; padding: 7px 13px; font-size: 13px; }
+/* ＋ 새 그룹 — 칩 줄 맨 오른쪽에 sticky 고정 (칩들이 그 아래로 스크롤됨).
+   .eg-chips 자손 선택자로 .wl-addgroup의 width:100%를 확실히 이긴다. */
+.eg-chips .eg-add-chip { width: auto; border-radius: 999px; padding: 7px 13px; font-size: 13px;
+  position: sticky; right: 0; margin-left: auto; z-index: 1;
+  background: var(--bg); border-style: dashed;
+  box-shadow: -10px 0 8px -6px var(--bg); }   /* 스크롤 경계 페이드 — 색은 배경 토큰 */
+.eg-chips .eg-new { position: sticky; right: 0; z-index: 1; background: var(--bg); }
 /* 펼친 그룹 패널 — 칩 줄 아래 전체폭 */
 .eg-panel { display: flex; flex-direction: column; gap: 10px; padding: 13px 14px;
   border: 1px solid var(--line-2); border-radius: 13px; background: var(--panel);
@@ -767,35 +774,40 @@ select.input { appearance: none; }
   border-radius: 999px; }
 .eg-new-err { font-size: 11px; color: var(--danger, #d66); }
 
-/* v5: Macro Trends 마키 — 우→좌 흐름, 호버/포커스 정지, 가장자리 페이드.
-   overflow: clip (hidden 아님) — clip은 스크롤 컨테이너가 아니라서 키보드 포커스가
-   .mq를 프로그래밍적으로 스크롤해 루프를 어긋나게 만드는 문제를 원천 차단한다. */
-.mq { overflow: clip; padding: 4px 0 6px;
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent);
-  mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent); }
-.mq-track { display: flex; width: max-content; animation: mq-flow 160s linear infinite; }
-.mq:hover .mq-track, .mq:focus-within .mq-track { animation-play-state: paused; }
-.mq-half { display: flex; }
-.mq-card { width: min(320px, 78vw); flex-shrink: 0; margin-right: 12px; display: flex; }
-.mq-card .qc { flex: 1; display: flex; flex-direction: column; }
-.mq-card .qc-main { flex: 1; align-content: flex-start; }
-@keyframes mq-flow { from { transform: translateX(0); } to { transform: translateX(-50%); } }
-/* 카드가 적어(콜드스타트) 흐르지 않는 정적 행 */
-.mq-static { -webkit-mask-image: none; mask-image: none; overflow-x: auto; overflow-y: hidden; }
-.mq-static .mq-track { animation: none; }
-/* 터치 기기(hover 없음): 호버 정지가 불가능하고 움직이는 탭 타깃은 나쁜 UX →
-   자동 흐름 대신 손가락으로 넘겨보는 정적 스와이프 행으로. */
-@media (hover: none) {
-  .mq { -webkit-mask-image: none; mask-image: none; overflow-x: auto; overflow-y: hidden;
-    -webkit-overflow-scrolling: touch; }
-  .mq-track { animation: none !important; }
-  .mq-dup { display: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .mq { -webkit-mask-image: none; mask-image: none; overflow-x: auto; overflow-y: hidden; }
-  .mq-track { animation: none !important; }
-  .mq-dup { display: none; }
-}
+/* v7: 트렌드 보드 — 정적 3단 랭킹 칼럼 (마키 폐기: 흐르는 카드가 스캔이 안 됨).
+   섹션 = 칼럼, 카드 = 순위 행(순위 번호 + 실측 🔥 탭 수). 모바일은 1단 스택. */
+.tb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px;
+  align-items: start; }
+.tb-col { display: flex; flex-direction: column; min-width: 0;
+  border: 1px solid var(--line-2); border-radius: 13px; background: var(--panel); overflow: hidden; }
+.tb-h { display: flex; align-items: center; gap: 8px; padding: 11px 13px 9px;
+  border-bottom: 1px solid var(--line-3); }
+.tb-t { font-size: 13.5px; font-weight: 700; color: var(--text); letter-spacing: -.01em; }
+.tb-sub { margin-left: auto; font-size: 9px; color: var(--faint); border: 1px solid var(--line-3);
+  border-radius: 999px; padding: 2px 7px; white-space: nowrap; flex: none; }
+.tb-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.tb-row { display: flex; align-items: stretch; border-bottom: 1px solid var(--line-3); }
+.tb-row:last-child { border-bottom: none; }
+.tb-main { display: flex; align-items: flex-start; gap: 9px; flex: 1; min-width: 0;
+  text-align: left; background: none; border: none; padding: 9px 4px 9px 12px; cursor: pointer;
+  font-family: inherit; transition: background .12s; }
+.tb-main:hover { background: var(--rail-active); }
+.tb-rank { font-size: 11px; font-weight: 700; color: var(--faint); flex: none; width: 14px;
+  padding-top: 2px; text-align: center; font-feature-settings: "tnum" 1; }
+.tb-row:nth-child(-n+3) .tb-rank { color: var(--accent-fg); }   /* 상위 3개는 앰버 강조 */
+.tb-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tb-q { font-size: 12.5px; line-height: 1.45; color: var(--text); font-weight: 500;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tb-meta { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.tb-taps { font-size: 10px; color: var(--accent-fg); background: var(--evidence-bg);
+  border-radius: 999px; padding: 1px 7px; flex: none; font-feature-settings: "tnum" 1; }
+.tb-hook { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.tb-src { flex: none; align-self: stretch; background: none; border: none;
+  border-left: 1px solid var(--line-3); color: var(--faint); font-size: 9.5px; cursor: pointer;
+  padding: 0 10px; max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: inherit; transition: color .12s, background .12s; }
+.tb-src:hover { color: var(--accent-fg); background: var(--accent-bg); }
 
 /* 분석 카드 리스트 */
 .qc-list { display: flex; flex-direction: column; gap: 9px; }

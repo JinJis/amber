@@ -102,6 +102,7 @@ def _add_missing_columns() -> None:
                           # 오래된 DB에서 답변 저장(인용·아티팩트 영속화)이 통째로 실패한다.
                           "hook": "VARCHAR(160)"})
     add_cols("share_links", {"expires_at": ts, "og_image": "TEXT"})  # IMP-13 expiry · SH-2b OG image
+    add_cols("card_taps", {"qhash": "VARCHAR(16)"})   # RC-2: 카드 단위 인기 집계(홈 보드 랭킹)
 
 
 def _add_missing_indexes() -> None:

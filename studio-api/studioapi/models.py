@@ -72,6 +72,9 @@ class CardTap(Base):
     user_email: Mapped[str] = mapped_column(String(256), index=True)
     kind: Mapped[str] = mapped_column(String(32))
     ticker: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # RC-2: 질문 해시 — 카드 단위 인기 집계(홈 보드의 🔥 랭킹 수치)용. kind/ticker만으로는
+    # 같은 kind의 카드들이 한 카운트로 뭉개진다.
+    qhash: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
     ts: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 
