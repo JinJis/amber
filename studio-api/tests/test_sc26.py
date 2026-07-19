@@ -126,6 +126,35 @@ async def test_system_project_activates_premium_connectors(monkeypatch):
     assert {"sec_edgar", "market_history", "google_news"} <= activated   # free도 함께
 
 
+@respx.mock
+async def test_existing_system_project_backfills_premium(monkeypatch):
+    """이미 프로비저닝된(캐시된) 시스템 프로젝트도 재시작 시 fmp·kis를 백필로 활성화한다 —
+    프리미엄 활성화 이전에 만들어진 배포가 자가치유되도록(수동 admin 단계 없이)."""
+    import json as _json
+
+    monkeypatch.setattr(settings, "control_plane_url", "http://cp.test")
+    import studioapi.provision as P
+
+    # 캐시된 시스템 프로젝트가 이미 있는 상태(프리미엄 미활성으로 예전에 만들어짐)를 재현
+    with SessionLocal() as db:
+        db.merge(ServiceState(key=P._SYSTEM_STATE_KEY,
+                              value=_json.dumps({"tenant_id": "told", "project_id": "pold",
+                                                 "api_key": "vgk_old"})))
+        db.commit()
+    P._system_premium_done = False   # 새 프로세스 부팅 흉내
+
+    activations = respx.post("http://cp.test/admin/projects/pold/activations").mock(
+        return_value=httpx.Response(200, json={}))
+    key = await P.ensure_system_project()               # 캐시 히트 → 백필만
+    assert key == "vgk_old"
+    backfilled = {_json.loads(c.request.content)["connector_id"] for c in activations.calls}
+    assert {"fmp", "kis"} <= backfilled                 # 프리미엄이 백필됨
+    # 한 프로세스에서 두 번째 호출은 재활성화하지 않는다(프로세스당 1회)
+    before = activations.call_count
+    await P.ensure_system_project()
+    assert activations.call_count == before
+
+
 async def test_me5_provision_degrades_when_control_plane_down(monkeypatch):
     """control-plane 미기동이면 None을 돌려주고 폴백에 맡긴다 — 부팅을 막지 않는다."""
     monkeypatch.setattr(settings, "control_plane_url", "http://127.0.0.1:1")  # nothing listening

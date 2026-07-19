@@ -62,12 +62,40 @@ def system_api_key_cached() -> str | None:
         return None
 
 
+_system_premium_done = False
+
+
+async def _ensure_system_premium() -> None:
+    """Backfill: a system project provisioned BEFORE premium feed connectors joined the set only has
+    the free set activated — so 어닝 레이더(fmp)·한국 수급(kis) never generate. Re-activate the
+    premium connectors once per process (idempotent — the control-plane no-ops already-active ones).
+    Self-heals every existing deployment on its next restart, no manual admin step."""
+    global _system_premium_done
+    if _system_premium_done:
+        return
+    row = None
+    with SessionLocal() as db:
+        row = db.get(ServiceState, _SYSTEM_STATE_KEY)
+    if row is None:
+        return
+    try:
+        pid = _json.loads(row.value).get("project_id")
+    except (TypeError, ValueError):
+        pid = None
+    if not pid:
+        return
+    from studioapi.plans import PREMIUM_CONNECTORS
+    await _activate_defaults(pid, list(PREMIUM_CONNECTORS))
+    _system_premium_done = True
+
+
 async def ensure_system_project() -> str | None:
     """Provision (once) the dedicated system tenant/project/key for background feeds and cache it in
     ServiceState. Best-effort: if the control-plane is unreachable (boot-ordering) it returns None and
     the caller degrades to `_any_api_key` until a later attempt succeeds. Idempotent via the KV cache."""
     cached = system_api_key_cached()
     if cached:
+        await _ensure_system_premium()   # backfill premium for projects provisioned before it existed
         return cached
     async with _system_lock:
         cached = system_api_key_cached()  # double-check under the lock
@@ -84,6 +112,8 @@ async def ensure_system_project() -> str | None:
         # 활성화해야 어닝 레이더·한국 수급 섹션이 실제로 생성된다(활성 안 하면 어닝 레이더가 0장).
         from studioapi.plans import FREE_CONNECTORS, PREMIUM_CONNECTORS
         await _activate_defaults(project["id"], list(FREE_CONNECTORS) + list(PREMIUM_CONNECTORS))
+        global _system_premium_done
+        _system_premium_done = True   # fresh project already has premium — skip the backfill path
         state = {"tenant_id": tenant["id"], "project_id": project["id"], "api_key": key["api_key"]}
         with SessionLocal() as db:
             db.merge(ServiceState(key=_SYSTEM_STATE_KEY, value=_json.dumps(state)))
