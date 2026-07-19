@@ -16,6 +16,8 @@ key, so entitlement + metering apply to chat too.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import logging
 import re
 from typing import AsyncIterator
@@ -34,6 +36,57 @@ from agentengine.planner import get_planner
 from agentengine.provenance import _canonical_provenance, _market_from_link, _market_hint
 
 logger = logging.getLogger(__name__)
+
+
+async def sse_heartbeat(events: AsyncIterator[dict], interval: float) -> AsyncIterator[str]:
+    """Serialize `events` as SSE lines, injecting a keepalive COMMENT whenever `interval` seconds
+    pass with nothing to send.
+
+    A chat turn goes silent for long stretches — a slow/retrying Gemini call, or the post-answer
+    tail (evidence passages, live-pulse follow-ups, share hook) that chains several LLM/gateway
+    awaits with no event between them. During that silence the downstream consumer (studio-api)
+    times its between-chunks read out and aborts the stream mid-work: the ReadTimeout that surfaces
+    as "답변 생성 중 문제". The comment (`: hb`) carries no `data:` line, so studio-api skips it and
+    it never reaches the browser — it only keeps the socket from idling past `interval`.
+
+    The heartbeat races the *next* event against the timeout WITHOUT cancelling it, so a keepalive
+    is emitted even while the generator is blocked deep inside a single long `await`."""
+    if interval and interval > 0:
+        ait = events.__aiter__()
+        pending = asyncio.ensure_future(ait.__anext__())
+        try:
+            while True:
+                done, _ = await asyncio.wait({pending}, timeout=interval)
+                if not done:
+                    yield ": hb\n\n"        # keepalive comment — no `data:` line, invisible to the UI
+                    continue
+                try:
+                    ev = pending.result()
+                except StopAsyncIteration:
+                    return
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+                pending = asyncio.ensure_future(ait.__anext__())
+        finally:
+            # Deterministic cleanup on client disconnect / GeneratorExit. If a next-event fetch is
+            # still in flight (the common case — we're heartbeating BECAUSE stream_chat is parked in a
+            # long await), cancel it and AWAIT the cancel so stream_chat's own finally unwinds — i.e.
+            # its httpx stream to the gateway closes — before we return. (A bare `events.aclose()`
+            # here would raise "async generator is already running" because that in-flight __anext__
+            # still holds the generator; an un-awaited cancel would only be reaped a loop-turn later,
+            # which a concurrent loop teardown could drop.) With no fetch in flight (stream exhausted
+            # or errored) aclose() is the correct, and safe, way to close it.
+            if not pending.done():
+                pending.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await pending
+            else:
+                aclose = getattr(events, "aclose", None)
+                if aclose is not None:
+                    with contextlib.suppress(Exception):   # noqa: BLE001 — best-effort close
+                        await aclose()
+    else:
+        async for ev in events:
+            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
 
 
 def _last_user(messages: list[dict]) -> str:

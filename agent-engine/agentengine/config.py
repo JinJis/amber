@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     # chart annotation). The answer has already streamed, so these must never delay `done` long —
     # if they exceed this (e.g. retry/backoff under rate-limit), we degrade and finish the turn.
     gemini_enrich_timeout_seconds: float = 25.0
+    # SSE keepalive: while the chat stream is inside a long silent await (a slow/ retrying Gemini
+    # call — up to gemini_timeout_seconds × gemini_max_retries with backoff — or the post-answer
+    # enrichment tail: evidence passages, live-pulse follow-ups, share hook), NO event is emitted.
+    # A downstream consumer (studio-api) times its BETWEEN-CHUNKS read against this silence and
+    # aborts the stream mid-work → the "답변 생성 중 문제" ReadTimeout. Interleave a keepalive
+    # COMMENT every N seconds so the socket never idles longer than this, whatever the await does.
+    sse_heartbeat_seconds: float = 15.0      # AGENT_SSE_HEARTBEAT_SECONDS (0 disables)
     max_steps: int = 8         # base tool-step budget (raised for multi-source tasks, up to the cap)
     max_steps_cap: int = 14    # hard ceiling for the dynamic budget
     # HI-5: one shared httpx client for all gateway traffic (catalog + ~8 tool calls/turn) instead of

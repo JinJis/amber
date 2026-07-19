@@ -108,16 +108,26 @@ async def drive_run(run: Run, user: User, conv_id: str, payload: dict) -> None:
     text_parts: list[str] = []
     citations: list[dict] = []
     artifacts: list[dict] = []
+    # The per-item citation/artifact cards streamed live (before the terminal `done`). Kept as a
+    # fallback so a turn that ends WITHOUT a `done` — user stop, or a transport drop in the silent
+    # post-answer tail — still persists its sources: otherwise the reloaded answer keeps its inline
+    # [n]/{{figure:N}} markers but the source+figure cards are gone (invariant #1: no number without
+    # a source). The `done`-derived lists (richer: deduped, confidence-scored) win when present.
+    streamed_cites: list[dict] = []
+    streamed_arts: list[dict] = []
     suggestions: list = []
     hook: str | None = None
     audit: dict | None = None
     cancelled = False
+    dropped = False
     try:
-      # HI-9: bound the stream so a stalled agent-engine (no chunk arriving) can't hang the run
-      # forever — the read timeout is between-chunks, generous enough for long generation; the run
-      # deadline watchdog is the outer backstop.
+      # HI-9: the run-deadline watchdog (runs.py) is the outer backstop that force-finishes a hung
+      # driver, so the between-chunks READ timeout must not fire first on a legitimately silent phase
+      # (a slow/retrying Gemini call, or the post-answer enrichment tail) — that was the recurring
+      # "답변 생성 중 문제" ReadTimeout. Default: no between-chunks limit (watchdog only); connect
+      # stays bounded. agent-engine's keepalive heartbeat additionally keeps the socket warm.
       async with httpx.AsyncClient(
-          timeout=httpx.Timeout(settings.http_timeout_seconds, connect=10.0)) as client:
+          timeout=httpx.Timeout(settings.sse_read_timeout_seconds, connect=10.0)) as client:
         async with client.stream(
             "POST", f"{settings.agent_engine_url}/agent/chat",
             json=payload,
@@ -134,6 +144,12 @@ async def drive_run(run: Run, user: User, conv_id: str, payload: dict) -> None:
                 await manager.append(run, ev)
                 if ev.get("type") == "token":
                     text_parts.append(ev.get("text", ""))
+                elif ev.get("type") == "citation":
+                    # streamed as {"type":"citation", **cit} — keep the card sans the envelope key
+                    streamed_cites.append({k: v for k, v in ev.items() if k != "type"})
+                elif ev.get("type") == "artifact":
+                    if ev.get("artifact"):
+                        streamed_arts.append(ev["artifact"])
                 elif ev.get("type") == "suggestions":
                     # 더 파고들기 chips ride their own event (before `done`) — capture them so the
                     # row survives leaving + reopening the conversation, not just the live stream.
@@ -147,9 +163,24 @@ async def drive_run(run: Run, user: User, conv_id: str, payload: dict) -> None:
         # UXQ-2: 사용자가 중지 — CancelledError를 여기서 흡수하면 이후 저장은 정상 실행.
         # 지금까지의 부분 답변을 그대로 영속(유실·날조 없음)하고 중지 표식을 남긴다.
         cancelled = True
+    except httpx.TransportError:
+        # The upstream SSE dropped (idle read timeout, or a proxy closing a quiet connection) during
+        # a silent phase. If the ANSWER already streamed, KEEP it — losing a complete reply because a
+        # non-essential trailing phase (follow-up chips / hook) ran long is exactly the bug we fix. If
+        # nothing streamed yet, it's a genuine failure → re-raise so the driver surfaces the error.
+        if not text_parts:
+            raise
+        dropped = True
 
     if cancelled and text_parts:
         text_parts.append("\n\n*⏹ 여기서 중지했어요*")
+
+    # No terminal `done` arrived (stop / transport drop) → fall back to the cards that already
+    # streamed live, so the persisted answer keeps its sources + figures instead of dangling markers.
+    if not citations:
+        citations = streamed_cites
+    if not artifacts:
+        artifacts = streamed_arts
 
     with SessionLocal() as db:
         db.add(Message(
@@ -165,6 +196,11 @@ async def drive_run(run: Run, user: User, conv_id: str, payload: dict) -> None:
     if cancelled:
         await manager.append(run, {"type": "done", "citations": citations, "artifacts": artifacts,
                                    "refused": False, "stopped": True})
+    elif dropped:
+        # agent-engine's own `done` never arrived (stream broke) — synthesize one from what we
+        # captured so the UI finalizes the (complete) answer instead of spinning forever.
+        await manager.append(run, {"type": "done", "citations": citations, "artifacts": artifacts,
+                                   "refused": False, "hook": hook, "audit": audit})
     await manager.append(run, {"type": "conversation", "id": conv_id})
 
 

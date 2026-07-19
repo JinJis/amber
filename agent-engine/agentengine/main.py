@@ -6,7 +6,6 @@ call through the gateway, so entitlement + metering apply to agent activity too.
 
 from __future__ import annotations
 
-import json
 from contextlib import asynccontextmanager
 from typing import Annotated
 
@@ -14,7 +13,7 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
 from agentengine.agent import refresh_artifact, run_agent
-from agentengine.chat import stream_chat
+from agentengine.chat import sse_heartbeat, stream_chat
 from agentengine.client import PlatformClient
 from agentengine.config import assert_production_secrets, settings
 from agentengine.askfeed import AskFeedRequest, build_ask_feed
@@ -79,8 +78,12 @@ async def chat(body: ChatRequest, x_api_key: Annotated[str | None, Header(alias=
 
     async def gen():
         set_project(x_project_id)
-        async for event in stream_chat(messages, x_api_key, body.spec):
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        # sse_heartbeat serializes each event AND interleaves keepalive comments so a long silent
+        # await (slow/retrying Gemini, or the post-answer enrichment tail) never lets the consumer's
+        # between-chunks read timeout fire mid-turn (the "답변 생성 중 문제" ReadTimeout).
+        async for chunk in sse_heartbeat(stream_chat(messages, x_api_key, body.spec),
+                                         settings.sse_heartbeat_seconds):
+            yield chunk
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 

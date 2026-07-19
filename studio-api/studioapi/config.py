@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     db_pool_max_overflow: int = 20                       # DB_POOL_MAX_OVERFLOW
     db_pool_recycle_seconds: int = 1800                  # DB_POOL_RECYCLE_SECONDS
     http_timeout_seconds: float = 120.0
+    # HI-9: the between-chunks READ timeout for tailing agent-engine's chat SSE (chat.py). It must
+    # NOT be shorter than a legitimate silent phase — a slow/retrying Gemini call, or the post-answer
+    # enrichment tail — or it aborts a working stream mid-turn (the "답변 생성 중 문제" ReadTimeout).
+    # None → no between-chunks limit; the run-deadline watchdog (run_deadline_seconds) is the single
+    # outer backstop, exactly as intended. agent-engine's keepalive heartbeat keeps the socket warm,
+    # so this is defense-in-depth. Set a positive value only to reinstate a hard between-chunks cap.
+    sse_read_timeout_seconds: float | None = None       # SSE_READ_TIMEOUT_SECONDS
     # HI-9: background chat runs (studioapi/runs.py). A global concurrency cap so a flood of turns
     # can't spawn unbounded detached tasks, a per-run deadline + watchdog that force-finishes a run
     # whose driver hangs (an upstream call that never returns) so it can't stay 'running' forever.
