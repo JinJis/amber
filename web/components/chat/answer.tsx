@@ -7,7 +7,7 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { remarkCjkEmphasis } from "../../lib/markdown";
+import { remarkCjkEmphasis, remarkKeyMark } from "../../lib/markdown";
 import { annotateNumerals, type LedgerRow } from "../../lib/evidence";
 import { ArtifactCard } from "../ArtifactCard";
 import type { Artifact, Citation } from "../../lib/types";
@@ -35,7 +35,13 @@ export function linkifyCitations(md: string): string {
 // belongs in the prose. Split the markdown into text/figure segments. While streaming, a
 // half-arrived marker at the tail ("{{figu…") is hidden so it never flashes as raw text.
 export function splitFigures(md: string, streaming?: boolean): { text?: string; fig?: number }[] {
-  const src = streaming ? md.replace(/\{\{[^}]*$/, "") : md;
+  let src = md;
+  if (streaming) {
+    src = src.replace(/\{\{[^}]*$/, "");
+    // hide an in-progress ==핵심== run (odd number of `==` → the last one is still open) so the
+    // raw marker never flashes before its closing `==` arrives — mirrors the {{figure hide above.
+    if (((src.match(/==/g) || []).length) % 2 === 1) src = src.slice(0, src.lastIndexOf("=="));
+  }
   const parts = src.split(/\{\{figure:(\d{1,2})\}\}/g);
   const out: { text?: string; fig?: number }[] = [];
   for (let i = 0; i < parts.length; i++) {
@@ -63,7 +69,7 @@ export function AnswerArticle({ content, artifacts, ledger, streaming, mdCompone
       {segs.map((s, k) => {
         if (s.text != null) {
           return (
-            <ReactMarkdown key={k} remarkPlugins={[remarkGfm, remarkCjkEmphasis]} components={mdComponents}>
+            <ReactMarkdown key={k} remarkPlugins={[remarkGfm, remarkCjkEmphasis, remarkKeyMark]} components={mdComponents}>
               {linkifyCitations(s.text)}
             </ReactMarkdown>
           );
@@ -92,7 +98,7 @@ function NumHighlight({ row, cit, children, setHoverCite, onEvidence }: {
   const [pinned, setPinned] = useState(false);
   const derived = !!cit?.computation;
   return (
-    <span className={`num-hl ${row.supported ? "evidence-highlight" : "warn"}`} data-testid="num-hl"
+    <span className={`num-hl ${row.supported ? "figure-num" : "warn"}`} data-testid="num-hl"
       role={cit ? "button" : undefined} tabIndex={cit ? 0 : undefined}
       onMouseEnter={() => cit?.index != null && setHoverCite(cit.index)}
       onMouseLeave={() => setHoverCite(null)}
@@ -128,6 +134,9 @@ export function makeMdComponents(
 ) {
   return {
     a: (props: any) => {
+      // 핵심(하이라이트 3종) — remarkKeyMark가 만든 #key 링크를 연한 앰버 블록으로. 비상호작용
+      // (읽을 순서만 표시), 수치(오션 칩)·근거(앰버 각주)와 색·모양이 모두 구분된다.
+      if (String(props.href || "") === "#key") return <mark className="hl-block">{props.children}</mark>;
       const m = String(props.href || "").match(/^#cite-(\d+)$/);
       if (m) {
         const n = Number(m[1]);

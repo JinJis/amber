@@ -980,8 +980,14 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .num-hl { position: relative; border-radius: 3px 3px 0 0; padding: 0 3px;
   font-variant-numeric: tabular-nums; transition: background .12s; }
 .num-hl[role="button"] { cursor: pointer; }
-.num-hl:hover { background: color-mix(in srgb, var(--hl-500) 42%, var(--evidence-bg)); }
-.num-hl.warn { background: var(--warn-bg); border-bottom: 2px dotted var(--warn-fg); }
+/* 수치(하이라이트 3종) = 데이터 → 오션 칩. 근거(앰버)와 색·서체로 명확히 구분한다:
+   하이라이터(노란색)는 근거 전용, 오션은 데이터·조작 가능한 것. 검증 수치는 만질 수 있는
+   데이터이자 원자료로 가는 링크라 오션이 이중으로 맞다. 미확인(warn)만 앰버 경고로 남긴다. */
+.num-hl.figure-num { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: .95em;
+  background: var(--ocean-100); box-shadow: inset 0 0 0 1px rgba(22, 144, 174, .35);
+  border-radius: 5px; padding: 1px 5px; color: #0E2A3F; }
+.num-hl.figure-num:hover { background: color-mix(in srgb, var(--ocean-300) 45%, var(--ocean-100)); }
+.num-hl.warn { background: var(--warn-bg); border-bottom: 2px dotted var(--warn-fg); border-radius: 3px 3px 0 0; }
 .num-tip { display: none; position: absolute; bottom: calc(100% + 8px); left: 50%;
   transform: translateX(-50%); z-index: 40; min-width: 190px; max-width: 300px; width: max-content;
   padding: 8px 11px; border-radius: 9px; background: var(--text); color: var(--panel);
@@ -2195,7 +2201,11 @@ html[data-theme="dark"] img.ticker-logo, html[data-theme="dark"] .avatar:not(.mg
 
 /* 하이라이트 3종 — 근거 표시. 노란색은 근거에만 쓴다 */
 .hl { background: linear-gradient(transparent 56%, var(--hl-500) 56%, var(--hl-500) 94%, transparent 94%); padding: 0 1px; }
-.hl-block { background: var(--hl-200); box-shadow: inset 0 -2px 0 var(--hl-500); border-radius: 2px; padding: 0 2px; }
+/* 핵심 = 연한 앰버 블록(답변당 1회). 배경(hl-200)이 라이트·다크 공통으로 밝으므로 <mark>
+   기본색(검정)을 끄고 항상 짙은 남색(ink-800, 테마 불변)으로 → 다크에서도 대비 유지. */
+.hl-block { background: var(--hl-200); box-shadow: inset 0 -2px 0 var(--hl-500); border-radius: 2px;
+  padding: 0 2px; color: var(--ink-800); }
+.md .hl-block, .md.article .hl-block { color: var(--ink-800); }
 .hl-num { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: .95em;
   background: var(--ocean-100); border-radius: 5px; padding: 1px 5px; box-shadow: inset 0 0 0 1px rgba(22, 144, 174, .28); }
 
