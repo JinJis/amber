@@ -183,6 +183,8 @@ export type Msg = {
   subagents?: SubAgent[];
   suggestions?: string[];
   hook?: string | null;   // V-7: 공유 훅(발견 한 줄) — 공유 제목·OG 제목에 사용
+  // DBG-1: 답변 생성 실패 시 원인(라이브 전용). 있으면 답변 액션 케밥에 "🐞 디버그"가 뜬다.
+  debug?: { where?: string; detail?: string; traceback?: string } | null;
   // PLAN-2: 턴 쿼터 판정 — blocked(한도 도달, 턴 시작 안 됨) 또는 degraded(pro fair-use 초과,
   // 표준 모델로 강등하고 계속). 웹은 이 카드를 렌더하고 blocked면 업그레이드 CTA를 보여준다.
   quota?: { mode: string; scope: string; plan: string; used: number; limit?: number | null;

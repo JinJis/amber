@@ -581,6 +581,36 @@ async def test_chat_stream_conceptual_skips_tools(monkeypatch):
     assert done["type"] == "done" and done["refused"] is False and done["citations"] == []
 
 
+@respx.mock
+async def test_chat_stream_error_emits_debug_event(monkeypatch):
+    """DBG-1: stream_chat 내부 오류는 원인을 담은 structured `debug` 이벤트 + 예외 상세가 새지 않는
+    친근한 토큰으로 강등된다 (챗 UI의 🐞 디버그 액션이 debug 이벤트를 보여준다)."""
+    import agentengine.chat as C
+    from agentengine.chat import stream_chat
+
+    from agentengine.agent import TaskIntake
+
+    _gw(monkeypatch)
+    _catalog()
+
+    async def _intake(_task, _backend=None, conversation=None):
+        return TaskIntake(steps=3, restricted=False, needs_data=True, plan=None)
+    monkeypatch.setattr(C, "analyze_task", _intake)
+
+    class _BoomPlanner:                       # 툴 루프의 _plan_batch → planner.plan에서 터짐(try 안)
+        async def plan(self, *a, **k):
+            raise RuntimeError("bad model id: gemini-nope")
+    monkeypatch.setattr(C, "get_planner", lambda _b=None: _BoomPlanner())
+
+    events = [e async for e in stream_chat([{"role": "user", "content": "테스트"}], "vgk_x")]
+    dbg = next(e for e in events if e["type"] == "debug")
+    assert dbg["where"] == "agent-engine.stream"
+    assert "RuntimeError: bad model id: gemini-nope" in dbg["detail"]
+    assert dbg["traceback"]
+    tok = next(e for e in events if e["type"] == "token")
+    assert "문제가 발생했어요" in tok["text"] and "RuntimeError" not in tok["text"]
+
+
 async def test_intake_parses_clarify_options(monkeypatch):
     # CLARIFY: a broad request → clarify=true with ≥2 concrete options (dropped if <2 or restricted).
     pytest.importorskip("google.genai")

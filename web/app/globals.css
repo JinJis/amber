@@ -1725,6 +1725,18 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .kebab-item:hover { background: var(--rail-active); }
 /* 답변 준비 중(본문 전) — 박스 없는 최소 표시 */
 .ans-pending { font-size: 12.5px; color: var(--muted); padding: 2px 0; }
+/* DBG-1: 디버그 모달 — 생성 실패 원인/트레이스백 */
+.dbg { display: flex; flex-direction: column; gap: 12px; }
+.dbg-note { font-size: 12.5px; line-height: 1.6; color: var(--muted); margin: 0; }
+.dbg-note code { font-family: var(--mono); font-size: 11.5px; background: var(--panel-2);
+  border: 1px solid var(--line-3); border-radius: 5px; padding: 1px 5px; }
+.dbg-kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; }
+.dbg-kv dt { font-size: 11px; color: var(--muted); }
+.dbg-kv dd { margin: 0; font-size: 12.5px; color: var(--text); word-break: break-word; }
+.dbg-detail { color: var(--stale); font-weight: 600; }
+.dbg-trace { margin: 0; max-height: 320px; overflow: auto; font-family: var(--mono); font-size: 11px;
+  line-height: 1.55; color: var(--text-2); background: var(--panel-2); border: 1px solid var(--line-2);
+  border-radius: 9px; padding: 12px; white-space: pre-wrap; word-break: break-word; }
 
 /* ── Mobile: the public share page is the SNS landing — most traffic is phones ─────────── */
 @media (max-width: 640px) {

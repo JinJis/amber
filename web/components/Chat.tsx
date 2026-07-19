@@ -17,7 +17,7 @@ import { ContextPanel, evidenceOf, uniqueTools } from "./EvidencePanel";
 import { type LedgerRow } from "../lib/evidence";
 import { useIsMobile } from "../lib/useIsMobile";
 import { SourceViewer } from "./SourceViewer";
-import { Button, Chip, GuardrailLabel, KebabMenu, Mascot, FreshnessDot } from "./ui";
+import { Button, Chip, GuardrailLabel, KebabMenu, Mascot, Modal, FreshnessDot } from "./ui";
 import { Logo } from "./Logo";
 import type { Features } from "../lib/features";
 import { FeaturesProvider } from "../lib/features-context";
@@ -301,6 +301,7 @@ export default function Chat({ name, email, image, features, guest = false, prov
         const origin = [...next].reverse().find((m) => m.role === "user")?.content || "";
         a.clarify = { prompt: ev.prompt, options: ev.options || [], multi: !!ev.multi, origin };
       }
+      else if (ev.type === "debug") a.debug = { where: ev.where, detail: ev.detail, traceback: ev.traceback };
       else if (ev.type === "suggestions") a.suggestions = (ev.items || []) as string[];
       else if (ev.type === "quota") {
         // PLAN-2: 한도 판정 — blocked(턴 시작 안 됨) / degraded(표준 모델로 강등하고 계속)
@@ -463,6 +464,7 @@ export default function Chat({ name, email, image, features, guest = false, prov
   };
   const [shareArt, setShareArt] = useState<Artifact | null>(null);  // SH-2 share sheet
   const [shareMsg, setShareMsg] = useState<{ title: string; msg: Msg } | null>(null);  // SH-ANSWER: whole-answer share
+  const [debugMsg, setDebugMsg] = useState<Msg | null>(null);  // DBG-1: 실패 원인 뷰어
   // Mobile shell: the desktop 3-column grid collapses to one column; the rail becomes a
   // left drawer and the 근거 패널 becomes a bottom sheet, each toggled by these flags.
   const isMobile = useIsMobile();
@@ -492,6 +494,28 @@ export default function Chat({ name, email, image, features, guest = false, prov
         audit: (shareMsg.msg.audit ?? null) as Record<string, unknown> | null,
         suggestions: shareMsg.msg.suggestions }}
         onClose={() => setShareMsg(null)} />
+    )}
+    {debugMsg?.debug && (
+      <Modal title="🐞 디버그 — 답변 생성 실패" onClose={() => setDebugMsg(null)}>
+        <div className="dbg">
+          <p className="dbg-note">이 답변을 만들다 발생한 오류예요. 자주 뜨면 아래 내용을 그대로 캡처해
+            공유해 주세요 — 서버 로그(<code>docker compose logs studio-api agent-engine</code>)에서
+            같은 시각의 스택트레이스를 함께 보면 원인을 좁힐 수 있어요.</p>
+          <dl className="dbg-kv">
+            <dt>발생 위치</dt><dd className="mono">{debugMsg.debug.where || "—"}</dd>
+            <dt>오류</dt><dd className="mono dbg-detail">{debugMsg.debug.detail || "—"}</dd>
+          </dl>
+          {debugMsg.debug.traceback && (
+            <pre className="dbg-trace">{debugMsg.debug.traceback}</pre>
+          )}
+          <button type="button" className="chip" onClick={() => {
+            const d = debugMsg.debug!;
+            navigator.clipboard.writeText(
+              `where: ${d.where}\ndetail: ${d.detail}\n\n${d.traceback || ""}`).catch(() => {}); }}>
+            ⧉ 전체 복사
+          </button>
+        </div>
+      </Modal>
     )}
     <div className={`shell ${view === "explore" && messages.length > 0 ? "with-ctx" : "no-right"}`
         + `${isMobile ? " mobile" : ""}${drawer ? " drawer-open" : ""}${ctxSheet ? " ctx-open" : ""}`}
@@ -687,6 +711,9 @@ export default function Chat({ name, email, image, features, guest = false, prov
                                 ...(canRegen ? [{ key: "regen", label: "↻ 재생성",
                                   onClick: () => send(messages[i - 1].content) }] : []),
                                 { key: "share", label: "↗ 공유", onClick: shareThis },
+                                // DBG-1: 생성 실패한 답변에만 — 원인/트레이스백을 보여준다.
+                                ...(m.debug ? [{ key: "debug", label: "🐞 디버그",
+                                  onClick: () => setDebugMsg(m) }] : []),
                               ]} />
                             )}
                           </div>

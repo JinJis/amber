@@ -465,8 +465,14 @@ async def stream_chat(messages: list[dict], api_key: str | None, spec: AgentSpec
     except Exception as e:
         logger.exception("Error in stream_chat loop")
         # A planner/LLM error (e.g. bad model id, missing key, upstream outage)
-        # degrades to an honest message instead of breaking the stream.
-        yield {"type": "token", "text": f"답변 생성 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요. ({type(e).__name__}: {str(e)})"}
+        # degrades to an honest message instead of breaking the stream. The exception
+        # detail rides a separate `debug` event (not the answer text) so the chat UI can
+        # surface it behind a "🐞 디버그" action without polluting the reply.
+        import traceback as _tb
+        yield {"type": "debug", "where": "agent-engine.stream",
+               "detail": f"{type(e).__name__}: {e}",
+               "traceback": _tb.format_exc().strip()[-2000:]}
+        yield {"type": "token", "text": "답변 생성 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요."}
 
     # PH-VIZ: attach sourced event markers + price lines, fold technical overlays onto the price
     # chart, then (bounded) let Gemini annotate it — re-emitted in `done` since the streamed

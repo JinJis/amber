@@ -13,10 +13,14 @@ across a server restart — the pragmatic 80% of "like a normal LLM service".
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
+import traceback
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+
+log = logging.getLogger("studioapi.runs")
 
 from studioapi.config import settings
 
@@ -125,8 +129,15 @@ class RunManager:
                 except Exception:  # noqa: BLE001 — finish must not mask the cancellation
                     pass
                 raise
-            except Exception:  # noqa: BLE001 — never leave a run stuck "running"
-                await self.append(run, {"type": "token", "text": "답변 생성 중 문제가 발생했어요."})
+            except Exception as e:  # noqa: BLE001 — never leave a run stuck "running"
+                # Log server-side (this path silently swallowed the error before — the frequent
+                # "답변 생성 중 문제" failures were invisible in the logs) AND emit a structured
+                # `debug` event so the chat UI's "🐞 디버그" action can show the cause.
+                log.exception("run driver failed (conversation=%s run=%s)", run.conversation_id, run.id)
+                await self.append(run, {"type": "debug", "where": "studio.run-driver",
+                                        "detail": f"{type(e).__name__}: {e}",
+                                        "traceback": traceback.format_exc().strip()[-2000:]})
+                await self.append(run, {"type": "token", "text": "답변 생성 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요."})
                 await self.finish(run, "error")
 
         run.task = asyncio.create_task(_wrap())
