@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Citation } from "./SourceCard";
+import { FinLoading } from "./ui";
 
 // A deck citation carries a synthetic accession `DECK:{ticker}:{accession}` in its evidence params.
 export function deckSrc(c: Citation): string | null {
@@ -120,7 +121,7 @@ export function DeckViewer({ c }: { c: Citation }) {
       <div className="fv-bar mono">
         <span className="fv-status">{state === "loading" ? "발표자료 불러오는 중…" : hit ? "📊 발표자료 · 인용 부분 하이라이트됨" : "📊 발표자료(슬라이드)"}</span>
       </div>
-      {state === "loading" && <div className="fv-loading"><span className="fv-spinner" /> 슬라이드 렌더링 중…</div>}
+      {state === "loading" && <FinLoading label="슬라이드 렌더링 중…" />}
       <div className="dv-pages" ref={wrapRef} />
     </div>
   );

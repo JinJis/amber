@@ -88,6 +88,45 @@ export function TrustLegend() {
   );
 }
 
+// ── 문서유형 badge (design template §badge) ───────────────────────────────────
+// A source's document type as a colored chip, so 국내 공시·미국 공시·실적콜·모델 계산이 한눈에
+// 갈린다. Colors follow the template: US 공시=자주, 실적콜=초록, 모델 계산=회색(테두리), 국내 공시·
+// 기타=기본 오션. **모델 추정은 절대 노란색(근거색)을 쓰지 않는다** — 추정은 근거가 아니다.
+const _US_FORM = /\b(10[-\s]?[KQ]|8[-\s]?K|20[-\s]?F|6[-\s]?K|40[-\s]?F|S-1|F-1|11-K|424B|DEF\s?14A)\b/i;
+const _CALL = /(콜|call|transcript|어닝|실적\s?발표|earnings)/i;
+const _EST = /(추정|계산|estimate|모델|model|derived|가정)/i;
+export function docBadgeOf(c: { doc_type?: string; kind?: string; computation?: unknown | null }):
+  { label: string; cls: string } | null {
+  const dt = (c.doc_type || "").trim();
+  // 모델이 계산/도출한 값 → 회색 est 뱃지 (근거색 아님)
+  if (c.computation || _EST.test(dt)) return { label: dt || "모델 계산", cls: "b-est" };
+  if (!dt || dt.toLowerCase() === "news" || c.kind === "news") return null; // 뉴스는 웹카드로 표시
+  if (_US_FORM.test(dt)) return { label: dt.toUpperCase().replace(/\s+/g, "-"), cls: "b-us" };
+  if (_CALL.test(dt)) return { label: dt, cls: "b-call" };
+  return { label: dt, cls: "" };  // 국내 공시(사업/분기/반기/공정공시)·기타 → 기본 오션
+}
+export function DocBadge({ c }: { c: { doc_type?: string; kind?: string; computation?: unknown | null } }) {
+  const b = docBadgeOf(c);
+  if (!b) return null;
+  return <span className={`badge ${b.cls}`.trim()} title="문서유형">{b.label}</span>;
+}
+
+// ── 지느러미 로딩 (design template §로딩) ─────────────────────────────────────
+// 스피너 대신 '수면을 가르는 지느러미' 모션 — 이 모션이 곧 로고다. 화면·패널이 통째로 로딩될 때
+// 쓴다(버튼 마이크로 상태나 스트리밍 중 개별 단계 표시는 대상 아님). `row`면 라벨을 옆에 둔다.
+export function FinSwim({ className = "" }: { className?: string }) {
+  return <span className={`fin-swim ${className}`.trim()} aria-hidden />;
+}
+export function FinLoading({ label, row, className = "", testid = "fin-loading" }:
+  { label?: string; row?: boolean; className?: string; testid?: string }) {
+  return (
+    <div className={`fin-loading ${row ? "row" : ""} ${className}`.trim()} role="status" aria-live="polite" data-testid={testid}>
+      <FinSwim />
+      {label ? <span className="fin-loading-label">{label}</span> : null}
+    </div>
+  );
+}
+
 // ── Guardrail label ──────────────────────────────────────────────────────────
 // The trust brand, shown not hidden (invariant #5). 가드레일 라벨(warn 톤, 근거색 아님).
 export function GuardrailLabel({ icon = "🛡", children }: { icon?: string; children: ReactNode }) {

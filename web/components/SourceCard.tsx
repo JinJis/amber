@@ -10,7 +10,7 @@
 // redistribution), and surrounding text is drawn as skeleton lines.
 
 import { useState } from "react";
-import { CadenceTag, FreshnessDot, FRESH_LABEL, TrustLegend } from "./ui";
+import { CadenceTag, DocBadge, FreshnessDot, FRESH_LABEL, TrustLegend } from "./ui";
 import { TickerLogo } from "./TickerLogo";
 // Citation lives in lib/types.ts (FE-01); imported for local use + re-exported for back-compat
 // (importers use `import { Citation } from "./SourceCard"`).
@@ -109,11 +109,11 @@ export function SourceCard({ c, onExpand, onPin, hideTitle }: { c: Citation; onE
             {c.index ? <span className="sp-n mono">[{c.index}]</span> : null}
             {c.ticker ? <TickerLogo ticker={c.ticker} size={18} /> : <span className="sp-ic" aria-hidden>📄</span>}
             {!hideTitle && <span className="sp-title">{c.source || "공시 문서"}</span>}
+            <DocBadge c={c} />{/* 문서유형: 국내 공시=오션·미국 공시=자주·실적콜=초록·모델=회색 */}
             {c.page ? <span className="sp-page mono">{c.page}</span> : null}
             {evBadge}
           </div>
           <div className="sp-doc">
-            {c.doc_type && c.doc_type !== "news" ? <div className="sp-doc-sec mono">{c.doc_type}</div> : null}
             <span className="sp-skel" style={{ width: "82%" }} />
             {c.snippet ? <div className="sp-quote">{c.snippet}</div> : <span className="sp-skel" style={{ width: "95%" }} />}
             <span className="sp-skel" style={{ width: "94%" }} />
@@ -145,6 +145,7 @@ export function SourceCard({ c, onExpand, onPin, hideTitle }: { c: Citation; onE
             {c.index ? <span className="sp-n mono">[{c.index}]</span> : null}
             {c.ticker ? <TickerLogo ticker={c.ticker} size={18} /> : <span className="sp-ic" aria-hidden>▤</span>}
             {!hideTitle && <span className="sp-title">{c.source || "추출 데이터"}</span>}
+            <DocBadge c={c} />{/* 파생 값이면 '모델 계산'(회색) 뱃지 */}
             {c.ticker ? <span className="sp-page mono">{c.ticker}</span> : null}
             {evBadge}
           </div>

@@ -297,9 +297,25 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 /* mini document page (filing) */
 .sp-doc { margin: 9px 10px; border: 1px solid var(--line-3); border-radius: 5px; background: #fff; padding: 9px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
 .sp-doc-sec { font-size: 7.5px; color: #B0B0B6; letter-spacing: .04em; margin-bottom: 6px; }
+
+/* 문서유형 badge (design template §badge) — 국내 공시=오션, 미국 공시=자주, 실적콜=초록,
+   모델 계산=회색(테두리). 근거색(노랑)은 절대 쓰지 않는다: 문서유형은 근거가 아니다 */
+.badge { display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .04em;
+  padding: 3px 7px; border-radius: 5px; background: var(--ocean-100); color: var(--ocean-700);
+  white-space: nowrap; vertical-align: middle; }
+.badge.b-us { background: #E8E4F5; color: #5B4B9E; }
+.badge.b-call { background: #E7F2EC; color: #1E8A5A; }
+.badge.b-est { background: #EDF1F3; color: #647685; box-shadow: inset 0 0 0 1px rgba(20, 60, 80, .14); }
+.badge.b-dummy { background: rgba(200, 52, 42, .08); color: #C8342A; }
+/* 다크: 기본 오션 뱃지만 심해 배경에 맞게 반전(자주·초록·회색은 밝은 톤이라 유지) */
+html[data-theme="dark"] .badge:not(.b-us):not(.b-call):not(.b-dummy):not(.b-est) { background: rgba(95, 208, 228, .16); color: var(--ocean-300); }
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) .badge:not(.b-us):not(.b-call):not(.b-dummy):not(.b-est) { background: rgba(95, 208, 228, .16); color: var(--ocean-300); }
+}
 .sp-skel { display: block; height: 5px; background: #EDEDF0; border-radius: 2px; margin: 4px 0; }
-/* 원문 인용 = 본명조(원문의 말) + 왼쪽 하이라이터 씰. 답변(Pretendard)과 서체로 구분한다 */
-.sp-quote { font-family: var(--font-quote); font-size: 10px; line-height: 1.55; color: var(--text-2); background: var(--mark);
+/* 원문 인용 = 본명조(원문의 말) + 왼쪽 하이라이터 스파인. 근거 카드는 '종이 위 인용'이라 배경은
+   종이색(surface-sunk)이고 앰버는 왼쪽 3px 스파인으로만 — 핵심(.hl-block, 채운 앰버 블록)과 안 겹침 */
+.sp-quote { font-family: var(--font-quote); font-size: 10px; line-height: 1.55; color: var(--text-2); background: var(--surface-sunk);
   border-left: 3px solid var(--hl-500); border-radius: 0 3px 3px 0; padding: 5px 8px; margin: 6px 0; }
 /* browser chrome (web/news) */
 .sp-chrome { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-bottom: 1px solid var(--line-3); background: var(--panel-2); }
@@ -311,7 +327,10 @@ a { color: var(--text); text-decoration-color: var(--muted); }
 .sp-headline { font-size: 11px; font-weight: 700; line-height: 1.35; color: var(--text); }
 .sp-wmeta { font-size: 7.5px; color: #B0B0B6; margin-top: 3px; }
 .sp-wtext { font-size: 9.5px; color: var(--text-2); line-height: 1.6; margin-top: 7px; }
-.sp-wtext mark, .sv-web-text mark { background: var(--mark); box-shadow: inset 0 -2px 0 var(--hl-500); border-radius: 2px; padding: 0 2px; color: var(--text-2); }
+/* 근거(하이라이트 3종) = 형광펜 밑줄(그라디언트 스트라이프). 핵심의 '채운 앰버 블록'과 달리 글자
+   아래쪽만 앰버로 긋는다 — 원문에서 직접 인용한 구절 표시. (근거=앰버, 오션=데이터 규칙 유지) */
+.sp-wtext mark, .sv-web-text mark { background: linear-gradient(transparent 56%, var(--hl-500) 56%, var(--hl-500) 94%, transparent 94%);
+  box-shadow: none; border-radius: 0; padding: 0 1px; color: inherit; }
 /* extracted data — the real figures the answer used (cited row highlighted) */
 .sp-table { width: 100%; border-collapse: collapse; font-size: 9px; color: var(--text-2); }
 .sp-table th { color: var(--faint); font-size: 8px; font-weight: 400; text-align: right; padding: 6px 10px 4px; border-bottom: 1px solid var(--line-3); }
@@ -1211,8 +1230,9 @@ button.df-card:hover { border-color: var(--accent); box-shadow: var(--shadow-pop
 .sv-page-hd { font-size: 9px; color: #B0B0B6; letter-spacing: .05em; border-bottom: 1px solid var(--line-3); padding-bottom: 10px; margin-bottom: 16px; }
 .sv-page-h { font-size: 13px; font-weight: 700; color: var(--text); margin: 0 0 12px; }
 .sv-skel-l { height: 8px; background: #EFEFF2; border-radius: 3px; margin: 9px 0; width: 100%; }
-.sv-quote, .sv-data { position: relative; font-size: 11.5px; color: var(--text); line-height: 1.85; background: var(--mark);
-  border-left: 3px solid var(--aging); border-radius: 0 4px 4px 0; padding: 10px 13px; margin: 14px 0; }
+/* 근거 카드(원문 뷰어) — 종이 배경 + 앰버 좌측 스파인. 핵심(채운 앰버 블록)과 구분 */
+.sv-quote, .sv-data { position: relative; font-size: 11.5px; color: var(--text); line-height: 1.85; background: var(--surface-sunk);
+  border-left: 3px solid var(--hl-500); border-radius: 0 4px 4px 0; padding: 10px 13px; margin: 14px 0; }
 .sv-pin { position: absolute; left: -30px; top: 8px; width: 22px; height: 22px; border-radius: 50%; background: var(--accent);
   color: #fff; font-size: 10px; display: flex; align-items: center; justify-content: center; }
 .sv-data { white-space: pre-wrap; }
@@ -2209,8 +2229,15 @@ html[data-theme="dark"] img.ticker-logo, html[data-theme="dark"] .avatar:not(.mg
 .hl-num { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: .95em;
   background: var(--ocean-100); border-radius: 5px; padding: 1px 5px; box-shadow: inset 0 0 0 1px rgba(22, 144, 174, .28); }
 
-/* 지느러미 로딩 — 스피너 대신 수면을 가르는 지느러미. 이 모션이 곧 로고다 */
-.fin-swim { position: relative; height: 16px; overflow: hidden; border-radius: var(--r-chip); }
+/* 지느러미 로딩 — 스피너 대신 수면을 가르는 지느러미. 이 모션이 곧 로고다 (design template §로딩) */
+.fin-swim { display: block; position: relative; width: 100%; height: 16px; overflow: hidden; border-radius: var(--r-chip); }
+/* 화면/패널 로더 — 지느러미 스트립 + 라벨 (template .loading + .loading-label) */
+.fin-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; padding: 20px 14px; }
+.fin-loading .fin-swim { max-width: 220px; }
+.fin-loading-label { font-family: var(--mono); font-size: 11px; color: var(--muted); text-align: center; letter-spacing: .01em; }
+.fin-loading.row { flex-direction: row; padding: 10px 12px; gap: 12px; }
+.fin-loading.row .fin-swim { width: 64px; flex: none; }
+.fin-loading.row .fin-loading-label { text-align: left; }
 .fin-swim::before { content: ""; position: absolute; inset: 0; background-image: var(--wave);
   background-repeat: repeat-x; background-position: left center; opacity: .55; }
 .fin-swim::after { content: ""; position: absolute; bottom: 4px; left: -26px; width: 16px; height: 16px;

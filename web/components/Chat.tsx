@@ -17,7 +17,7 @@ import { ContextPanel, evidenceOf, uniqueTools } from "./EvidencePanel";
 import { type LedgerRow } from "../lib/evidence";
 import { useIsMobile } from "../lib/useIsMobile";
 import { SourceViewer } from "./SourceViewer";
-import { Button, Chip, GuardrailLabel, KebabMenu, Mascot, Modal, FreshnessDot } from "./ui";
+import { Button, Chip, FinLoading, GuardrailLabel, KebabMenu, Mascot, Modal, FreshnessDot } from "./ui";
 import { Logo } from "./Logo";
 import type { Features } from "../lib/features";
 import { FeaturesProvider } from "../lib/features-context";
@@ -725,7 +725,7 @@ export default function Chat({ name, email, image, features, guest = false, prov
                       // 본문 없음 — 생각 과정/하위 에이전트가 이미 위에서 진행을 알린다.
                       // 그 신호조차 없을 때만 최소 pending 한 줄(박스 아님).
                       (busy && i === messages.length - 1 && !(m.thinking?.length) && !(m.subagents?.length))
-                        ? <div className="ans-pending">답변을 준비하고 있어요…</div> : null
+                        ? <FinLoading row label="답변을 준비하고 있어요…" /> : null
                     )
                   ) : (
                     <div className="bubble">{m.content}</div>

@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 import type { Artifact, Citation } from "@/lib/types";
+import { FinLoading } from "./ui";
 
 type Urls = { page: string; x: string; threads: string; telegram: string; kakao: string };
 
@@ -83,7 +84,7 @@ export function ShareSheet({ a, answer, audit, onClose }: {
           <b>공유</b>
           <button className="sv-x" onClick={onClose} aria-label="닫기">✕</button>
         </div>
-        {state === "working" && <p className="muted">공유 링크 만드는 중…</p>}
+        {state === "working" && <FinLoading label="공유 링크 만드는 중…" />}
         {state === "blocked" && (
           <p className="share-blocked">이 자료에는 원본 데이터와 대조되지 않은 수치가 있어 공유할 수 없어요.
             {detail ? <span className="mono"> {detail}</span> : null}</p>

@@ -9,7 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Alert, ChannelStatus, Delivery, CHANNELS, channelMeta, freshnessFromAsOf, targetLabel } from "@/lib/alerts";
 import { ChannelIcon } from "./ChannelIcon";
 import AlertSheet from "./AlertSheet";
-import { Button, Chip, FreshnessDot, GuardrailLabel } from "./ui";
+import { Button, Chip, FinLoading, FreshnessDot, GuardrailLabel } from "./ui";
 
 function relTime(iso: string | null): string {
   if (!iso) return "—";
@@ -76,7 +76,7 @@ export default function BotHome({ onOpenDashboard }: { onOpenDashboard?: (deepli
       <div className="bot-home-body">
         {/* LEFT — alert cards */}
         <div className="bot-grid">
-          {loading && <div className="muted-note">불러오는 중…</div>}
+          {loading && <FinLoading label="불러오는 중…" />}
           {!loading && alerts.length === 0 && (
             <div className="bot-empty">
               아직 알림이 없어요. 대시보드의 보드/위젯에서 🔔 을 누르거나,

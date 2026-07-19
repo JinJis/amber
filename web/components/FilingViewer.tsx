@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Citation } from "./SourceCard";
+import { FinLoading } from "./ui";
 
 type Target = { concept?: string; value?: string; text?: string };
 
@@ -241,7 +242,7 @@ export function FilingViewer({ c }: { c: Citation }) {
         {/* the external "원문 보기 ↗" action lives once, in the SourceViewer side panel (sv-ctx-actions) */}
       </div>
       {state === "loading" ? (
-        <div className="fv-loading"><span className="fv-spinner" /> 원문 불러오는 중…</div>
+        <FinLoading label="원문 불러오는 중…" />
       ) : (
         <iframe
           ref={frameRef}

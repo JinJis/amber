@@ -6,7 +6,7 @@
 // (Alert/bot setup lives in the dashboard, not here.)
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Mascot, Modal } from "./ui";
+import { Button, FinLoading, Mascot, Modal } from "./ui";
 import { TickerLogo } from "./TickerLogo";
 
 export type WatchItem = { id: string; market: string; ticker: string; name?: string | null };
@@ -232,7 +232,7 @@ export default function Watchlists(
                       </select>
                       <input className="input" placeholder="종목 검색 (이름 또는 티커)…" value={query} onChange={(e) => runSearch(e.target.value)} />
                     </div>
-                    {searching && <div className="wl-loading"><span className="tl-spin" /> 검색 중…</div>}
+                    {searching && <FinLoading row label="검색 중…" />}
                     {!searching && query.trim() && results.length === 0 && <div className="muted-note wl-noresults">검색 결과가 없어요.</div>}
                     {results.length > 0 && (
                       <div className="wl-results">

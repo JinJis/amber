@@ -5,7 +5,7 @@
 // 자연스럽게 안내한다. 추가하면 선택한 핀의 spec을 현재 보드에 위젯으로 올리고, 주기성 데이터면 알림도 켤 수 있다.
 
 import { useEffect, useState } from "react";
-import { Button, CadenceTag, FreshnessDot, Modal } from "./ui";
+import { Button, CadenceTag, FinLoading, FreshnessDot, Modal } from "./ui";
 import { isPeriodic } from "@/lib/alerts";
 
 type LibPin = { id: string; title: string; spec: any; board_id: string | null };
@@ -84,7 +84,7 @@ export default function WidgetGallery({
       <div className="wg-sub">대시보드{boardName ? `: ${boardName}` : ""} · 탐색에서 핀한 데이터로 위젯을 만듭니다</div>
 
         {loading ? (
-          <div className="wg-empty"><div className="muted-note">불러오는 중…</div></div>
+          <div className="wg-empty"><FinLoading label="불러오는 중…" /></div>
         ) : pins.length === 0 ? (
           <div className="wg-empty">
             <div className="wg-empty-ic" aria-hidden>📌</div>

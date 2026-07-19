@@ -20,6 +20,7 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { ArtifactCard } from "./ArtifactCard";
 import { SourceCard } from "./SourceCard";
+import { FinLoading } from "./ui";
 import { evidenceOf, trustSummary, type TrustSummary } from "../lib/evidence";
 import type { Artifact, Citation, Msg, ToolUse } from "../lib/types";
 
@@ -161,11 +162,9 @@ export function ContextPanel(
       </div>
       <span className="live-label">원자료와 출처만 보여드려요 — 예측이나 매매 의견은 없어요.</span>
       {!hasAny ? (
-        <div className="ctx-empty">
-          {streaming
-            ? "답변을 작성하며 차트·표·출처를 모으고 있어요…"
-            : "답변을 누르면 그 답에 쓰인 차트·표·출처가 여기에 모여요."}
-        </div>
+        streaming
+          ? <FinLoading label="답변을 작성하며 차트·표·출처를 모으고 있어요…" />
+          : <div className="ctx-empty">답변을 누르면 그 답에 쓰인 차트·표·출처가 여기에 모여요.</div>
       ) : streaming ? (
         // ── 수집 중: 과정이 주인공 — 도구 타임라인 + 도착 순서 그대로의 출처 ──
         <>

@@ -13,6 +13,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { Citation } from "@/lib/types";
 import { QCard, type AskCard } from "./QCard";
 import { TickerLogo } from "./TickerLogo";
+import { FinLoading } from "./ui";
 
 type TickerInfo = { market: string; ticker: string; name: string; groups: string[] };
 type WatchGroup = { id: string; name: string };
@@ -238,10 +239,7 @@ export default function CockpitEntry({ onPick, onQuestions, onEvidence, onManage
   const tickerCards = (t: TickerInfo) => (
     <div className="tk-cards" data-testid="tk-cards">
       {loadingKey === sel ? (
-        <div className="tk-loading" data-testid="tk-loading">
-          <span className="tl-spin" aria-hidden />
-          {t.name}의 공시·가격·뉴스·밸류에이션·수급을 훑는 중…
-        </div>
+        <FinLoading testid="tk-loading" label={`${t.name}의 공시·가격·뉴스·밸류에이션·수급을 훑는 중…`} />
       ) : selCards && selCards.length > 0 ? (
         <div className="qc-list">
           {selCards.slice(0, 5).map((c, i) => (

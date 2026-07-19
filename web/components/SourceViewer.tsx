@@ -11,7 +11,7 @@ import { Citation, sourceShape, hostOf, SrcTable } from "./SourceCard";
 import { FilingViewer, viewerSrc } from "./FilingViewer";
 import { DeckViewer, deckSrc } from "./DeckViewer";
 import { DerivationCard } from "./DerivationCard";
-import { FreshnessDot, FRESH_LABEL } from "./ui";
+import { DocBadge, FreshnessDot, FRESH_LABEL } from "./ui";
 
 const TABS: { key: "filing" | "web" | "data"; label: string }[] = [
   { key: "filing", label: "📄 공시" },
@@ -65,7 +65,8 @@ export function SourceViewer({ c, onClose, onQuote }: {
             {TABS.map((t) => <span key={t.key} className={`sv-tab ${t.key === shape ? "on" : ""}`}>{t.label}</span>)}
           </div>
           <span className="sv-name">{c.source || "원문"}</span>
-          {c.page ? <span className="sv-meta mono">{c.page}{c.doc_type ? ` · ${c.doc_type}` : ""}</span> : null}
+          <DocBadge c={c} />{/* 문서유형 뱃지 (국내 공시·미국 공시·실적콜·모델 계산) */}
+          {c.page ? <span className="sv-meta mono">{c.page}</span> : null}
           <button className="sv-x" onClick={onClose} aria-label="닫기">✕</button>
         </div>
 
