@@ -35,7 +35,7 @@ _DOMAIN_GROUPS: dict[str, list[tuple[str, list[str]]]] = {
         ("공유", ["share"]),
     ],
     "controlplane": [
-        ("테넌시", ["tenant", "project"]),
+        ("계정(프로젝트)", ["project"]),
         ("키·활성화", ["api_key", "key", "activation", "entitlement"]),
         ("계측·비용", ["usage", "meter", "quota", "provider", "cost"]),
     ],

@@ -25,9 +25,8 @@ for _ in $(seq 1 40); do
 done
 ok "stack healthy"
 
-# tenant + key with EVERY connector activated
-TID=$(curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/tenants -d '{"name":"COV"}' | jget "['id']")
-PID=$(curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/tenants/$TID/projects -d '{"name":"p"}' | jget "['id']")
+# project (account) + key with EVERY connector activated
+PID=$(curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/projects -d '{"name":"COV"}' | jget "['id']")
 KEY=$(curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/projects/$PID/keys -d '{"name":"k"}' | jget "['api_key']")
 for c in sec_edgar yahoo fred opendart ecos google_news datasets_store rag; do
   curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/projects/$PID/activations -d "{\"connector_id\":\"$c\"}" >/dev/null

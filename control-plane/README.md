@@ -1,12 +1,13 @@
 # Control Plane
 
-The platform control plane: **multi-tenancy, data-source entitlements, metering, and a gateway** in
-front of the `datasets/` data plane. A tenant activates the connectors they need (from the data plane's
-`/catalog`), gets scoped API keys, and all data requests flow through this gateway which enforces
-activation, rate-limits, meters usage, and writes an audit log.
+The platform control plane: **per-account data-source entitlements, metering, and a gateway** in
+front of the `datasets/` data plane. An account (one `Project` per user — no Tenant parent, SIMPL-1)
+activates the connectors they need (from the data plane's `/catalog`), gets scoped API keys, and all
+data requests flow through this gateway which enforces activation, rate-limits, meters usage, and writes
+an audit log.
 
 ```
-tenant API key ─▶ control-plane gateway ─▶ (entitlement · rate-limit · meter · audit) ─▶ datasets data plane
+account API key ─▶ control-plane gateway ─▶ (entitlement · rate-limit · meter · audit) ─▶ datasets data plane
 ```
 
 ## Run
@@ -23,14 +24,13 @@ uv run pytest -q
 
 ```bash
 A='-H X-Admin-Token:dev-admin-token'
-curl $A -X POST localhost:8001/admin/tenants -d '{"name":"Acme"}'
-curl $A -X POST localhost:8001/admin/tenants/<tid>/projects -d '{"name":"prod"}'
+curl $A -X POST localhost:8001/admin/projects -d '{"name":"Acme"}'                 # a project = an account
 curl $A -X POST localhost:8001/admin/projects/<pid>/keys -d '{"name":"key1"}'      # returns the key ONCE
 curl $A -X POST localhost:8001/admin/projects/<pid>/activations -d '{"connector_id":"sec_edgar"}'
 curl $A localhost:8001/admin/projects/<pid>/usage
 ```
 
-Then call the data plane *through* the gateway with the tenant key:
+Then call the data plane *through* the gateway with the account key:
 
 ```bash
 curl -H 'X-API-KEY: vgk_...' 'localhost:8001/company/facts?ticker=AAPL&market=US'   # 200 if sec_edgar activated, else 403

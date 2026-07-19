@@ -35,9 +35,10 @@ def _uid(prefix: str) -> str:
 class User(Base):
     __tablename__ = "users"
     email: Mapped[str] = mapped_column(String(256), primary_key=True)
-    tenant_id: Mapped[str] = mapped_column(String(48))
+    # SIMPL-1: the control-plane project IS the account (the Tenant parent was removed). project_id is
+    # the data-plane identity; api_key is the server-side platform key minted for that project.
     project_id: Mapped[str] = mapped_column(String(48))
-    api_key: Mapped[str] = mapped_column(String(80))  # the tenant platform key (server-side only)
+    api_key: Mapped[str] = mapped_column(String(80))  # the platform key for this project (server-side only)
     # Profile (seeded from the OAuth provider on first login; display name is user-editable).
     name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     image: Mapped[str | None] = mapped_column(String(512), nullable=True)   # avatar URL (provider or set)

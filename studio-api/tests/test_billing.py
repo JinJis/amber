@@ -49,7 +49,7 @@ def _user(email: str, referred_by: str | None = None) -> User:
         for t in (CreditLedger, Invoice, Subscription):
             db.query(t).filter(t.user_email == email).delete(synchronize_session=False)
         db.query(BillingCustomer).filter(BillingCustomer.user_email == email).delete(synchronize_session=False)
-        u = db.get(User, email) or User(email=email, tenant_id="t", project_id="p", api_key="k")
+        u = db.get(User, email) or User(email=email, project_id="p", api_key="k")
         u.plan = "free"
         u.referred_by = referred_by
         db.merge(u)

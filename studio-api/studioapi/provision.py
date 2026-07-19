@@ -112,14 +112,13 @@ async def ensure_system_project() -> str | None:
         if cached:
             return cached
         try:
-            tenant = await _admin("POST", "/admin/tenants", {"name": "system"})
-            project = await _admin("POST", f"/admin/tenants/{tenant['id']}/projects", {"name": "system"})
+            project = await _admin("POST", "/admin/projects", {"name": "system"})
             key = await _admin("POST", f"/admin/projects/{project['id']}/keys", {"name": "system"})
         except Exception as exc:  # noqa: BLE001 — control-plane not ready yet → degrade, retry next boot
             log.warning("system project provisioning deferred (control-plane not ready): %s", exc)
             return None
-        # Cache FIRST so a later mark-internal failure can never cause a re-mint (tenant leak) next boot.
-        state = {"tenant_id": tenant["id"], "project_id": project["id"], "api_key": key["api_key"]}
+        # Cache FIRST so a later mark-internal failure can never cause a re-mint (project leak) next boot.
+        state = {"project_id": project["id"], "api_key": key["api_key"]}
         with SessionLocal() as db:
             db.merge(ServiceState(key=_SYSTEM_STATE_KEY, value=_json.dumps(state)))
             db.commit()
@@ -166,12 +165,12 @@ async def ensure_user(email: str, name: str | None = None, image: str | None = N
                     existing = u
         return existing
 
-    tenant = await _admin("POST", "/admin/tenants", {"name": email})
-    project = await _admin("POST", f"/admin/tenants/{tenant['id']}/projects", {"name": "default"})
+    # SIMPL-1: the project IS the account — name it after the owner (was the Tenant.name label).
+    project = await _admin("POST", "/admin/projects", {"name": email})
     key = await _admin("POST", f"/admin/projects/{project['id']}/keys", {"name": "web"})
     await _activate_defaults(project["id"])
 
-    user = User(email=email, tenant_id=tenant["id"], project_id=project["id"], api_key=key["api_key"],
+    user = User(email=email, project_id=project["id"], api_key=key["api_key"],
                 name=(name or None) and name[:120], image=(image or None) and image[:512],
                 # ME-2: freshly activated against the current default set — no reconcile needed later
                 connectors_reconciled_ver=settings.connectors_reconcile_ver,

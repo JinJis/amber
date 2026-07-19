@@ -7,8 +7,8 @@
 
 ## 1. Vision
 
-A **multi-tenant platform for investment agents**: a data-source layer that each tenant activates to
-their needs, exposed through four surfaces over one core —
+A **multi-account platform for investment agents**: a data-source layer that each account (one project
+per user) activates to their needs, exposed through four surfaces over one core —
 
 - **REST** (the data plane API)
 - **MCP server** (agents call data as tools)
@@ -43,7 +43,7 @@ flowchart TD
 
     subgraph control["Control plane"]
         gw["<b>control-plane</b> :8010<br/><b>gateway</b><br/>auth → entitle → rate-limit<br/>→ meter/audit → proxy"]
-        admin["admin API<br/>tenants · keys · activations"]
+        admin["admin API<br/>projects · keys · activations"]
     end
 
     subgraph dataplane["Data plane"]
@@ -80,20 +80,21 @@ flowchart TD
 > the SSE stream back). The numbered steps ①–⑥ are spelled out below.
 
 **Request flow (a chat turn).** ① the browser POSTs to the web BFF, which attaches the Auth.js session;
-② on first login studio-api provisions a tenant/project/key + default activations via the control-plane
-admin API; ③ studio-api streams the conversation to the agent engine with the **server-side tenant key**;
+② on first login studio-api provisions a project(account)/key + default activations via the control-plane
+admin API; ③ studio-api streams the conversation to the agent engine with the **server-side account key**;
 ④ the agent plans (Gemini) and calls each tool **through the gateway** with that key; ⑤ the gateway
 authenticates, checks the project activated the connector, rate-limits, meters, and proxies to `datasets`
 or `rag` (chosen by path · market · `service`); ⑥ the provider adapter fetches from the real upstream (or
 the ingestion store). External MCP clients hit the exact same gateway, so entitlement + metering are
 identical no matter who calls.
 
-**Tenant isolation in RAG.** `rag` is the one multi-tenant *store* (it holds ingested docs, not just
+**Per-account isolation in RAG.** `rag` is the one multi-account *store* (it holds ingested docs, not just
 proxied upstream data), so when the gateway proxies to it, it injects `X-Tenant-Id` from the caller's
-authenticated `project_id` (any client-supplied value is stripped — no spoofing). RAG stamps that tenant
-onto ingested chunks and scopes search to **own-tenant OR global (unscoped)** docs: a tenant's ingested
-news never surfaces in another's search, while a shared/seeded corpus (ingested without a tenant) stays
-visible to all. The tenant key is an isolation dimension only — it's never part of user-facing provenance.
+authenticated `project_id` (the header keeps its legacy name but the value is the account's project_id;
+any client-supplied value is stripped — no spoofing). RAG stamps that account onto ingested chunks and
+scopes search to **own-account OR global (unscoped)** docs: one account's ingested news never surfaces in
+another's search, while a shared/seeded corpus (ingested without an account) stays visible to all. This
+isolation key is never part of user-facing provenance.
 
 **Response / data flow.** Each datum and RAG chunk carries `source · as_of · url`; the agent turns those
 into **citations**, the gateway stamps `x-connector` / `x-cost-units`, studio-api persists the assistant
@@ -107,7 +108,7 @@ message + citations, and the answer streams back to the browser as SSE (`token` 
 | **web** | 3000 | Next.js chat UI + agent builder + prompt library; `/api/*` BFF holds only an Auth.js session | studio-api |
 | **studio-api** | 8004 | Google user → tenant provisioning, conversations, chat BFF (**holds the tenant key**) | control-plane (admin), agent-engine |
 | **agent-engine** | 8003 | guardrail → plan (Gemini) → tool-calling loop → provenance citations; `/agent/run`, `/agent/chat` (SSE) | control-plane (gateway) |
-| **control-plane** | 8010 | the **gateway**: auth → entitlement → rate-limit → meter/audit → proxy; tenants/keys/activations admin | datasets, rag |
+| **control-plane** | 8010 | the **gateway**: auth → entitlement → rate-limit → meter/audit → proxy; projects/keys/activations admin | datasets, rag |
 | **datasets** | 8000 | REST data plane: connectors (SEC/Yahoo/FRED/DART/ECOS/News) + point-in-time ingestion store + `/catalog` | upstream APIs, (Postgres) |
 | **rag** | 8002 | provenance-first retrieval: chunk→embed→store→retrieve→rerank; pluggable backends | (vector store, embed backend) |
 | *mcp* | stdio | one tool per catalog resource, routed through the gateway with the tenant key (entitled + metered) | control-plane |
@@ -178,17 +179,21 @@ A financial datasets API covering the US and Korean markets. Market chosen with 
 ### 4.2 Control plane — `control-plane/`  ✅ (P1)
 A gateway in front of the data plane. Package `controlplane` (talks to data plane over HTTP).
 
-- **Store:** `Tenant → Project → ApiKey` (sha256-hashed, prefix lookup) + `Activation` (per-connector
-  entitlement) + `UsageEvent` (metering) + `AuditLog`. Postgres at runtime.
+- **Store:** `Project` (the account) → `ApiKey` (sha256-hashed, prefix lookup) + `Activation` (per-connector
+  entitlement) + `UsageEvent` (metering) + `AuditLog`. Postgres at runtime. (SIMPL-1: the old `Tenant`
+  parent was removed — this is a 1-account-per-user product, so it was always 1:1 with Project and carried
+  no logic; the gateway, metering, audit and RAG isolation all key on `project_id`.)
 - **Entitlement:** fetches the data-plane `/catalog`, maps `(method, path, market)` → connector(s); a
-  request is allowed iff the project activated one of them.
+  request is allowed iff the project activated one of them. A project can be marked **`internal`** (the
+  platform's own feed pipelines) — the gateway then entitles it to the whole governed catalog, skipping
+  the activation check while still metering/rate-limiting/auditing it (SYS-1).
 - **Gateway flow:** authenticate → entitle → rate-limit → proxy to data plane → meter + audit. Returns
   `x-connector` / `x-cost-units` headers; public `/catalog` passthrough. **Ungoverned passthroughs**
   (not in any manifest → no entitlement, auth+meter only): `/evidence/*` (sourced HTML) and `/logos`
   (company brand images — hybrid resolver Logo.dev→FMP→favicon, cached on the datasets volume; a miss
   returns 204 and the UI draws a monogram — never a fabricated logo). Admins fill KR/coverage gaps via
   `POST /logos` (studio proxy → `web /api/logos → TickerLogo`; admin panel has an upload form).
-- **Admin (X-Admin-Token):** create tenant/project/key, activate connectors, usage + audit summaries.
+- **Admin (X-Admin-Token):** create project(account)/key, activate connectors, mark internal, usage + audit summaries.
 - **6 tests.** Verified live: activate `yahoo` → `/prices` 200; unactivated → 403; usage metered.
 
 ### 4.3 MCP server — `mcp/`  ✅ (P2)
@@ -292,7 +297,9 @@ REST docs · **MCP tool generation** · RAG source registration · entitlements 
 
 ## 5. Multi-tenancy, governance & licensing
 
-- **Tenancy:** Tenant → Project → scoped API key; activation per connector is the entitlement unit.
+- **Accounts:** one `Project` per user (the account) → scoped API key; activation per connector is the
+  entitlement unit. (No `Tenant` parent — SIMPL-1. A project may be `internal` = platform feed infra,
+  entitled to the whole catalog, entitlement-check-exempt but still metered — SYS-1.)
 - **Metering/billing:** every gated call writes a `UsageEvent` with cost units by connector tier.
 - **Governance (critical, platform-managed keys + redistribution):** each connector carries a
   `license.redistribution` flag (yahoo + news = false). The catalog exposes it; the control plane is the

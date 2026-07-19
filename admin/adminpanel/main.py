@@ -9,7 +9,7 @@ job-to-be-done (Overview · Catalog · Pipelines · Runs · Queue · Data · Use
   (델타/전체 수집 방식 + OpenDART 쿼터 카드 포함).
 * **Runs (수집 이력)** — the FULL run history, filterable + paged; each run opens a
   verbose detail view (원인별 실패 + 활동 로그 전체).
-* **Data / Users** — ingestion-store + RAG health; tenants/projects/keys/activations.
+* **Data / Users** — ingestion-store + RAG health; projects(accounts)/keys/activations.
 * **DB browser** — our own styled CRUD over every reflected service table (no
   sqladmin → no unstyled raw-HTML fallback).
 
@@ -1083,20 +1083,19 @@ def _per_project_costs_section(cost_usd, days: int = 30) -> str:
         from datetime import datetime as _dt, timedelta as _td
         since = _dt.utcnow() - _td(days=days)
         with eng.connect() as conn:  # type: ignore[union-attr]
+            # SIMPL-1: the account label is Project.name (was Tenant.name) — no more tenants join.
             rows = conn.execute(sa_text(
-                "SELECT lu.project_id, t.name tenant, lu.model, "
+                "SELECT lu.project_id, p.name tenant, lu.model, "
                 "SUM(lu.input_tokens) i, SUM(lu.output_tokens) o, SUM(lu.cached_input_tokens) ci, SUM(lu.calls) c "
                 "FROM llm_usage lu "
                 "LEFT JOIN projects p ON p.id = lu.project_id "
-                "LEFT JOIN tenants t ON t.id = p.tenant_id "
-                "WHERE lu.ts >= :since GROUP BY lu.project_id, t.name, lu.model"
+                "WHERE lu.ts >= :since GROUP BY lu.project_id, p.name, lu.model"
             ), {"since": since}).all()
             conn_rows = conn.execute(sa_text(
-                "SELECT ue.project_id, t.name tenant, COUNT(*) n, SUM(ue.cost_units) cu "
+                "SELECT ue.project_id, p.name tenant, COUNT(*) n, SUM(ue.cost_units) cu "
                 "FROM usage_events ue "
                 "LEFT JOIN projects p ON p.id = ue.project_id "
-                "LEFT JOIN tenants t ON t.id = p.tenant_id "
-                "WHERE ue.ts >= :since GROUP BY ue.project_id, t.name"
+                "WHERE ue.ts >= :since GROUP BY ue.project_id, p.name"
             ), {"since": since}).all()
     except Exception:  # noqa: BLE001 — 컬럼 미생성(구버전 DB) 등: 섹션만 생략
         return ""
@@ -1338,18 +1337,17 @@ def _simple_table(key: str, table: str, cols: list[str], limit: int = 50) -> str
 async def users_view(request: Request):
     cp_up = DB_STATUS.get("controlplane", {}).get("error") is None
     if not cp_up:
-        body = "<div class=warn>Control-plane DB not mounted/reflected — tenant &amp; entitlement views unavailable.</div>"
+        body = "<div class=warn>Control-plane DB not mounted/reflected — account &amp; entitlement views unavailable.</div>"
         return HTMLResponse(page("/users", "Users", body))
 
     body = (
         "<p class=hint>Who can use what, and what they used — from the control-plane "
-        "(tenants → projects → API keys → activations → usage) and studio users.</p>"
-        + "<h2>Tenants</h2>" + _simple_table("controlplane", "tenants", ["id", "name", "created_at"])
-        + "<h2>Projects</h2>" + _simple_table("controlplane", "projects", ["id", "tenant_id", "name", "created_at"])
+        "(projects/accounts → API keys → activations → usage) and studio users.</p>"
+        + "<h2>Projects (accounts)</h2>" + _simple_table("controlplane", "projects", ["id", "name", "plan", "internal", "created_at"])
         + "<h2>API keys</h2>" + _simple_table("controlplane", "api_keys", ["id", "project_id", "prefix", "created_at"])
         + "<h2>Activations (entitlements)</h2>" + _simple_table("controlplane", "activations", ["id", "project_id", "connector_id", "created_at"])
         + "<h2>Recent usage</h2>" + _simple_table("controlplane", "usage_events", ["id", "project_id", "tool", "ts"], limit=30)
-        + "<h2>Studio users</h2>" + _simple_table("studio", "users", ["email", "tenant_id", "project_id"])
+        + "<h2>Studio users</h2>" + _simple_table("studio", "users", ["email", "project_id", "plan"])
     )
     return HTMLResponse(page("/users", "Users", body))
 

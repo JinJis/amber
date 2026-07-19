@@ -24,11 +24,9 @@ def setup_module(_module):
     init_db()
 
 
-def _mock_cp(tenant="t1", project="p1", key="vgk_1"):
-    """Mock the control-plane provisioning chain. Returns (tenant_route, activations_route, patch_route)."""
-    tenant_route = respx.post("http://cp.test/admin/tenants").mock(
-        return_value=httpx.Response(200, json={"id": tenant}))
-    respx.post(f"http://cp.test/admin/tenants/{tenant}/projects").mock(
+def _mock_cp(project="p1", key="vgk_1"):
+    """Mock the control-plane provisioning chain. Returns (project_route, activations_route, patch_route)."""
+    project_route = respx.post("http://cp.test/admin/projects").mock(
         return_value=httpx.Response(200, json={"id": project}))
     respx.post(f"http://cp.test/admin/projects/{project}/keys").mock(
         return_value=httpx.Response(200, json={"api_key": key}))
@@ -36,7 +34,7 @@ def _mock_cp(tenant="t1", project="p1", key="vgk_1"):
         return_value=httpx.Response(200, json={}))
     patch_route = respx.patch(f"http://cp.test/admin/projects/{project}").mock(  # SYS-1: internal marking
         return_value=httpx.Response(200, json={"id": project, "internal": True}))
-    return tenant_route, activations, patch_route
+    return project_route, activations, patch_route
 
 
 # --- ME-2: reconcile version column ------------------------------------------------------------
@@ -84,7 +82,7 @@ async def test_me5_system_key_provisioned_cached_and_preferred(monkeypatch):
 
     with SessionLocal() as db:
         db.query(ServiceState).filter(ServiceState.key == _SYSTEM_STATE_KEY).delete()
-        db.merge(User(email="rand@u.com", tenant_id="t", project_id="p", api_key="vgk_rand"))
+        db.merge(User(email="rand@u.com", project_id="p", api_key="vgk_rand"))
         db.commit()
 
     # before provisioning: no cached key, and background feeds fall back to an arbitrary user's key
@@ -95,14 +93,14 @@ async def test_me5_system_key_provisioned_cached_and_preferred(monkeypatch):
 
     import studioapi.provision as _P
     _P._system_backfill_done = False
-    tenant_route, _, _ = _mock_cp(tenant="tsys", project="psys", key="vgk_sys")
+    project_route, _, _ = _mock_cp(project="psys", key="vgk_sys")
     key = await ensure_system_project()
     assert key == "vgk_sys"
     assert system_api_key_cached() == "vgk_sys"
 
-    # idempotent: a second call serves the cached key without minting another tenant
+    # idempotent: a second call serves the cached key without minting another project
     assert await ensure_system_project() == "vgk_sys"
-    assert tenant_route.call_count == 1
+    assert project_route.call_count == 1
 
     # background feeds now prefer the stable system key over the arbitrary user's
     with SessionLocal() as db:
@@ -123,7 +121,7 @@ async def test_system_project_marked_internal(monkeypatch):
         db.commit()
     P._system_backfill_done = False
 
-    _, activations, patch_route = _mock_cp(tenant="tsys2", project="psys2", key="vgk_sys2")
+    _, activations, patch_route = _mock_cp(project="psys2", key="vgk_sys2")
     key = await P.ensure_system_project()
     assert key == "vgk_sys2"
     # 커머셜 activation 목록을 만들지 않는다 — 엔타이틀은 게이트웨이의 internal 예외가 담당
@@ -191,12 +189,12 @@ def test_me4_cleanup_removes_only_stale_unclaimed(monkeypatch):
     with SessionLocal() as db:
         # stale + unclaimed + no dependents → GC'd (row + guest User)
         db.add(GuestSession(id=s_stale, ip_hash=None, created_at=old))
-        db.merge(User(email=guest_email(s_stale), tenant_id="t", project_id="p", api_key="k", plan="guest"))
+        db.merge(User(email=guest_email(s_stale), project_id="p", api_key="k", plan="guest"))
         # stale but CLAIMED (converted to a real account) → kept
         db.add(GuestSession(id=s_claimed, claimed_by="real@u.com", created_at=old))
         # recent unclaimed → kept (still inside TTL)
         db.add(GuestSession(id=s_recent, created_at=recent))
-        db.merge(User(email=guest_email(s_recent), tenant_id="t", project_id="p", api_key="k", plan="guest"))
+        db.merge(User(email=guest_email(s_recent), project_id="p", api_key="k", plan="guest"))
         db.commit()
 
     assert cleanup_stale_guests() == 1

@@ -45,9 +45,8 @@ section "catalog"
 N=$(curl -s $DP/catalog | jget '["count"]'); check "data-plane catalog connectors>=8" "$([ "${N:-0}" -ge 8 ] && echo yes)" yes
 NC=$(curl -s $CP/catalog | jget '["count"]'); check "gateway catalog passthrough>=8" "$([ "${NC:-0}" -ge 8 ] && echo yes)" yes
 
-section "tenant / project / key"
-TID=$(curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/tenants -d '{"name":"E2E"}' | jget '["id"]')
-PID=$(curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/tenants/$TID/projects -d '{"name":"p"}' | jget '["id"]')
+section "project (account) / key"
+PID=$(curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/projects -d '{"name":"E2E"}' | jget '["id"]')
 KEY=$(curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/projects/$PID/keys -d '{"name":"k"}' | jget '["api_key"]')
 [ -n "$KEY" ] && ok "key issued (${KEY:0:14}...)" || fail "key issuance"
 H=(-H "X-API-KEY: $KEY")

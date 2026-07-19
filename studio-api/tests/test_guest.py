@@ -34,8 +34,7 @@ def _reset_guest_state():
 
 
 def _mock_cp():
-    respx.post("http://cp.test/admin/tenants").mock(return_value=httpx.Response(200, json={"id": "tenG"}))
-    respx.post("http://cp.test/admin/tenants/tenG/projects").mock(return_value=httpx.Response(200, json={"id": "prjG"}))
+    respx.post("http://cp.test/admin/projects").mock(return_value=httpx.Response(200, json={"id": "prjG"}))
     respx.post("http://cp.test/admin/projects/prjG/keys").mock(return_value=httpx.Response(200, json={"api_key": "vgk_guest"}))
     respx.post("http://cp.test/admin/projects/prjG/activations").mock(return_value=httpx.Response(200, json={}))
     respx.patch("http://cp.test/admin/projects/prjG").mock(return_value=httpx.Response(200, json={"plan": "guest"}))
@@ -63,7 +62,7 @@ async def test_ensure_guest_shares_one_project(monkeypatch):
     # 게스트마다 키를 만들지 않는다 — 공유 게스트 프로젝트/키 1개 (테넌트 생성은 1회)
     assert u1.project_id == u2.project_id == "prjG" and u1.api_key == "vgk_guest"
     assert u1.plan == "guest" and u1.email == guest_email(GID_A)
-    assert respx.calls.call_count and respx.post("http://cp.test/admin/tenants").call_count == 1
+    assert respx.calls.call_count and respx.post("http://cp.test/admin/projects").call_count == 1
 
 
 @respx.mock
@@ -149,7 +148,7 @@ def test_claim_guest_moves_conversations(monkeypatch):
 
     # 새(기존) 계정 — 프로비저닝 왕복 없이 직접 심는다
     with SessionLocal() as db:
-        db.merge(User(email="joined@u.com", tenant_id="t", project_id="p", api_key="k"))
+        db.merge(User(email="joined@u.com", project_id="p", api_key="k"))
         db.commit()
     uhdr = {"X-Service-Token": "dev-service-token", "X-User-Email": "joined@u.com"}
     r = client.post("/users/claim-guest", headers={**uhdr, "X-Guest-Id": GID_A})
@@ -165,7 +164,7 @@ def test_claim_guest_moves_conversations(monkeypatch):
     # 멱등: 재호출 no-op / 다른 계정의 가로채기 409
     assert client.post("/users/claim-guest", headers={**uhdr, "X-Guest-Id": GID_A}).json()["claimed"] is True
     with SessionLocal() as db:
-        db.merge(User(email="thief@u.com", tenant_id="t", project_id="p", api_key="k"))
+        db.merge(User(email="thief@u.com", project_id="p", api_key="k"))
         db.commit()
     r3 = client.post("/users/claim-guest",
                      headers={"X-Service-Token": "dev-service-token", "X-User-Email": "thief@u.com",

@@ -1,7 +1,7 @@
 """Admin / management endpoints (guarded by the X-Admin-Token header).
 
-Create tenants → projects → API keys, and activate connectors per project. These
-are platform-operator actions; tenant self-service UI can wrap them later.
+Create projects (accounts) → API keys, and activate connectors per project. These are
+platform-operator actions; account self-service UI can wrap them later.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from controlplane.auth import generate_key
 from controlplane.config import settings
 from controlplane.db import SessionLocal
 from controlplane.models import (
-    Activation, ApiKey, AuditLog, LlmUsage, Project, ProviderUsage, Tenant, UsageEvent)
+    Activation, ApiKey, AuditLog, LlmUsage, Project, ProviderUsage, UsageEvent)
 
 
 async def require_admin(x_admin_token: Annotated[str | None, Header(alias="X-Admin-Token")] = None) -> None:
@@ -43,24 +43,13 @@ class ActivationIn(BaseModel):
     byo_credentials: str | None = None
 
 
-@router.post("/tenants", summary="Create a tenant")
-async def create_tenant(body: NameIn) -> dict:
+@router.post("/projects", summary="Create a project (account)")
+async def create_project(body: NameIn) -> dict:
     with SessionLocal() as db:
-        t = Tenant(name=body.name)
-        db.add(t)
-        db.commit()
-        return {"id": t.id, "name": t.name}
-
-
-@router.post("/tenants/{tenant_id}/projects", summary="Create a project")
-async def create_project(tenant_id: str, body: NameIn) -> dict:
-    with SessionLocal() as db:
-        if db.get(Tenant, tenant_id) is None:
-            raise HTTPException(404, "Unknown tenant.")
-        p = Project(tenant_id=tenant_id, name=body.name)
+        p = Project(name=body.name)
         db.add(p)
         db.commit()
-        return {"id": p.id, "tenant_id": tenant_id, "name": p.name}
+        return {"id": p.id, "name": p.name}
 
 
 class ProjectPatchIn(BaseModel):
@@ -79,7 +68,7 @@ async def patch_project(project_id: str, body: ProjectPatchIn) -> dict:
         if body.internal is not None:
             p.internal = body.internal
         db.commit()
-        result = {"id": p.id, "tenant_id": p.tenant_id, "name": p.name, "plan": p.plan, "internal": p.internal}
+        result = {"id": p.id, "name": p.name, "plan": p.plan, "internal": p.internal}
     # the gateway caches (plan, internal) ~60s — invalidate so a plan/internal change is live now.
     from controlplane.gateway import invalidate_project_meta
     invalidate_project_meta(project_id)
@@ -202,7 +191,7 @@ async def llm_usage_summary(days: int = 30) -> dict:
 
 @router.get("/llm-usage/by-project", summary="METER-2: 프로젝트(유저)별 LLM 토큰 롤업 — 유닛 이코노믹스")
 async def llm_usage_by_project(days: int = 30) -> dict:
-    """LLM 토큰을 project(=유저 테넌트) × model로 롤업 — admin '유저별 원가' 화면이 pricing
+    """LLM 토큰을 project(=유저 계정) × model로 롤업 — admin '유저별 원가' 화면이 pricing
     레지스트리로 달러화한다. project_id NULL = 공용/백그라운드(피드·인제스트)."""
     from datetime import datetime as _dt, timedelta as _td
     since = _dt.utcnow() - _td(days=max(1, min(days, 365)))
@@ -216,15 +205,14 @@ async def llm_usage_by_project(days: int = 30) -> dict:
             .group_by(LlmUsage.project_id, LlmUsage.model)
             .order_by(func.sum(LlmUsage.input_tokens).desc())
         ).all()
-        # project → tenant 이름(=유저 이메일) 매핑
+        # project → 계정 라벨(=유저 이메일, Project.name) 매핑
         pids = {p for p, *_ in rows if p}
         names: dict[str, str] = {}
         if pids:
-            for pid, tname in db.execute(
-                select(Project.id, Tenant.name).join(Tenant, Project.tenant_id == Tenant.id)
-                .where(Project.id.in_(pids))
+            for pid, pname in db.execute(
+                select(Project.id, Project.name).where(Project.id.in_(pids))
             ).all():
-                names[pid] = tname
+                names[pid] = pname
     return {"since": since.isoformat(), "days": days,
             "rows": [{"project_id": p, "tenant": names.get(p) if p else None, "model": m,
                       "input_tokens": int(i), "output_tokens": int(o), "calls": int(c)}

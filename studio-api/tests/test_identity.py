@@ -24,8 +24,7 @@ def setup_module(_module):
 
 def _mock_cp(monkeypatch):
     monkeypatch.setattr(settings, "control_plane_url", "http://cp.test")
-    respx.post("http://cp.test/admin/tenants").mock(return_value=httpx.Response(200, json={"id": "tenI"}))
-    respx.post("http://cp.test/admin/tenants/tenI/projects").mock(return_value=httpx.Response(200, json={"id": "prjI"}))
+    respx.post("http://cp.test/admin/projects").mock(return_value=httpx.Response(200, json={"id": "prjI"}))
     respx.post("http://cp.test/admin/projects/prjI/keys").mock(return_value=httpx.Response(200, json={"api_key": "vgk_i"}))
     respx.post("http://cp.test/admin/projects/prjI/activations").mock(return_value=httpx.Response(200, json={}))
 
@@ -94,8 +93,8 @@ def test_rename_refuses_collision():
     import pytest
 
     with SessionLocal() as db:
-        db.merge(User(email="col_a@noemail.local", tenant_id="t", project_id="p", api_key="k"))
-        db.merge(User(email="col_b@u.com", tenant_id="t", project_id="p", api_key="k"))
+        db.merge(User(email="col_a@noemail.local", project_id="p", api_key="k"))
+        db.merge(User(email="col_b@u.com", project_id="p", api_key="k"))
         db.commit()
     with pytest.raises(ValueError):
         rename_user_email("col_a@noemail.local", "col_b@u.com")   # 기존 계정과 병합 금지

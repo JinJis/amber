@@ -106,7 +106,7 @@ async def health() -> dict:
 
 @app.post("/users/ensure", tags=["Users"], dependencies=[Depends(require_service)])
 async def users_ensure(user: User = Depends(current_user)) -> dict:
-    return {"email": user.email, "tenant_id": user.tenant_id, "project_id": user.project_id,
+    return {"email": user.email, "project_id": user.project_id,
             "onboarded": bool(user.onboarded)}
 
 

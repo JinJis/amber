@@ -23,12 +23,11 @@ def _make_db(path: str, ddl: str) -> None:
 _CP = f"{_TMP}/controlplane.db"
 _ST = f"{_TMP}/studio.db"
 _DS = f"{_TMP}/datasets.db"
-_make_db(_CP, "create table tenants(id text primary key, name text);"
-              "insert into tenants values('ten_1','Acme Capital');"
-              "create table api_keys(id text primary key, project_id text, prefix text);"
+_make_db(_CP, "create table api_keys(id text primary key, project_id text, prefix text);"
               "insert into api_keys values('k1','prj_1','vgk_aa');"
-              "create table projects(id text primary key, tenant_id text, plan text);"
-              "insert into projects values('prj_1','ten_1','pro');"
+              # SIMPL-1: Project is the account; its name is the owner label (was Tenant.name)
+              "create table projects(id text primary key, name text, plan text, internal int default 0);"
+              "insert into projects values('prj_1','Acme Capital','pro',0);"
               # COST: llm_usage (with COST-2 breakdown cols) + usage_events for the /costs page
               "create table llm_usage(id integer primary key, service text, model text, kind text,"
               " input_tokens int, output_tokens int, calls int, estimated int,"
@@ -48,8 +47,8 @@ _make_db(_CP, "create table tenants(id text primary key, name text);"
               " ts datetime default (datetime('now')));"
               "insert into provider_usage(provider,calls,ts) values('yahoo',120,datetime('now'));"
               "insert into provider_usage(provider,calls,ts) values('sec_edgar',40,datetime('now'));")
-_make_db(_ST, "create table users(email text primary key, tenant_id text, api_key text);"
-              "insert into users values('a@b.com','ten_1','vgk_x');"
+_make_db(_ST, "create table users(email text primary key, project_id text, plan text, api_key text);"
+              "insert into users values('a@b.com','prj_1','pro','vgk_x');"
               "create table agents(id text primary key, user_email text, name text);"
               # ask_feed_cache exists at reflection time so the DB browser groups it under 피드·캐시;
               # tests still (re)seed rows via sqlite3 as needed.
@@ -78,7 +77,7 @@ def _login():
 # --- reflection + auth ----------------------------------------------------
 def test_reflection_found_every_table():
     assert set(DB_STATUS) == {"controlplane", "studio", "datasets"}
-    assert "tenants" in DB_STATUS["controlplane"]["tables"]
+    assert "projects" in DB_STATUS["controlplane"]["tables"]
     assert "users" in DB_STATUS["studio"]["tables"]
     assert "financial_facts" in DB_STATUS["datasets"]["tables"]
     assert all(v["error"] is None for v in DB_STATUS.values())
@@ -89,7 +88,7 @@ def test_auth_required_then_login():
     assert r.status_code == 302 and r.headers["location"] == "/login"
     # every console page is gated
     assert client.get("/catalog", follow_redirects=False).status_code == 302
-    assert client.get("/db/controlplane/tenants", follow_redirects=False).status_code == 302
+    assert client.get("/db/controlplane/projects", follow_redirects=False).status_code == 302
     assert client.post("/login", data={"username": "admin", "password": "nope"}).status_code == 401
     r = client.post("/login", data={"username": "admin", "password": "secret"}, follow_redirects=False)
     assert r.status_code == 302 and r.headers["location"] == "/"
@@ -326,11 +325,11 @@ def test_data_page_shows_store_empty_and_row_counts():
     assert "Stored rows by table" in r.text and "financial_facts" in r.text
 
 
-def test_users_page_lists_tenants():
+def test_users_page_lists_accounts():
     _login()
     r = client.get("/users")
     assert r.status_code == 200
-    assert "Acme Capital" in r.text and "Tenants" in r.text
+    assert "Acme Capital" in r.text and "Projects" in r.text   # SIMPL-1: accounts, not tenants
 
 
 # --- ops triggers proxy to datasets --------------------------------------
@@ -393,7 +392,7 @@ def test_db_index_lists_tables_with_counts():
     _login()
     r = client.get("/db")
     assert r.status_code == 200
-    assert "/db/controlplane/tenants" in r.text and "/db/studio/users" in r.text
+    assert "/db/controlplane/projects" in r.text and "/db/studio/users" in r.text
 
 
 def test_db_index_groups_tables_by_domain():
@@ -411,16 +410,16 @@ def test_db_index_groups_tables_by_domain():
 
 def test_db_browse_rows_relative_urls():
     _login()
-    r = client.get("/db/controlplane/tenants")
+    r = client.get("/db/controlplane/projects")
     assert r.status_code == 200 and "Acme Capital" in r.text
     assert "http://localhost" not in r.text             # links relative → proxy-safe
-    assert "/db/controlplane/tenants/row/0" in r.text
+    assert "/db/controlplane/projects/row/0" in r.text
 
 
 def test_db_row_detail_and_edit_link():
     _login()
     r = client.get("/db/studio/users/row/0")
-    assert r.status_code == 200 and "a@b.com" in r.text and "ten_1" in r.text
+    assert r.status_code == 200 and "a@b.com" in r.text and "prj_1" in r.text
     assert "/db/studio/users/row/0/edit" in r.text      # editable (has PK)
 
 
@@ -448,7 +447,7 @@ def test_db_create_and_delete_row():
 def test_db_unknown_table_404():
     _login()
     assert client.get("/db/controlplane/nope").status_code == 404
-    assert client.get("/db/controlplane/tenants/row/9999").status_code == 404
+    assert client.get("/db/controlplane/projects/row/9999").status_code == 404
 
 
 # --- OPS-2: 델타 수집 방식 · OpenDART 쿼터 카드 · Runs(수집 이력) ----------------
@@ -691,7 +690,7 @@ def test_costs_page_prices_usage_with_cache_discount():
     # (캐시 할인 없으면 $1.5500 — 이 값이 뜨면 할인이 적용된 것)
     assert "1.4960" in t and "1.5500" not in t
     assert "gemini-2.5-flash" in t
-    assert "Acme Capital" in t                 # 유저별 롤업(테넌트 이름)
+    assert "Acme Capital" in t                 # 유저별 롤업(계정 이름 = Project.name)
     assert "prices" in t and "rag" in t        # 게이트웨이 커넥터
     assert "<svg" in t                          # 일별 비용 스파크라인
     assert "요율 기준일" in t                    # 스테일 요율 배너

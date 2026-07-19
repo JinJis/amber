@@ -32,8 +32,7 @@ def _cfg(monkeypatch):
 
 
 def _mock_control_plane():
-    respx.post("http://cp.test/admin/tenants").mock(return_value=httpx.Response(200, json={"id": "ten1"}))
-    respx.post("http://cp.test/admin/tenants/ten1/projects").mock(return_value=httpx.Response(200, json={"id": "prj1"}))
+    respx.post("http://cp.test/admin/projects").mock(return_value=httpx.Response(200, json={"id": "prj1"}))
     respx.post("http://cp.test/admin/projects/prj1/keys").mock(return_value=httpx.Response(200, json={"api_key": "vgk_demo"}))
     respx.post("http://cp.test/admin/projects/prj1/activations").mock(return_value=httpx.Response(200, json={}))
 
@@ -52,8 +51,8 @@ async def test_ensure_user_provisions_once(monkeypatch):
     _cfg(monkeypatch)
     _mock_control_plane()
     u = await provision.ensure_user("new@u.com")
-    assert u.tenant_id == "ten1" and u.project_id == "prj1" and u.api_key == "vgk_demo"
-    # second call returns cached (no new tenant call needed)
+    assert u.project_id == "prj1" and u.api_key == "vgk_demo"
+    # second call returns cached (no new project call needed)
     u2 = await provision.ensure_user("new@u.com")
     assert u2.api_key == "vgk_demo"
 
@@ -63,7 +62,7 @@ def test_users_ensure_endpoint(monkeypatch):
     _cfg(monkeypatch)
     _mock_control_plane()
     r = client.post("/users/ensure", headers=_hdr("e1@u.com"))
-    assert r.status_code == 200 and r.json()["tenant_id"] == "ten1"
+    assert r.status_code == 200 and r.json()["project_id"] == "prj1"
     assert "api_key" not in r.json()  # key never leaves the server
 
 
@@ -126,13 +125,12 @@ def test_wrong_service_token_is_401():
 @respx.mock
 async def test_ensure_user_survives_activation_failures(monkeypatch):
     _cfg(monkeypatch)
-    respx.post("http://cp.test/admin/tenants").mock(return_value=httpx.Response(200, json={"id": "tenF"}))
-    respx.post("http://cp.test/admin/tenants/tenF/projects").mock(return_value=httpx.Response(200, json={"id": "prjF"}))
+    respx.post("http://cp.test/admin/projects").mock(return_value=httpx.Response(200, json={"id": "prjF"}))
     respx.post("http://cp.test/admin/projects/prjF/keys").mock(return_value=httpx.Response(200, json={"api_key": "vgk_f"}))
     # every activation fails (e.g. connector missing) — the user is still provisioned
     respx.post("http://cp.test/admin/projects/prjF/activations").mock(return_value=httpx.Response(500, json={"error": "boom"}))
     u = await provision.ensure_user("partial@u.com")
-    assert u.api_key == "vgk_f" and u.tenant_id == "tenF"
+    assert u.api_key == "vgk_f" and u.project_id == "prjF"
 
 
 # --- conversations --------------------------------------------------------
@@ -208,7 +206,7 @@ async def test_chat_reuses_existing_conversation(monkeypatch):
     respx.post("http://ae.test/agent/chat").mock(return_value=httpx.Response(200, content=sse))
 
     import json as _json
-    user = User(email="multi@u.com", tenant_id="t", project_id="p", api_key="vgk_m")
+    user = User(email="multi@u.com", project_id="p", api_key="vgk_m")
 
     async def _drive(conv_id, content):
         # start the background run + tail it to completion; return the conversation id seen

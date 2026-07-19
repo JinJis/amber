@@ -86,6 +86,20 @@ def _add_missing_columns() -> None:
                 if col not in have:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {decl}"))
 
+    def drop_col(table: str, col: str, index: str | None = None) -> None:
+        """DROP COLUMN if present (SIMPL-1). On a long-lived DB a removed NOT-NULL column with no default
+        would break ORM inserts that no longer supply it. SQLite refuses DROP COLUMN while an index
+        references it → drop the index first (a no-op on PG). Best-effort; never blocks boot."""
+        if table not in names or col not in {c["name"] for c in inspector.get_columns(table)}:
+            return
+        try:
+            with engine.begin() as conn:
+                if index:
+                    conn.execute(text(f"DROP INDEX IF EXISTS {index}"))
+                conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {col}"))
+        except Exception:  # noqa: BLE001 — cleanup migration must never crash boot
+            pass
+
     add_cols("pinned_artifacts",
              {"board_id": "VARCHAR(48)", "x": "INTEGER", "y": "INTEGER", "w": "INTEGER", "h": "INTEGER"})
     add_cols("users", {  # F1 onboarding flag · M-DESK last-visit window
@@ -103,6 +117,7 @@ def _add_missing_columns() -> None:
                           "hook": "VARCHAR(160)"})
     add_cols("share_links", {"expires_at": ts, "og_image": "TEXT"})  # IMP-13 expiry · SH-2b OG image
     add_cols("card_taps", {"qhash": "VARCHAR(16)"})   # RC-2: 카드 단위 인기 집계(홈 보드 랭킹)
+    drop_col("users", "tenant_id")   # SIMPL-1: Tenant parent removed — project_id is the account identity
 
 
 def _add_missing_indexes() -> None:

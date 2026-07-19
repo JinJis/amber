@@ -18,8 +18,7 @@ def setup_module(_m):
 
 
 def _cp():
-    respx.post("http://cp.test/admin/tenants").mock(return_value=httpx.Response(200, json={"id": "ten1"}))
-    respx.post("http://cp.test/admin/tenants/ten1/projects").mock(return_value=httpx.Response(200, json={"id": "prj1"}))
+    respx.post("http://cp.test/admin/projects").mock(return_value=httpx.Response(200, json={"id": "prj1"}))
     respx.post("http://cp.test/admin/projects/prj1/keys").mock(return_value=httpx.Response(200, json={"api_key": "k"}))
     respx.post("http://cp.test/admin/projects/prj1/activations").mock(return_value=httpx.Response(200, json={}))
 

@@ -67,7 +67,7 @@ change: `docker compose up -d --build agent-engine`.
 
 Drive the data plane through the gateway directly:
 ```bash
-# POST /admin/tenants -> /projects -> /keys -> /activations (connector_id), then:
+# POST /admin/projects -> /projects/<id>/keys -> /projects/<id>/activations (connector_id), then:
 curl -H "X-API-KEY: vgk_..." "http://127.0.0.1:8010/company/facts?ticker=AAPL&market=US"
 ```
 

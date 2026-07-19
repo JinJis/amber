@@ -42,7 +42,7 @@ def _mk_user(db, email: str, key: str = "vgk_x") -> User:
     if u is None:
         # ME-2: stamp the current reconcile version so ensure_user() short-circuits without the
         # over-the-network default-connector reconcile — keeps these tests offline.
-        u = User(email=email, tenant_id="t1", project_id="p1", api_key=key,
+        u = User(email=email, project_id="p1", api_key=key,
                  connectors_reconciled_ver=settings.connectors_reconcile_ver)
         db.add(u)
         db.commit()

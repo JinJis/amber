@@ -78,8 +78,7 @@ def test_ratelimit_key_isolation_and_window_reset(monkeypatch):
 
 # --- gateway end-to-end ---------------------------------------------------
 def _make_project(name: str):
-    t = client.post("/admin/tenants", json={"name": name}, headers=ADMIN).json()
-    p = client.post(f"/admin/tenants/{t['id']}/projects", json={"name": "prod"}, headers=ADMIN).json()
+    p = client.post("/admin/projects", json={"name": name}, headers=ADMIN).json()
     k = client.post(f"/admin/projects/{p['id']}/keys", json={"name": "k"}, headers=ADMIN).json()
     return p["id"], k["api_key"]
 
@@ -145,7 +144,7 @@ def test_gateway_rate_limit(monkeypatch):
 
 
 def test_admin_requires_token():
-    assert client.post("/admin/tenants", json={"name": "x"}).status_code == 401
+    assert client.post("/admin/projects", json={"name": "x"}).status_code == 401
 
 
 @respx.mock
@@ -329,8 +328,7 @@ def test_plan_rate_limit_tiers(monkeypatch):
 
 def test_admin_patch_project_plan():
     """PLAN-2: PATCH /admin/projects/{id} — 플랜 티어 설정 (apply_plan이 호출)."""
-    t = client.post("/admin/tenants", headers=ADMIN, json={"name": "plan-t"}).json()
-    p = client.post(f"/admin/tenants/{t['id']}/projects", headers=ADMIN, json={"name": "d"}).json()
+    p = client.post("/admin/projects", headers=ADMIN, json={"name": "plan-t"}).json()
     r = client.patch(f"/admin/projects/{p['id']}", headers=ADMIN, json={"plan": "pro"})
     assert r.status_code == 200 and r.json()["plan"] == "pro"
     assert client.patch("/admin/projects/prj_nope", headers=ADMIN, json={"plan": "free"}).status_code == 404

@@ -32,8 +32,7 @@ def _cfg(monkeypatch):
 
 
 def _mock_control_plane():
-    respx.post("http://cp.test/admin/tenants").mock(return_value=httpx.Response(200, json={"id": "ten1"}))
-    respx.post("http://cp.test/admin/tenants/ten1/projects").mock(return_value=httpx.Response(200, json={"id": "prj1"}))
+    respx.post("http://cp.test/admin/projects").mock(return_value=httpx.Response(200, json={"id": "prj1"}))
     respx.post("http://cp.test/admin/projects/prj1/keys").mock(return_value=httpx.Response(200, json={"api_key": "vgk_demo"}))
     respx.post("http://cp.test/admin/projects/prj1/activations").mock(return_value=httpx.Response(200, json={}))
 
@@ -127,7 +126,7 @@ def test_desk_feed_serves_stale_copy_when_engine_down_but_cache_exists(monkeypat
     _cfg(monkeypatch); _mock_control_plane()
     email = "desk6@u.com"
     with SessionLocal() as db:
-        db.merge(User(email=email, tenant_id="t", project_id="p", api_key="vgk_x",
+        db.merge(User(email=email, project_id="p", api_key="vgk_x",
                       connectors_reconciled_ver=settings.connectors_reconcile_ver))
         db.merge(DeskFeedCache(user_email=email, payload=json.dumps(FEED),
                                generated_at=datetime.utcnow()

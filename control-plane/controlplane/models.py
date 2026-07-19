@@ -1,8 +1,10 @@
-"""Control-plane ORM: tenants → projects → API keys + activations + usage/audit.
+"""Control-plane ORM: projects (accounts) → API keys + activations + usage/audit.
 
-A **project** is the unit of activation and keys. A tenant owns projects. An
-**activation** records that a project enabled a connector from the data-plane
-catalog — that is the entitlement the gateway checks on every request.
+A **project** is the account identity at the data plane — it owns keys and activations and carries the
+plan/internal flags. An **activation** records that a project enabled a connector from the data-plane
+catalog, the entitlement the gateway checks on every request. (The old Tenant parent was removed: this
+is a 1-account-per-user B2C product, so Tenant was always 1:1 with Project and carried no logic — the
+gateway, metering, audit and RAG isolation all key on `project_id`. See ROADMAP SIMPL-1.)
 """
 
 from __future__ import annotations
@@ -20,17 +22,10 @@ def _uid(prefix: str) -> str:
     return f"{prefix}_{secrets.token_hex(8)}"
 
 
-class Tenant(Base):
-    __tablename__ = "tenants"
-    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: _uid("ten"))
-    name: Mapped[str] = mapped_column(String(128))
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-
 class Project(Base):
     __tablename__ = "projects"
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: _uid("prj"))
-    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    # A human-facing label for the account — studio sets it to the owner's email (was Tenant.name).
     name: Mapped[str] = mapped_column(String(128))
     # PLAN-2: the product plan tier (guest|free|pro), set by studio's apply_plan. Drives the
     # per-key gateway rate limit (abuse backstop). NULL = legacy/ops project → global default.

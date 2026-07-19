@@ -29,7 +29,7 @@ def _mk_user(email: str) -> None:
     with SessionLocal() as db:
         if db.get(User, email) is None:
             # stamp the reconcile version so current_actor's ensure_user short-circuits (offline)
-            db.merge(User(email=email, tenant_id="t", project_id="p", api_key="k",
+            db.merge(User(email=email, project_id="p", api_key="k",
                           connectors_reconciled_ver=settings.connectors_reconcile_ver))
             db.commit()
 

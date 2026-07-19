@@ -20,7 +20,7 @@ def _user(email: str, plan: str = "free") -> User:
     with SessionLocal() as db:
         u = db.get(User, email)
         if u is None:
-            u = User(email=email, tenant_id="t", project_id="p", api_key="k", plan=plan)
+            u = User(email=email, project_id="p", api_key="k", plan=plan)
             db.add(u)
         else:
             u.plan = plan

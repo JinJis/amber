@@ -63,7 +63,7 @@ def ip_hash(ip: str | None) -> str | None:
 
 
 async def _ensure_guest_project() -> dict:
-    """공유 게스트 테넌트/프로젝트/키 — 최초 게스트 요청에서 1회 프로비저닝(락 + KV 캐시)."""
+    """공유 게스트 프로젝트(계정)/키 — 최초 게스트 요청에서 1회 프로비저닝(락 + KV 캐시)."""
     with SessionLocal() as db:
         row = db.get(ServiceState, _STATE_KEY)
         if row:
@@ -73,8 +73,7 @@ async def _ensure_guest_project() -> dict:
             row = db.get(ServiceState, _STATE_KEY)
             if row:
                 return json.loads(row.value)
-        tenant = await _admin("POST", "/admin/tenants", {"name": "guest"})
-        project = await _admin("POST", f"/admin/tenants/{tenant['id']}/projects", {"name": "guest"})
+        project = await _admin("POST", "/admin/projects", {"name": "guest"})
         key = await _admin("POST", f"/admin/projects/{project['id']}/keys", {"name": "guest"})
         for cid in FREE_CONNECTORS:  # 무료 셋만 — 프리미엄 커넥터는 게스트에게 절대 열지 않음
             try:
@@ -85,7 +84,7 @@ async def _ensure_guest_project() -> dict:
             await _admin("PATCH", f"/admin/projects/{project['id']}", {"plan": "guest"})
         except Exception:  # noqa: BLE001 — rate 티어는 best-effort (기본값도 안전)
             logger.warning("guest project plan patch failed — global rate default applies")
-        state = {"tenant_id": tenant["id"], "project_id": project["id"], "api_key": key["api_key"]}
+        state = {"project_id": project["id"], "api_key": key["api_key"]}
         with SessionLocal() as db:
             db.merge(ServiceState(key=_STATE_KEY, value=json.dumps(state)))
             db.commit()
@@ -111,7 +110,7 @@ async def ensure_guest(gid: str, ip: str | None = None) -> User:
         if existing is not None:
             return existing
     state = await _ensure_guest_project()
-    user = User(email=email, tenant_id=state["tenant_id"], project_id=state["project_id"],
+    user = User(email=email, project_id=state["project_id"],
                 api_key=state["api_key"], plan="guest", name="게스트",
                 onboarded=True, email_verified=False)
     with SessionLocal() as db:

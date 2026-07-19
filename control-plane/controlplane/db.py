@@ -133,9 +133,35 @@ def _add_missing_indexes() -> None:
             pass
 
 
+def _drop_deprecated_tenancy() -> None:
+    """SIMPL-1: the Tenant parent was removed (1-account-per-user product — it was always 1:1 with
+    Project and carried no logic). On a long-lived DB that predates this, `projects.tenant_id` is NOT
+    NULL with no default, so ORM inserts that no longer supply it would fail — drop the column, then the
+    now-orphan `tenants` table. Idempotent + best-effort (a fresh DB never has them → no-op)."""
+    if engine.dialect.name not in ("sqlite", "postgresql"):
+        return
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    try:
+        if "projects" in tables and "tenant_id" in {c["name"] for c in inspector.get_columns("projects")}:
+            with engine.begin() as conn:
+                # SQLite refuses DROP COLUMN while an index references it — drop the index first (a
+                # no-op on PG, where DROP COLUMN cascades to its own index/FK).
+                conn.execute(text("DROP INDEX IF EXISTS ix_projects_tenant_id"))
+                conn.execute(text("ALTER TABLE projects DROP COLUMN tenant_id"))
+        if "tenants" in tables:
+            with engine.begin() as conn:
+                conn.execute(text("DROP TABLE IF EXISTS tenants"))
+    except Exception:  # noqa: BLE001 — never block boot on a cleanup migration
+        pass
+
+
 def init_db() -> None:
     from controlplane import models  # noqa: F401
 
     Base.metadata.create_all(engine)
     _add_missing_columns()
+    _drop_deprecated_tenancy()
     _add_missing_indexes()

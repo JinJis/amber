@@ -62,9 +62,8 @@ BOK=$(curl -s "$DP/macro/interest-rates/snapshot?market=KR&bank=BOK" | jget "['i
 num "ECOS BOK base rate in a sane band" "${BOK:-nan}" "0<=x<=10"
 
 # ---------------------------------------------------------------------------
-section "tenant + key + activations"
-TID=$(curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/tenants -d '{"name":"FUNC"}' | jget "['id']")
-PID=$(curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/tenants/$TID/projects -d '{"name":"p"}' | jget "['id']")
+section "project (account) + key + activations"
+PID=$(curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/projects -d '{"name":"FUNC"}' | jget "['id']")
 KEY=$(curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/projects/$PID/keys -d '{"name":"k"}' | jget "['api_key']")
 [ -n "$KEY" ] && ok "tenant key issued" || fail "key issuance"
 for c in yahoo sec_edgar; do
@@ -101,7 +100,7 @@ num "MCP yahoo__prices returns a real close"     "${MCP_CLOSE:-nan}" "x>0 and x<
 has "MCP sec_edgar returns Apple data"           "$MCP_OUT" 'SEC 200 True'
 # entitlement: a brand-new key without activations -> 403 through the gateway
 K2=$(curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/projects/$PID/keys -d '{"name":"k2"}' | jget "['api_key']")
-P2=$(curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/tenants/$TID/projects -d '{"name":"empty"}' | jget "['id']")
+P2=$(curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/projects -d '{"name":"empty"}' | jget "['id']")
 K3=$(curl -s "${A[@]}" "${J[@]}" -X POST $CP/admin/projects/$P2/keys -d '{"name":"k3"}' | jget "['api_key']")
 ENT=$(code -H "X-API-KEY: $K3" "$CP/prices?ticker=AAPL&market=US&interval=day&start_date=2024-01-02&end_date=2024-01-05")
 [ "$ENT" = 403 ] && ok "MCP/gateway blocks an unentitled key (403)" || fail "entitlement not enforced" "got $ENT"
