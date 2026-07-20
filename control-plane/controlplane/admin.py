@@ -12,6 +12,8 @@ import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func, select
+from sqlalchemy import update as sa_update
+from sqlalchemy.exc import IntegrityError
 
 from controlplane.auth import generate_key
 from controlplane.config import settings
@@ -50,6 +52,106 @@ async def create_project(body: NameIn) -> dict:
         db.add(p)
         db.commit()
         return {"id": p.id, "name": p.name}
+
+
+class ProvisionIn(BaseModel):
+    owner_ref: str                      # stable caller-side identity (studio: the user's email)
+    name: str | None = None             # display label; defaults to owner_ref
+    key_name: str = "web"               # keys under this name are rotated on re-provision
+    connectors: list[str] = []          # activated (enabled=True) if missing; never de-activates
+    plan: str | None = None             # PLAN-2 rate tier, applied like PATCH /projects/{id}
+    internal: bool | None = None        # SYS-1 platform-infra class
+    fence: int | None = None            # monotonic guard against a superseded caller rotating the key
+
+
+@router.post("/provision", summary="PROV-1: idempotently provision an account (project + key + activations)")
+async def provision_account(body: ProvisionIn) -> dict:
+    """Get-or-create the project owned by ``owner_ref``, issue it a working API key, and ensure the
+    requested connectors are activated — **idempotent under concurrency**, which the separate
+    create-project → create-key → activate calls could never be.
+
+    This exists because provisioning is a multi-step, slow (network) operation that concurrent
+    first-requests for the same user used to run in parallel, each minting its own project+key and
+    leaving orphans behind (the surviving `users` row referenced only the last one). The arbiter is
+    the DB: `projects.owner_ref` is UNIQUE, so exactly one creator can win and every other caller
+    converges onto that same row.
+
+    Key handling is **rotation**, not reuse: only the key's hash is stored, so a previously issued
+    secret cannot be handed out twice. A repeat call therefore deactivates the existing keys under
+    ``key_name`` and returns a fresh one — which is exactly the recovery semantics the caller needs,
+    since a repeat call means the earlier secret was lost (a crashed provisioner). Callers must treat
+    the returned key as the only live one; anyone still holding the previous secret loses access
+    within the gateway's auth-cache TTL.
+    """
+    created = False
+    with SessionLocal() as db:
+        # ── 1. the project: get-or-create, arbitrated by the unique owner_ref ──────────────────
+        p = db.execute(select(Project).where(Project.owner_ref == body.owner_ref)).scalar_one_or_none()
+        if p is None:
+            p = Project(name=(body.name or body.owner_ref)[:128], owner_ref=body.owner_ref)
+            db.add(p)
+            try:
+                db.commit()
+                created = True
+            except IntegrityError:
+                # A concurrent caller won the unique owner_ref — converge onto its project.
+                db.rollback()
+                p = db.execute(select(Project).where(Project.owner_ref == body.owner_ref)).scalar_one_or_none()
+                if p is None:  # unique violation on something else (or the row vanished) — surface it
+                    raise HTTPException(500, "provision: could not resolve the project for this owner.")
+        project_id = p.id
+
+        # ── 2. key + activations, serialized per project ──────────────────────────────────────
+        # Lock the project row for the rest of the transaction. Without it, two callers that
+        # converged on the same project would each read "no active key", each insert one, and both
+        # commit — leaving TWO live keys where the contract promises exactly one, i.e. re-creating
+        # the orphan credential this endpoint exists to prevent. (A no-op on SQLite, which already
+        # serializes writers; the tests still cover the converge path below.)
+        locked = db.execute(
+            select(Project).where(Project.id == project_id).with_for_update()
+        ).scalar_one_or_none()
+        if locked is None:
+            raise HTTPException(500, "provision: the project disappeared mid-provision.")
+        if body.plan is not None:
+            locked.plan = body.plan
+        if body.internal is not None:
+            locked.internal = body.internal
+
+        # Fencing. Rotation retires the previous secret, so a caller that has already been superseded
+        # (its work was taken over, and the successor has since provisioned) must NOT be allowed to
+        # rotate: it would kill the key its successor is now using and leave the account holding a dead
+        # credential. Callers that can be superseded pass a monotonically increasing `fence`; a lower
+        # one than the last accepted rotation means exactly that, so refuse and hand back no key. The
+        # comparison happens under the row lock, so it is decided by the DB, not by arrival order.
+        stale = body.fence is not None and locked.key_fence is not None and body.fence < locked.key_fence
+        full: str | None = None
+        if not stale:
+            if body.fence is not None:
+                locked.key_fence = body.fence
+            db.execute(
+                sa_update(ApiKey)
+                .where(ApiKey.project_id == project_id, ApiKey.name == body.key_name,
+                       ApiKey.active.is_(True))
+                .values(active=False)
+            )
+            full, prefix, key_hash = generate_key()
+            db.add(ApiKey(project_id=project_id, name=body.key_name, prefix=prefix, key_hash=key_hash))
+
+        have = set(db.execute(
+            select(Activation.connector_id).where(Activation.project_id == project_id)
+        ).scalars().all())
+        for cid in body.connectors:
+            if cid not in have:
+                db.add(Activation(project_id=project_id, connector_id=cid, enabled=True))
+                have.add(cid)
+        db.commit()
+
+    # The gateway caches both the activation set and (plan, internal) — make this call's effect live now.
+    from controlplane.gateway import invalidate_entitlement, invalidate_project_meta
+    invalidate_entitlement(project_id)
+    invalidate_project_meta(project_id)
+    return {"project_id": project_id, "api_key": full, "created": created, "stale": stale,
+            "note": "Store this now — it is not retrievable later."}
 
 
 class ProjectPatchIn(BaseModel):
@@ -103,7 +205,22 @@ async def activate(project_id: str, body: ActivationIn) -> dict:
         else:
             act = Activation(project_id=project_id, connector_id=body.connector_id, enabled=body.enabled, byo_credentials=body.byo_credentials)
             db.add(act)
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError:
+                # PROV-1: (project, connector) is UNIQUE, so a concurrent activation of the same
+                # connector lands here instead of silently duplicating the row — converge onto the
+                # row the other caller inserted and apply our values to it.
+                db.rollback()
+                act = db.execute(
+                    select(Activation).where(Activation.project_id == project_id,
+                                             Activation.connector_id == body.connector_id)
+                ).scalar_one_or_none()
+                if act is None:
+                    raise HTTPException(500, "activation: could not resolve the row after a conflict.")
+                act.enabled = body.enabled
+                act.byo_credentials = body.byo_credentials
+                db.commit()
         # CR-4: the gateway caches the project's activation set — invalidate so this change is live now.
         from controlplane.gateway import invalidate_entitlement
         invalidate_entitlement(project_id)

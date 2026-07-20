@@ -159,8 +159,13 @@ async def admin_set_plan(email: str, body: AdminPlanIn) -> dict:
     if body.plan.lower() not in ("free", "pro", "guest"):
         raise HTTPException(422, "plan must be free|pro|guest")
     with SessionLocal() as db:
-        if db.get(User, email) is None:
+        u = db.get(User, email)
+        if u is None:
             raise HTTPException(404, "user not found")
+        # PROV-1: a row can exist while its control-plane account is still being provisioned (or its
+        # provisioner died). apply_plan refuses those, so 409 rather than reporting a silent no-op.
+        if not u.project_id:
+            raise HTTPException(409, "account is not provisioned yet — retry shortly")
     ok = await apply_plan(email, body.plan.lower())
     return {"ok": ok, "email": email, "plan": body.plan.lower()}
 

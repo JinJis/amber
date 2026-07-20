@@ -118,6 +118,13 @@ async def apply_plan(user_email: str, plan: str) -> bool:
         if u is None:
             return False
         project_id = u.project_id
+    if not project_id:
+        # PROV-1: a claim row (provisioning still in flight, or its provisioner died). Writing the plan
+        # here would mark the user upgraded while every activation call 404s against /projects/None —
+        # entitlements silently missing on a paid plan. Refuse; the caller retries once provisioning
+        # settles (ensure_user finishes it on the user's very next request).
+        logger.error("apply_plan(%s→%s): account not provisioned yet — refusing", user_email, plan)
+        return False
     want = set(lim.get("connectors") or FREE_CONNECTORS)
     ok = True
     for cid in sorted(set(FREE_CONNECTORS) | set(PREMIUM_CONNECTORS)):

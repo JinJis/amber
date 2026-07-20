@@ -37,8 +37,17 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(256), primary_key=True)
     # SIMPL-1: the control-plane project IS the account (the Tenant parent was removed). project_id is
     # the data-plane identity; api_key is the server-side platform key minted for that project.
-    project_id: Mapped[str] = mapped_column(String(48))
-    api_key: Mapped[str] = mapped_column(String(80))  # the platform key for this project (server-side only)
+    # PROV-1: both are NULL for a *claim* row — the row inserted (email PK = the mutex) by whichever
+    # concurrent first-request won the right to provision, before the slow control-plane mint runs.
+    # `ensure_user` never hands a claim row to a caller: it either fills it in or waits for the winner.
+    project_id: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    api_key: Mapped[str | None] = mapped_column(String(80), nullable=True)  # server-side only
+    # PROV-1: the claim token + when it was staked. The token is what the finalizing UPDATE matches on
+    # (compare-and-set), so a provisioner whose claim was taken over — because it stalled past the
+    # lease — can never overwrite the winner's result with its own now-stale key. `provision_claimed_at`
+    # ages the claim so a provisioner that died mid-mint doesn't block the account forever.
+    provision_claim: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    provision_claimed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # Profile (seeded from the OAuth provider on first login; display name is user-editable).
     name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     image: Mapped[str | None] = mapped_column(String(512), nullable=True)   # avatar URL (provider or set)

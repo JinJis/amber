@@ -83,6 +83,7 @@ def _add_missing_columns() -> None:
 
     add_cols("projects", {"plan": "VARCHAR(24)"})            # PLAN-2: per-plan gateway rate tier
     add_cols("projects", {"internal": "BOOLEAN DEFAULT FALSE"})   # SYS-1: internal/system project class
+    add_cols("projects", {"owner_ref": "VARCHAR(256)"})      # PROV-1: idempotency key for /admin/provision
     add_cols("llm_usage", {"project_id": "VARCHAR(40)"})     # METER-1: per-user cost attribution
     add_cols("llm_usage", {                                  # COST-2: usage_metadata breakdowns
         "cached_input_tokens": "INTEGER DEFAULT 0",
@@ -124,13 +125,29 @@ def _add_missing_indexes() -> None:
         "CREATE INDEX IF NOT EXISTS ix_usage_events_project_ts ON usage_events (project_id, ts)",
         "CREATE INDEX IF NOT EXISTS ix_usage_events_ts ON usage_events (ts)",
         "CREATE INDEX IF NOT EXISTS ix_audit_log_ts ON audit_log (ts)",
+        # PROV-1: the idempotency guarantee of /admin/provision — get-or-create by owner_ref is only
+        # race-proof because the DB refuses a second row. A pre-existing projects table gets it here
+        # (create_all only indexes NEW tables). Safe to build: owner_ref starts all-NULL and NULLs are
+        # distinct in a unique index on both SQLite and Postgres.
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_projects_owner_ref ON projects (owner_ref)",
+        # PROV-1: same for one-activation-per-(project, connector).
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_activations_project_connector ON activations (project_id, connector_id)",
     )
     for s in stmts:
         try:
             with engine.begin() as conn:
                 conn.execute(text(s))
-        except Exception:  # noqa: BLE001 — table may not exist yet / build races; never block boot
-            pass
+        except Exception as exc:  # noqa: BLE001 — table may not exist yet / build races; never block boot
+            if "UNIQUE" in s:
+                # PROV-1: a UNIQUE index that fails to build is not cosmetic — it is the arbiter that
+                # /admin/provision's idempotency rests on, and without it concurrent provisioning can
+                # split an account again. The usual cause is duplicate rows left by an older build, so
+                # say so loudly instead of leaving a silent gap. (A fresh DB gets it from create_all.)
+                import logging
+
+                logging.getLogger("controlplane.db").error(
+                    "PROV-1: could not create %s — provisioning idempotency is NOT enforced on this "
+                    "database (de-duplicate the table, then restart): %s", s.split(" ON ")[0], exc)
 
 
 def _drop_deprecated_tenancy() -> None:

@@ -23,6 +23,8 @@ def _hdr(email):
 
 
 def _cp():
+    respx.post("http://cp.test/admin/provision").mock(
+        return_value=httpx.Response(200, json={"project_id": "p", "api_key": "k"}))
     respx.post("http://cp.test/admin/projects").mock(return_value=httpx.Response(200, json={"id": "p"}))
     respx.post("http://cp.test/admin/projects/p/keys").mock(return_value=httpx.Response(200, json={"api_key": "k"}))
     respx.post("http://cp.test/admin/projects/p/activations").mock(return_value=httpx.Response(200, json={}))

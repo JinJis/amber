@@ -82,7 +82,10 @@ flowchart TD
 
 **Request flow (a chat turn).** ① the browser POSTs to the web BFF, which attaches the Auth.js session;
 ② on first login studio-api provisions a project(account)/key + default activations via the control-plane
-admin API; ③ studio-api streams the conversation to the agent engine with the **server-side account key**;
+admin API — **once per user even though the first page load fires several requests at the same time**: the
+winner of an INSERT on `users.email` does the minting under a claim while its siblings wait for the result
+(PROV-1, `studioapi/provision.py`); ③ studio-api streams the conversation to the agent engine with the
+**server-side account key**;
 ④ the agent plans (Gemini) and calls each tool **through the gateway** with that key; ⑤ the gateway
 authenticates, checks the project activated the connector, rate-limits, meters, and proxies to `datasets`
 or `rag` (chosen by path · market · `service`); ⑥ the provider adapter fetches from the real upstream (or
@@ -183,7 +186,10 @@ A gateway in front of the data plane. Package `controlplane` (talks to data plan
 - **Store:** `Project` (the account) → `ApiKey` (sha256-hashed, prefix lookup) + `Activation` (per-connector
   entitlement) + `UsageEvent` (metering) + `AuditLog`. Postgres at runtime. (SIMPL-1: the old `Tenant`
   parent was removed — this is a 1-account-per-user product, so it was always 1:1 with Project and carried
-  no logic; the gateway, metering, audit and RAG isolation all key on `project_id`.)
+  no logic; the gateway, metering, audit and RAG isolation all key on `project_id`.) **PROV-1:** `Project`
+  carries a unique `owner_ref` (studio sends the user's email; `system`/`guest` for the platform
+  singletons) and `Activation` is unique per `(project, connector)` — the DB, not application timing, is
+  what guarantees one account per owner and one row per entitlement.
 - **Entitlement:** fetches the data-plane `/catalog`, maps `(method, path, market)` → connector(s); a
   request is allowed iff the project activated one of them. A project can be marked **`internal`** (the
   platform's own feed pipelines) — the gateway then entitles it to the whole governed catalog, skipping
@@ -194,7 +200,12 @@ A gateway in front of the data plane. Package `controlplane` (talks to data plan
   (company brand images — hybrid resolver Logo.dev→FMP→favicon, cached on the datasets volume; a miss
   returns 204 and the UI draws a monogram — never a fabricated logo). Admins fill KR/coverage gaps via
   `POST /logos` (studio proxy → `web /api/logos → TickerLogo`; admin panel has an upload form).
-- **Admin (X-Admin-Token):** create project(account)/key, activate connectors, mark internal, usage + audit summaries.
+- **Admin (X-Admin-Token):** create project(account)/key, activate connectors, mark internal, usage + audit
+  summaries. **`POST /admin/provision` (PROV-1)** is the one studio uses at signup: get-or-create the
+  project by `owner_ref`, issue a key, ensure the requested activations — idempotent, so concurrent or
+  retried provisioning converges on a single account instead of minting a second one. A repeat call
+  **rotates** the key (only the hash is stored, so a secret can never be re-issued); the previous key is
+  deactivated, which is exactly the recovery path for a provisioner that died holding it.
 - **6 tests.** Verified live: activate `yahoo` → `/prices` 200; unactivated → 403; usage metered.
 
 ### 4.3 MCP server — `mcp/`  ✅ (P2)

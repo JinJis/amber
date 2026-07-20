@@ -13,10 +13,16 @@ export async function GET() {
   const jar = cookies();
   const gid = jar.get("vg_guest")?.value;
   if (session?.user?.email && gid) {
+    // Drop the cookie only once the claim actually succeeded. Clearing it on a failure (studio
+    // briefly unavailable, or the account still being provisioned) would strand the guest's
+    // conversations for good — nothing else remembers the id. A kept cookie just retries next load;
+    // an already-claimed session is rejected by studio, so retrying is safe.
+    let claimed = false;
     try {
-      await studioFetch("/users/claim-guest", { method: "POST", headers: { "X-Guest-Id": gid } });
+      const r = await studioFetch("/users/claim-guest", { method: "POST", headers: { "X-Guest-Id": gid } });
+      claimed = !!r && (r.ok || r.status === 401);   // 401 = already claimed — nothing left to keep
     } catch {}
-    jar.delete("vg_guest");
+    if (claimed) jar.delete("vg_guest");
   }
   return proxyStudio("/users/me");
 }

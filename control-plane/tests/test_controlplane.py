@@ -389,3 +389,168 @@ def test_provider_usage_ingest():
     assert got.get("yahoo") == 120 and got.get("sec_edgar") == 40
     assert "" not in got and "zero" not in got            # 빈 제공자·0 호출은 저장 안 함
     assert client.post("/admin/provider-usage", json={"providers": {"x": 1}}).status_code == 401  # 토큰 필수
+
+
+# --- PROV-1: idempotent provisioning --------------------------------------
+def _provision(owner_ref: str, **kw):
+    body = {"owner_ref": owner_ref, **kw}
+    r = client.post("/admin/provision", json=body, headers=ADMIN)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_provision_is_idempotent_by_owner_ref():
+    """PROV-1의 핵심 계약: 같은 owner_ref로 몇 번을 불러도 프로젝트는 하나다.
+
+    이것이 없던 시절, 새 유저의 첫 화면이 동시에 쏜 요청들이 각자 프로젝트+키를 만들고 그중
+    하나만 참조돼 나머지가 살아있는 자격증명 고아로 남았다."""
+    from sqlalchemy import func, select
+
+    from controlplane.db import SessionLocal
+    from controlplane.models import Activation, Project
+
+    a = _provision("owner@a.com", name="owner@a.com", connectors=["yahoo", "sec_edgar"])
+    b = _provision("owner@a.com", name="owner@a.com", connectors=["yahoo", "sec_edgar"])
+    assert a["project_id"] == b["project_id"]
+    assert a["created"] is True and b["created"] is False
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(Project)
+                         .where(Project.owner_ref == "owner@a.com")) == 1
+        # 활성화도 중복되지 않는다 (재호출이 같은 커넥터를 다시 심지 않음)
+        assert db.scalar(select(func.count()).select_from(Activation)
+                         .where(Activation.project_id == a["project_id"])) == 2
+
+
+def test_provision_rotates_the_key_and_retires_the_old_one():
+    """키 해시만 저장하므로 재호출은 이전 비밀을 돌려줄 수 없다 — 회전이 유일하게 정직한 멱등성이다.
+    (프로비저너가 죽어 비밀이 유실된 복구 상황이 바로 이 경로다.)"""
+    from sqlalchemy import select
+
+    from controlplane.db import SessionLocal
+    from controlplane.models import ApiKey
+
+    first = _provision("owner@rot.com", key_name="web")
+    second = _provision("owner@rot.com", key_name="web")
+    assert first["api_key"] != second["api_key"]
+    with SessionLocal() as db:
+        rows = db.execute(select(ApiKey).where(ApiKey.project_id == first["project_id"])).scalars().all()
+    active = [k for k in rows if k.active]
+    assert len(rows) == 2 and len(active) == 1        # 옛 키는 회수되고 하나만 살아있다
+    # 살아있는 키가 방금 받은 그 키다
+    from controlplane.auth import resolve_key
+    with SessionLocal() as db:
+        assert resolve_key(db, second["api_key"]) is not None
+        assert resolve_key(db, first["api_key"]) is None   # 회수된 키는 더 이상 인증되지 않는다
+
+
+def test_provision_concurrent_same_owner_creates_one_project():
+    """동시 호출(스레드) — DB가 심판이므로 프로젝트는 여전히 하나."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sqlalchemy import func, select
+
+    from controlplane.db import SessionLocal
+    from controlplane.models import Project
+
+    def call(_i):
+        return client.post("/admin/provision", headers=ADMIN,
+                           json={"owner_ref": "race@u.com", "connectors": ["yahoo"]})
+
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        results = list(ex.map(call, range(5)))
+    assert all(r.status_code == 200 for r in results), [r.text for r in results]
+    pids = {r.json()["project_id"] for r in results}
+    assert len(pids) == 1, f"concurrent provisioning split into {pids}"
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(Project)
+                         .where(Project.owner_ref == "race@u.com")) == 1
+
+
+def test_provision_applies_plan_and_internal():
+    from controlplane.db import SessionLocal
+    from controlplane.models import Project
+
+    out = _provision("system", key_name="system", connectors=[], internal=True)
+    with SessionLocal() as db:
+        p = db.get(Project, out["project_id"])
+        assert p.internal is True and p.owner_ref == "system"
+    out2 = _provision("guest", key_name="guest", connectors=["yahoo"], plan="guest")
+    with SessionLocal() as db:
+        assert db.get(Project, out2["project_id"]).plan == "guest"
+
+
+def test_activation_is_unique_per_project_connector():
+    """PROV-1: (project, connector) 유니크 — 동시 활성화가 행을 복제하지 못한다.
+    엔드포인트는 충돌을 500이 아니라 수렴으로 처리한다."""
+    from sqlalchemy import func, select
+
+    from controlplane.db import SessionLocal
+    from controlplane.models import Activation
+
+    pid, _ = _make_project("uniq")
+    for enabled in (True, False, True):
+        r = client.post(f"/admin/projects/{pid}/activations", headers=ADMIN,
+                        json={"connector_id": "yahoo", "enabled": enabled})
+        assert r.status_code == 200, r.text
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(Activation)
+                         .where(Activation.project_id == pid, Activation.connector_id == "yahoo")) == 1
+
+
+def test_legacy_create_project_still_works_without_owner_ref():
+    """기존 경로(ops 스크립트·e2e·coverage)는 owner_ref 없이 그대로 동작하고, NULL은 여러 개여도 된다."""
+    p1, k1 = _make_project("E2E")
+    p2, k2 = _make_project("E2E")
+    assert p1 != p2 and k1 != k2      # owner_ref NULL끼리는 유니크 충돌하지 않는다
+
+
+def test_provision_requires_admin_token():
+    assert client.post("/admin/provision", json={"owner_ref": "x@y.com"}).status_code == 401
+
+
+def test_concurrent_provision_leaves_exactly_one_active_key():
+    """회전은 '프로젝트당 살아있는 키는 하나'를 보장해야 한다. 같은 프로젝트로 수렴한 동시 호출이
+    각자 키를 하나씩 남기면, 참조되지 않는 살아있는 자격증명 — 즉 PROV-1이 없애려던 바로 그 고아가
+    다시 생긴다. 프로젝트 행을 잠가 키 회전을 직렬화하는 이유."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sqlalchemy import select
+
+    from controlplane.db import SessionLocal
+    from controlplane.models import ApiKey
+
+    def call(_i):
+        return client.post("/admin/provision", headers=ADMIN,
+                           json={"owner_ref": "keyrace@u.com", "key_name": "web",
+                                 "connectors": ["yahoo", "fred"]})
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        results = list(ex.map(call, range(4)))
+    assert all(r.status_code == 200 for r in results), [r.text for r in results]
+    pid = results[0].json()["project_id"]
+    with SessionLocal() as db:
+        keys = db.execute(select(ApiKey).where(ApiKey.project_id == pid)).scalars().all()
+    assert len([k for k in keys if k.active]) == 1, "concurrent provisioning left orphaned live keys"
+
+
+def test_provision_fence_refuses_a_superseded_rotation():
+    """PROV-1 펜싱: 이미 대체된(늦게 도착한) 프로비저너는 키를 회전시키지 못한다.
+
+    회전은 이전 비밀을 회수하므로, 뒤늦게 도착한 호출이 회전에 성공하면 후임자가 방금 기록한 키가
+    죽어버린다 — 계정은 살아있는 척하면서 모든 게이트웨이 호출이 401이 되는 최악의 상태다."""
+    from controlplane.auth import resolve_key
+    from controlplane.db import SessionLocal
+
+    late = _provision("fence@u.com", key_name="web", fence=100)      # 늦게 도착할 프로비저너가 먼저 클레임
+    winner = _provision("fence@u.com", key_name="web", fence=200)    # 인계받은 후임자가 프로비저닝
+    assert winner["api_key"] and winner["stale"] is False
+    with SessionLocal() as db:
+        assert resolve_key(db, late["api_key"]) is None              # 후임자의 회전으로 회수됨
+        assert resolve_key(db, winner["api_key"]) is not None
+
+    # 이제 늦은 호출이 도착한다 — 거부되어야 하고, 후임자의 키는 살아있어야 한다
+    stale = _provision("fence@u.com", key_name="web", fence=100)
+    assert stale["stale"] is True and stale["api_key"] is None
+    assert stale["project_id"] == winner["project_id"]
+    with SessionLocal() as db:
+        assert resolve_key(db, winner["api_key"]) is not None, "a superseded call killed the live key"

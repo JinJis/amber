@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 import re
 from datetime import datetime, timedelta
@@ -29,9 +28,9 @@ from sqlalchemy.exc import IntegrityError
 
 from studioapi.config import settings
 from studioapi.db import SessionLocal
-from studioapi.models import GuestSession, ServiceState, User
+from studioapi.models import GuestSession, User
 from studioapi.plans import FREE_CONNECTORS
-from studioapi.provision import _admin
+from studioapi.provision import _ensure_singleton
 
 logger = logging.getLogger(__name__)
 
@@ -63,33 +62,15 @@ def ip_hash(ip: str | None) -> str | None:
 
 
 async def _ensure_guest_project() -> dict:
-    """공유 게스트 프로젝트(계정)/키 — 최초 게스트 요청에서 1회 프로비저닝(락 + KV 캐시)."""
-    with SessionLocal() as db:
-        row = db.get(ServiceState, _STATE_KEY)
-        if row:
-            return json.loads(row.value)
-    async with _lock:
-        with SessionLocal() as db:   # double-check under the lock
-            row = db.get(ServiceState, _STATE_KEY)
-            if row:
-                return json.loads(row.value)
-        project = await _admin("POST", "/admin/projects", {"name": "guest"})
-        key = await _admin("POST", f"/admin/projects/{project['id']}/keys", {"name": "guest"})
-        for cid in FREE_CONNECTORS:  # 무료 셋만 — 프리미엄 커넥터는 게스트에게 절대 열지 않음
-            try:
-                await _admin("POST", f"/admin/projects/{project['id']}/activations", {"connector_id": cid})
-            except Exception:  # noqa: BLE001 — 일부 실패해도 나머지는 활성화 (provision과 동일 철학)
-                pass
-        try:
-            await _admin("PATCH", f"/admin/projects/{project['id']}", {"plan": "guest"})
-        except Exception:  # noqa: BLE001 — rate 티어는 best-effort (기본값도 안전)
-            logger.warning("guest project plan patch failed — global rate default applies")
-        state = {"project_id": project["id"], "api_key": key["api_key"]}
-        with SessionLocal() as db:
-            db.merge(ServiceState(key=_STATE_KEY, value=json.dumps(state)))
-            db.commit()
-        logger.info("guest project provisioned: %s", project["id"])
-        return state
+    """공유 게스트 프로젝트(계정)/키 — 최초 게스트 요청에서 1회 프로비저닝(락 + KV 캐시).
+
+    PROV-1: 프로젝트·키·활성화를 control-plane의 멱등 `/admin/provision` 한 번으로 만든다
+    (owner_ref="guest"). 무료 셋만 — 프리미엄 커넥터는 게스트에게 절대 열지 않음."""
+    state = await _ensure_singleton(_STATE_KEY, "guest", lock=_lock, key_name="guest",
+                                    connectors=list(FREE_CONNECTORS), plan="guest")
+    if state is None:
+        raise HTTPException(503, "게스트 체험을 준비하는 중이에요. 잠시 후 다시 시도해 주세요.")
+    return state
 
 
 async def ensure_guest(gid: str, ip: str | None = None) -> User:

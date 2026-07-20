@@ -12,7 +12,8 @@ from __future__ import annotations
 import secrets
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, func
+from sqlalchemy import (
+    BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from controlplane.db import Base
@@ -24,9 +25,17 @@ def _uid(prefix: str) -> str:
 
 class Project(Base):
     __tablename__ = "projects"
+    # PROV-1: `owner_ref` is the caller's stable identity for this account (studio sends the user's
+    # email; "system"/"guest" for the platform singletons) and is UNIQUE — it is what makes
+    # POST /admin/provision idempotent, so concurrent first-requests for the same owner converge on
+    # ONE project instead of each minting their own. NULL is allowed (and repeatable: both dialects
+    # treat NULLs as distinct in a unique index) so the older un-owned create paths — ops scripts,
+    # scripts/e2e.sh, coverage.sh — keep working untouched.
+    __table_args__ = (Index("ix_projects_owner_ref", "owner_ref", unique=True),)
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: _uid("prj"))
     # A human-facing label for the account — studio sets it to the owner's email (was Tenant.name).
     name: Mapped[str] = mapped_column(String(128))
+    owner_ref: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # PLAN-2: the product plan tier (guest|free|pro), set by studio's apply_plan. Drives the
     # per-key gateway rate limit (abuse backstop). NULL = legacy/ops project → global default.
     plan: Mapped[str | None] = mapped_column(String(24), nullable=True)
@@ -37,6 +46,11 @@ class Project(Base):
     # this SEPARATE from `plan` is deliberate: commercial gating (per-user, per-plan activations) and
     # "this is platform infra that just runs" are different concepts and must not be conflated.
     internal: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    # PROV-1: the highest fence a key rotation has been accepted at. Rotation retires the previous
+    # secret, so a LATE call from a provisioner that has already been superseded would kill the key its
+    # successor is using. Callers that can be superseded pass a monotonically increasing fence; a
+    # rotation carrying a lower one is refused instead of applied. NULL = no rotation fenced yet.
+    key_fence: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -54,6 +68,10 @@ class ApiKey(Base):
 
 class Activation(Base):
     __tablename__ = "activations"
+    # PROV-1: one row per (project, connector). The select-then-insert in admin.activate() is not
+    # atomic, so concurrent activations of the same connector used to duplicate rows silently; the DB
+    # is the arbiter now and the endpoint converges on the IntegrityError.
+    __table_args__ = (UniqueConstraint("project_id", "connector_id", name="uq_activations_project_connector"),)
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: _uid("act"))
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
     connector_id: Mapped[str] = mapped_column(String(64), index=True)

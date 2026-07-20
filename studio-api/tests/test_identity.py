@@ -24,6 +24,8 @@ def setup_module(_module):
 
 def _mock_cp(monkeypatch):
     monkeypatch.setattr(settings, "control_plane_url", "http://cp.test")
+    respx.post("http://cp.test/admin/provision").mock(
+        return_value=httpx.Response(200, json={"project_id": "prjI", "api_key": "vgk_i"}))
     respx.post("http://cp.test/admin/projects").mock(return_value=httpx.Response(200, json={"id": "prjI"}))
     respx.post("http://cp.test/admin/projects/prjI/keys").mock(return_value=httpx.Response(200, json={"api_key": "vgk_i"}))
     respx.post("http://cp.test/admin/projects/prjI/activations").mock(return_value=httpx.Response(200, json={}))

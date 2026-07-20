@@ -26,6 +26,18 @@ class Settings(BaseSettings):
     db_pool_max_overflow: int = 20                       # DB_POOL_MAX_OVERFLOW
     db_pool_recycle_seconds: int = 1800                  # DB_POOL_RECYCLE_SECONDS
     http_timeout_seconds: float = 120.0
+    # PROV-1: first-login provisioning (see provision.ensure_user). The winner mints under a *claim*
+    # on the users row; concurrent requests for the same new email wait for it instead of minting
+    # their own project/key. These three must keep their ordering:
+    #   call_timeout  <  wait  <  lease
+    # so that (a) a loser's wait outlasts a healthy winner's mint, and (b) the lease only expires for a
+    # provisioner that actually died — a live-but-slow one is bounded by call_timeout well before that.
+    # The general 120s http_timeout is far too long here: it is a backstop for big data reads, whereas
+    # a stalled provision blocks a human's first screen.
+    provision_call_timeout_seconds: float = 20.0         # PROVISION_CALL_TIMEOUT_SECONDS
+    provision_wait_seconds: float = 25.0                 # PROVISION_WAIT_SECONDS (loser's ceiling)
+    provision_poll_seconds: float = 0.2                  # PROVISION_POLL_SECONDS
+    provision_lease_seconds: float = 60.0                # PROVISION_LEASE_SECONDS (stale-claim takeover)
     # HI-9: the between-chunks READ timeout for tailing agent-engine's chat SSE (chat.py). It must
     # NOT be shorter than a legitimate silent phase — a slow/retrying Gemini call, or the post-answer
     # enrichment tail — or it aborts a working stream mid-turn (the "답변 생성 중 문제" ReadTimeout).

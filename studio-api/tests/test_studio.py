@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timedelta
 
 import httpx
 import respx
@@ -32,6 +33,10 @@ def _cfg(monkeypatch):
 
 
 def _mock_control_plane():
+    """PROV-1: signup provisioning is ONE idempotent control-plane call. The legacy per-step routes
+    remain mocked because the ME-2 reconcile backfill and apply_plan still use them."""
+    respx.post("http://cp.test/admin/provision").mock(
+        return_value=httpx.Response(200, json={"project_id": "prj1", "api_key": "vgk_demo"}))
     respx.post("http://cp.test/admin/projects").mock(return_value=httpx.Response(200, json={"id": "prj1"}))
     respx.post("http://cp.test/admin/projects/prj1/keys").mock(return_value=httpx.Response(200, json={"api_key": "vgk_demo"}))
     respx.post("http://cp.test/admin/projects/prj1/activations").mock(return_value=httpx.Response(200, json={}))
@@ -49,12 +54,14 @@ def test_service_token_required():
 @respx.mock
 async def test_ensure_user_provisions_once(monkeypatch):
     _cfg(monkeypatch)
-    _mock_control_plane()
+    route = respx.post("http://cp.test/admin/provision").mock(
+        return_value=httpx.Response(200, json={"project_id": "prj1", "api_key": "vgk_demo"}))
     u = await provision.ensure_user("new@u.com")
     assert u.project_id == "prj1" and u.api_key == "vgk_demo"
-    # second call returns cached (no new project call needed)
+    # second call returns cached (no new provisioning call needed)
     u2 = await provision.ensure_user("new@u.com")
     assert u2.api_key == "vgk_demo"
+    assert route.call_count == 1
 
 
 @respx.mock
@@ -124,13 +131,189 @@ def test_wrong_service_token_is_401():
 # --- provisioning resilience ---------------------------------------------
 @respx.mock
 async def test_ensure_user_survives_activation_failures(monkeypatch):
+    """ME-2 백필(기존 유저 재조정)에서 활성화가 전부 실패해도 유저는 계속 쓸 수 있어야 한다 —
+    엔타이틀먼트 한 줄 때문에 로그인한 유저의 요청을 깨뜨리지 않는다."""
     _cfg(monkeypatch)
-    respx.post("http://cp.test/admin/projects").mock(return_value=httpx.Response(200, json={"id": "prjF"}))
-    respx.post("http://cp.test/admin/projects/prjF/keys").mock(return_value=httpx.Response(200, json={"api_key": "vgk_f"}))
-    # every activation fails (e.g. connector missing) — the user is still provisioned
-    respx.post("http://cp.test/admin/projects/prjF/activations").mock(return_value=httpx.Response(500, json={"error": "boom"}))
+    respx.post("http://cp.test/admin/provision").mock(
+        return_value=httpx.Response(200, json={"project_id": "prjF", "api_key": "vgk_f"}))
+    respx.post("http://cp.test/admin/projects/prjF/activations").mock(
+        return_value=httpx.Response(500, json={"error": "boom"}))
+    monkeypatch.setattr(settings, "connectors_reconcile_ver", "1")
     u = await provision.ensure_user("partial@u.com")
     assert u.api_key == "vgk_f" and u.project_id == "prjF"
+    # bump the reconcile version → the backfill runs (and fails) on the next call; user still fine
+    monkeypatch.setattr(settings, "connectors_reconcile_ver", "2")
+    u2 = await provision.ensure_user("partial@u.com")
+    assert u2.api_key == "vgk_f" and u2.connectors_reconciled_ver == "2"
+
+
+# --- PROV-1: provisioning is single-flight, crash-safe, and never half-returns ---------------------
+def _provision_route(project_id: str, api_key: str, **kw):
+    return respx.post("http://cp.test/admin/provision").mock(
+        return_value=httpx.Response(200, json={"project_id": project_id, "api_key": api_key}), **kw)
+
+
+def _drop_user(email: str):
+    with provision.SessionLocal() as db:
+        db.query(User).filter(User.email == email).delete()
+        db.commit()
+
+
+@respx.mock
+async def test_concurrent_first_requests_provision_exactly_one_account(monkeypatch):
+    """THE regression test. A new user's first screen fires several authenticated requests at once;
+    each one runs ensure_user. Before PROV-1 every one of them passed the "no user yet" check and
+    minted its own control-plane project+key — one got referenced by the users row and the rest became
+    orphaned live credentials. The account must be built exactly once, no matter how many race."""
+    _cfg(monkeypatch)
+    email = "race@u.com"
+    _drop_user(email)
+    route = _provision_route("prjR", "vgk_r")
+
+    users = await asyncio.gather(*[provision.ensure_user(email) for _ in range(5)])
+
+    assert route.call_count == 1, f"provisioned {route.call_count} times for one signup"
+    assert {u.project_id for u in users} == {"prjR"}
+    assert {u.api_key for u in users} == {"vgk_r"}     # every caller sees the SAME live key
+    with provision.SessionLocal() as db:
+        row = db.get(User, email)
+    assert row.project_id == "prjR" and row.api_key == "vgk_r"
+    assert row.provision_claim is None                 # the claim is cleared once provisioning lands
+
+
+def test_claim_insert_is_the_mutex_and_a_loser_never_provisions():
+    """클레임은 users.email PK가 심판이다 — 다른 프로세스/레플리카가 먼저 행을 넣었다면 우리는
+    무조건 진다(그리고 프로비저닝하지 않는다). asyncio.gather로는 이 분기가 안 밟히므로
+    (동기 구간엔 await가 없다) 경쟁 행을 직접 심어 결정적으로 검증한다."""
+    email = "claimrace@u.com"
+    _drop_user(email)
+    assert provision._claim(email, "first-token", None, None) is not None
+    assert provision._claim(email, "second-token", None, None) is None    # 진 쪽은 민팅하지 않는다
+    with provision.SessionLocal() as db:
+        assert db.get(User, email).provision_claim == "first-token"       # 승자의 클레임이 유지된다
+
+
+@respx.mock
+async def test_losers_wait_for_a_slow_winner_instead_of_minting(monkeypatch):
+    """느린 프로비저닝 중에 도착한 동시 요청은 자기 것을 만들지 않고 승자를 기다린다."""
+    _cfg(monkeypatch)
+    email = "slow@u.com"
+    _drop_user(email)
+
+    async def _slow(request):
+        await asyncio.sleep(0.3)
+        return httpx.Response(200, json={"project_id": "prjS", "api_key": "vgk_s"})
+
+    route = respx.post("http://cp.test/admin/provision").mock(side_effect=_slow)
+    users = await asyncio.gather(*[provision.ensure_user(email) for _ in range(4)])
+    assert route.call_count == 1
+    assert all(u.project_id == "prjS" and u.api_key == "vgk_s" for u in users)
+
+
+@respx.mock
+async def test_failed_provisioning_releases_the_claim_and_retries_cleanly(monkeypatch):
+    """민팅이 실패하면 502 + 클레임 해제 — 다음 요청이 리스 만료를 기다리지 않고 즉시 재시도한다.
+    (실패가 계정을 영구히 반쯤 만들어진 상태로 묶어두면 안 된다.)"""
+    from fastapi import HTTPException
+
+    _cfg(monkeypatch)
+    email = "boom@u.com"
+    _drop_user(email)
+    failing = respx.post("http://cp.test/admin/provision").mock(
+        return_value=httpx.Response(500, json={"error": "control plane down"}))
+    try:
+        await provision.ensure_user(email)
+        raise AssertionError("expected the failed mint to surface")
+    except HTTPException as exc:
+        assert exc.status_code == 502
+    with provision.SessionLocal() as db:
+        assert db.get(User, email) is None            # no half-built row left behind
+
+    failing.mock(return_value=httpx.Response(200, json={"project_id": "prjB", "api_key": "vgk_b"}))
+    u = await provision.ensure_user(email)
+    assert u.project_id == "prjB" and u.api_key == "vgk_b"
+
+
+@respx.mock
+async def test_stale_claim_is_taken_over_after_the_lease(monkeypatch):
+    """프로비저너가 민팅 도중 죽으면(클레임만 남고 끝나지 않음) 리스 만료 후 다음 요청이 인계받아
+    계정을 완성한다 — 한 번의 크래시가 계정을 영구히 막지 못한다."""
+    _cfg(monkeypatch)
+    email = "stale@u.com"
+    _drop_user(email)
+    # simulate the crashed provisioner: a claim row with an expired lease
+    with provision.SessionLocal() as db:
+        db.add(User(email=email, project_id=None, api_key=None, provision_claim="dead-token",
+                    provision_claimed_at=datetime.utcnow() - timedelta(seconds=3600)))
+        db.commit()
+    _provision_route("prjT", "vgk_t")
+
+    u = await provision.ensure_user(email)
+    assert u.project_id == "prjT" and u.api_key == "vgk_t"
+    with provision.SessionLocal() as db:
+        assert db.get(User, email).provision_claim is None
+
+
+@respx.mock
+async def test_a_taken_over_provisioner_never_overwrites_the_winner(monkeypatch):
+    """인계당한(=리스를 잃은) 프로비저너는 자기가 민팅한 키를 절대 기록하지 못한다.
+
+    control-plane은 재프로비저닝 때 키를 회전시키므로, 뒤늦게 끝난 쪽이 자기 결과를 덮어쓰면
+    users 행에 이미 회수된(죽은) 키가 남는다 — 원래 버그의 last-writer-wins가 정확히 이것이었다."""
+    _cfg(monkeypatch)
+    email = "takeover@u.com"
+    _drop_user(email)
+    # the winner has already finished and recorded the live account
+    with provision.SessionLocal() as db:
+        db.add(User(email=email, project_id="prjW", api_key="vgk_winner"))
+        db.commit()
+    # the stalled provisioner now tries to finalize with the key it minted before losing the claim
+    assert provision._finalize(email, "stale-token", "prjLoser", "vgk_dead") is None
+    with provision.SessionLocal() as db:
+        row = db.get(User, email)
+    assert row.project_id == "prjW" and row.api_key == "vgk_winner"
+
+
+@respx.mock
+async def test_superseded_provisioner_defers_instead_of_recording_a_dead_key(monkeypatch):
+    """늦게 도착한 프로비저너는 control-plane이 회전을 거부(api_key 없음)하므로, 아무것도 기록하지
+    않고 승자를 기다린다 — 죽은 키가 users 행에 남는 최악의 상태를 만들지 않는다."""
+    _cfg(monkeypatch)
+    email = "superseded@u.com"
+    _drop_user(email)
+    # control-plane refuses the rotation (this caller has been superseded) — no key handed back
+    respx.post("http://cp.test/admin/provision").mock(
+        return_value=httpx.Response(200, json={"project_id": "prjX", "api_key": None, "stale": True}))
+    # meanwhile the winner's result is already recorded
+    with provision.SessionLocal() as db:
+        db.add(User(email=email, project_id="prjX", api_key="vgk_live"))
+        db.commit()
+
+    u = await provision.ensure_user(email)
+    assert u.api_key == "vgk_live"           # 승자의 살아있는 키가 그대로 유지된다
+    with provision.SessionLocal() as db:
+        assert db.get(User, email).api_key == "vgk_live"
+
+
+@respx.mock
+async def test_waiting_caller_times_out_rather_than_returning_a_half_built_user(monkeypatch):
+    """대기가 예산을 넘기면 503으로 실패한다 — 절대 project_id/api_key가 빈 유저를 돌려주지 않는다.
+    (호출부는 이 값을 곧바로 게이트웨이 요청에 싣는다.)"""
+    from fastapi import HTTPException
+
+    _cfg(monkeypatch)
+    monkeypatch.setattr(settings, "provision_wait_seconds", 0.3)
+    email = "wedged@u.com"
+    _drop_user(email)
+    with provision.SessionLocal() as db:   # a fresh claim someone else holds and never finishes
+        db.add(User(email=email, project_id=None, api_key=None, provision_claim="held",
+                    provision_claimed_at=datetime.utcnow()))
+        db.commit()
+    try:
+        await provision.ensure_user(email)
+        raise AssertionError("expected a 503 rather than a half-built user")
+    except HTTPException as exc:
+        assert exc.status_code == 503
 
 
 # --- conversations --------------------------------------------------------

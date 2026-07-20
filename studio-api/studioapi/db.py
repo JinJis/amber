@@ -100,6 +100,25 @@ def _add_missing_columns() -> None:
         except Exception:  # noqa: BLE001 — cleanup migration must never crash boot
             pass
 
+    def drop_not_null(table: str, cols: tuple[str, ...]) -> None:
+        """PROV-1: relax NOT NULL on columns a model later made nullable. ``create_all`` honours the
+        new nullability only on a FRESH table, so a long-lived Postgres DB would still reject the
+        claim-row INSERT (project_id/api_key NULL) that provisioning now depends on. Postgres-only:
+        SQLite has no ALTER COLUMN, but it also only appears here in unit tests, whose DB is always
+        created fresh from the current models. Best-effort — never blocks boot."""
+        if dialect != "postgresql" or table not in names:
+            return
+        have = {c["name"]: c for c in inspector.get_columns(table)}
+        for col in cols:
+            info = have.get(col)
+            if info is None or info.get("nullable", True):
+                continue
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE {table} ALTER COLUMN {col} DROP NOT NULL"))
+            except Exception:  # noqa: BLE001
+                pass
+
     add_cols("pinned_artifacts",
              {"board_id": "VARCHAR(48)", "x": "INTEGER", "y": "INTEGER", "w": "INTEGER", "h": "INTEGER"})
     add_cols("users", {  # F1 onboarding flag · M-DESK last-visit window
@@ -109,7 +128,10 @@ def _add_missing_columns() -> None:
         "plan_updated_at": ts, "bonus_daily_turns": "INTEGER DEFAULT 0", "bonus_turns_until": ts,
         "referral_code": "VARCHAR(16)", "referred_by": "VARCHAR(256)",
         "connectors_reconciled_ver": "VARCHAR(32)",   # ME-2: persistent reconcile version
+        # PROV-1: provisioning claim token + lease stamp (see models.User)
+        "provision_claim": "VARCHAR(40)", "provision_claimed_at": ts,
         "email_verified": ("BOOLEAN DEFAULT true" if dialect == "postgresql" else "BOOLEAN DEFAULT 1")})
+    drop_not_null("users", ("project_id", "api_key"))   # PROV-1: claim rows carry them NULL until minted
     add_cols("messages", {"artifacts": "TEXT", "audit": "TEXT",   # inline figures + number audit
                           "suggestions": "TEXT",                  # 더 파고들기 chips survive reload
                           # V-7 공유 훅 — chat.py의 assistant INSERT가 이 컬럼을 쓰므로, 빠져 있으면

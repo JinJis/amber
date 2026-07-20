@@ -1319,12 +1319,17 @@ async def data_view(request: Request):
 
 
 # --- Users / tenants ------------------------------------------------------
-def _simple_table(key: str, table: str, cols: list[str], limit: int = 50) -> str:
+def _simple_table(key: str, table: str, cols: list[str], limit: int = 50, order_by: str | None = None) -> str:
+    """A LIMITed peek at one table. `order_by` matters more than it looks: without it Postgres returns
+    heap order, so the LIMIT silently shows the OLDEST rows and hides everything recent — which is the
+    opposite of what every one of these panels is for. Pass a column that exists on the table (an
+    unknown one makes _query swallow the error and render an empty table)."""
     if not _has(key, table):
         return f"<div class=empty>No <code>{_esc(table)}</code> table.</div>"
     have = [c for c in cols if c in DB_STATUS[key]["meta"][table]["columns"]] or DB_STATUS[key]["meta"][table]["columns"][:6]
     sel = ", ".join(f'"{c}"' for c in have)
-    rows = _query(key, f'SELECT {sel} FROM "{table}" LIMIT {limit}')
+    order = f' ORDER BY "{order_by}" DESC' if order_by and order_by in DB_STATUS[key]["meta"][table]["columns"] else ""
+    rows = _query(key, f'SELECT {sel} FROM "{table}"{order} LIMIT {limit}')
     head = "".join(f"<th>{_esc(c)}</th>" for c in have)
     trs = "".join("<tr>" + "".join(f"<td class=wrap>{_cell(v, 60)}</td>" for v in r) + "</tr>" for r in rows)
     link = f"<a href='/db/{key}/{table}'>open in DB browser →</a>"
@@ -1343,11 +1348,20 @@ async def users_view(request: Request):
     body = (
         "<p class=hint>Who can use what, and what they used — from the control-plane "
         "(projects/accounts → API keys → activations → usage) and studio users.</p>"
-        + "<h2>Projects (accounts)</h2>" + _simple_table("controlplane", "projects", ["id", "name", "plan", "internal", "created_at"])
-        + "<h2>API keys</h2>" + _simple_table("controlplane", "api_keys", ["id", "project_id", "prefix", "created_at"])
-        + "<h2>Activations (entitlements)</h2>" + _simple_table("controlplane", "activations", ["id", "project_id", "connector_id", "created_at"])
-        + "<h2>Recent usage</h2>" + _simple_table("controlplane", "usage_events", ["id", "project_id", "tool", "ts"], limit=30)
-        + "<h2>Studio users</h2>" + _simple_table("studio", "users", ["email", "project_id", "plan"])
+        + "<h2>Projects (accounts)</h2>" + _simple_table(
+            "controlplane", "projects", ["id", "name", "owner_ref", "plan", "internal", "created_at"],
+            order_by="created_at")
+        + "<h2>API keys</h2>" + _simple_table(
+            "controlplane", "api_keys", ["id", "project_id", "prefix", "active", "created_at"],
+            order_by="created_at")
+        + "<h2>Activations (entitlements)</h2>" + _simple_table(
+            "controlplane", "activations", ["id", "project_id", "connector_id", "created_at"],
+            order_by="created_at")
+        + "<h2>Recent usage</h2>" + _simple_table(
+            "controlplane", "usage_events", ["id", "project_id", "connector_id", "path", "ts"],
+            limit=30, order_by="ts")
+        + "<h2>Studio users</h2>" + _simple_table(
+            "studio", "users", ["email", "project_id", "plan", "created_at"], order_by="created_at")
     )
     return HTMLResponse(page("/users", "Users", body))
 

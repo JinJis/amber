@@ -34,6 +34,8 @@ def _reset_guest_state():
 
 
 def _mock_cp():
+    respx.post("http://cp.test/admin/provision").mock(
+        return_value=httpx.Response(200, json={"project_id": "prjG", "api_key": "vgk_guest"}))
     respx.post("http://cp.test/admin/projects").mock(return_value=httpx.Response(200, json={"id": "prjG"}))
     respx.post("http://cp.test/admin/projects/prjG/keys").mock(return_value=httpx.Response(200, json={"api_key": "vgk_guest"}))
     respx.post("http://cp.test/admin/projects/prjG/activations").mock(return_value=httpx.Response(200, json={}))
@@ -62,7 +64,7 @@ async def test_ensure_guest_shares_one_project(monkeypatch):
     # 게스트마다 키를 만들지 않는다 — 공유 게스트 프로젝트/키 1개 (테넌트 생성은 1회)
     assert u1.project_id == u2.project_id == "prjG" and u1.api_key == "vgk_guest"
     assert u1.plan == "guest" and u1.email == guest_email(GID_A)
-    assert respx.calls.call_count and respx.post("http://cp.test/admin/projects").call_count == 1
+    assert respx.calls.call_count and respx.post("http://cp.test/admin/provision").call_count == 1
 
 
 @respx.mock

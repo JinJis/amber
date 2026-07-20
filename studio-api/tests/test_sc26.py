@@ -25,8 +25,13 @@ def setup_module(_module):
 
 
 def _mock_cp(project="p1", key="vgk_1"):
-    """Mock the control-plane provisioning chain. Returns (project_route, activations_route, patch_route)."""
-    project_route = respx.post("http://cp.test/admin/projects").mock(
+    """Mock the control-plane provisioning chain. Returns (provision_route, activations_route, patch_route).
+
+    PROV-1: signup/singleton provisioning is now ONE idempotent call (`/admin/provision`); the legacy
+    per-step routes stay mocked because the ME-2 reconcile backfill and apply_plan still use them."""
+    project_route = respx.post("http://cp.test/admin/provision").mock(
+        return_value=httpx.Response(200, json={"project_id": project, "api_key": key}))
+    respx.post("http://cp.test/admin/projects").mock(
         return_value=httpx.Response(200, json={"id": project}))
     respx.post(f"http://cp.test/admin/projects/{project}/keys").mock(
         return_value=httpx.Response(200, json={"api_key": key}))
@@ -50,11 +55,12 @@ async def test_me2_reconcile_fires_once_per_version(monkeypatch):
         db.query(User).filter(User.email == "me2@u.com").delete()
         db.commit()
 
-    # first sign-up: freshly activated → stamped at the current version
+    # first sign-up: freshly activated → stamped at the current version. PROV-1: the activations come
+    # with the single provisioning call, so the per-connector backfill route stays untouched here.
     u = await ensure_user("me2@u.com")
     assert u.connectors_reconciled_ver == "1"
     after_signup = activations.call_count
-    assert after_signup >= 1
+    assert after_signup == 0
 
     # a later request at the SAME version does NOT re-fire the reconcile (no herd)
     await ensure_user("me2@u.com")
@@ -121,14 +127,14 @@ async def test_system_project_marked_internal(monkeypatch):
         db.commit()
     P._system_backfill_done = False
 
-    _, activations, patch_route = _mock_cp(project="psys2", key="vgk_sys2")
+    provision_route, activations, _ = _mock_cp(project="psys2", key="vgk_sys2")
     key = await P.ensure_system_project()
     assert key == "vgk_sys2"
     # 커머셜 activation 목록을 만들지 않는다 — 엔타이틀은 게이트웨이의 internal 예외가 담당
     assert activations.call_count == 0
-    # 대신 internal=True 로 한 번 표시된다
-    assert patch_route.called
-    assert _json.loads(patch_route.calls.last.request.content) == {"internal": True}
+    # PROV-1: 프로젝트·키·internal 표시가 멱등 호출 하나로 끝난다(중간에 죽어도 재호출이 같은 계정)
+    body = _json.loads(provision_route.calls.last.request.content)
+    assert body["owner_ref"] == "system" and body["internal"] is True and body["connectors"] == []
 
 
 @respx.mock
