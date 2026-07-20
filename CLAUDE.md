@@ -1,29 +1,28 @@
 # CLAUDE.md — Investment-Agent Data Platform
 
-> Engineering rules for Claude Code in this repo. This is the active product.
+> Engineering rules for Claude Code in this repo.
+>
+> **The product is feature-frozen (2026-07-20) — no new feature development.** Work is limited to
+> **maintenance**: bug fixes, operational/infra hardening, and keeping the current-state docs accurate.
+> Don't build new features, screens, connectors, or roadmap items. If a request looks like new-feature
+> work, **flag it** instead of building it.
+>
 > **The legacy ValueGraph engine (`services/`, `apps/`, CVE, Deep-Research acquisition) has been removed**
 > — not a dependency.
 >
-> **The new roadmap landed (2026-07-03).** The old roadmap and UX-design docs
-> (`ROADMAP.md`, `UX_SPEC.md`, `DESIGN_SYSTEM.md`, `wireframes/`) live in
-> [`docs/deprecate/`](./docs/deprecate/) — reference only, **not** the source of truth.
-> **Chat-first:** the 대시보드(board) and 알림봇(alert bot) surfaces are feature-flagged off by
-> default (`FEATURE_BOARD`/`FEATURE_ALERTS`, ROADMAP FLAG-1) — don't extend them.
+> **The product roadmap and every feature / UX / idea / audit spec are retired to
+> [`docs/deprecate/`](./docs/deprecate/) — reference/history only. Do NOT pull tasks or build new work
+> from anything in that folder.** (Retired: the roadmap `ROADMAP_v2.md`, the UX spec `UX_SPEC_v2.md`, and
+> `HISTORY_LAB_SPEC` · `QUALITY_SPEC` · `DATA_EXPANSION` · `VIRAL_SPEC` · `NOTEBOOK_SPEC` · `IDEA` ·
+> `USER_TODO` (owner launch/ops checklist) · `SCALING_AUDIT`.)
 >
-> **Docs map (read before building):**
-> - **The plan — pull tasks here:** [`docs/ROADMAP.md`](./docs/ROADMAP.md) (milestones FLAG-1,
->   OPS-1, M0–M6, M-DESK, M-QUANT; one task per PR)
-> - **History Lab implementation contract:** [`docs/HISTORY_LAB_SPEC.md`](./docs/HISTORY_LAB_SPEC.md)
-> - **Quality plan (RAG/검색/UX 품질 — RQ·UXQ; 턴제로 피드 품질 §D):** [`docs/QUALITY_SPEC.md`](./docs/QUALITY_SPEC.md)
-> - **UX spec (chat-first, all new screens):** [`docs/UX_SPEC.md`](./docs/UX_SPEC.md)
+> **Docs map (live — the only source of truth now):**
 > - **How the services fit together (current state):** [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
 > - **GCP 배포·운영 (VM·비용·백업·런북):** [`docs/INFRA.md`](./docs/INFRA.md) (+ [`deploy/`](./deploy/))
 > - **브랜드 (finnote — finance+footnote; 수면 위 지느러미 로고·토큰; 로고 경로 데이터 수정 금지):** [`docs/branding/`](./docs/branding/) — 소스 오브 트루스는 `brand.css`·`Logo.tsx`·SVG 4종(`finnote-mark`·`finnote-mark-mono`·`finnote-icon`·`favicon`); 웹은 `web/app/brand.css`·`web/components/Logo.tsx`로 복사돼 있음(둘 다 동기 유지). 디자인 템플릿 전체 명세: [`docs/finnote-design-template_final.html`](./docs/finnote-design-template_final.html)
-> - **Product idea / vision:** [`docs/IDEA.md`](./docs/IDEA.md)
-> - **Data expansion plans:** [`docs/DATA_EXPANSION.md`](./docs/DATA_EXPANSION.md)
 >
-> One task at a time, **one task per PR**; tag the task id in branch/commits/PR. Don't mark done until
-> every acceptance criterion + the Definition of Done (§7) passes.
+> The **대시보드(board)** and **알림봇(alert bot)** surfaces stay feature-flagged off by default
+> (`FEATURE_BOARD`/`FEATURE_ALERTS`) — don't extend them (or anything else: the product is feature-frozen).
 
 ---
 
@@ -33,8 +32,7 @@ A **personal research desk**: the user staffs **standing analysts** (agents) on 
 of companies. Every analyst works **only from licensed, point-in-time, fully-cited data**, renders
 figures as **live, sourced artifacts**, and **pushes what changed before being asked** (schedule +
 disclosure calendar). It is *not* a chatbot — the differentiators are **trust by construction**,
-**pull→push**, and a **clone-from-others ecosystem**. (The new UX spec is being authored; the old one
-is in `docs/deprecate/UX_SPEC.md` for reference.)
+**pull→push**, and a **clone-from-others ecosystem**.
 
 ## 2. Architecture invariants — never violate
 
@@ -91,10 +89,10 @@ Request flow (one chat turn): browser → web BFF (session) → studio-api (tena
   connector + manifest entry (an integrity test asserts every manifest path is a real route).
 - **Tenancy/entitlement/metering:** `control-plane/` (`controlplane`). Gateway is the enforcement point.
 - **Agent loop / planner / guardrails:** `agent-engine/` (`agentengine`). Planner via `AGENT_LLM_BACKEND`.
-- **Product data model** (users, conversations, agents, and the new **watchlists / standing
+- **Product data model** (users, conversations, agents, and the **watchlists / standing
   analysts / briefs / pinned artifacts**): `studio-api/studioapi/models.py`. Extend here; mirror the
   **idempotent-clone pattern** (`orm_helpers.idempotent_clone` — `community` + `source_id`) for
-  analyst cloning. (The prompt library that originated it was removed 2026-07-06.)
+  analyst cloning.
 - **UI:** `web/` — chat, builder modal, BFF routes under `web/app/api/`. Read
   `/mnt/skills/public/frontend-design/SKILL.md` before UI work; **never render the graph with DOM nodes**
   (WebGL/R3F + instanced meshes); **no `localStorage`/`sessionStorage`** in preview/artifact contexts.
@@ -118,11 +116,10 @@ bash scripts/e2e_functional.sh       # real upstream data + MCP + semantic RAG (
 GOOGLE_API_KEY=... bash scripts/e2e_live.sh   # real Gemini, grounded+cited
 python3 eval/run_eval.py             # quality eval (stack up first; skips without GOOGLE_API_KEY)
 ```
-**Definition of Done for a task:** its acceptance criteria pass · unit tests added/updated for the
+**Definition of Done for a change:** its acceptance criteria pass · unit tests added/updated for the
 service(s) touched · the relevant e2e/coverage harness still green · **the quality eval
 (`python3 eval/run_eval.py`, LLM-judge rubric — see `eval/RUBRIC.md`) run before push and still above the
-bar; if the task adds a tool / endpoint / feature, add an eval scenario (with `criteria`) for it** ·
-the new roadmap's test totals + the task status updated in the same PR.
+bar.** Keep the live docs (`ARCHITECTURE.md`/`INFRA.md`) in sync in the same PR when behavior drifts.
 
 ## 6. Environment (Gemini only; never commit secrets — document new keys in the right `env/*.env.example`)
 ```
@@ -140,15 +137,14 @@ Model IDs are env-overridable and Gemini-only; verify exact IDs/SDK details agai
 not memory.
 
 ## 7. Working style
-- **Pull the next task from [`docs/ROADMAP.md`](./docs/ROADMAP.md)** (follow its recommended
-  build order); read the `HISTORY_LAB_SPEC.md`/`UX_SPEC.md` section the task cites before
-  building. The old roadmap/UX docs in `docs/deprecate/` are history, not a task source.
-- **One task per PR.** Prefer iterative refinement over rewrites; preserve working code and tests.
-- **Keep docs in sync in the same PR:** if architecture drifts, update `docs/ARCHITECTURE.md`; if you
-  finish/advance a task, update its status + test totals in the new roadmap.
+- **Maintenance only — no new features.** Fix bugs, harden ops/infra, keep the live docs accurate. Prefer
+  the smallest change that fixes the issue. If a request would add a feature/screen/connector or resurrect
+  a retired roadmap item, **flag it** rather than building it.
+- **Prefer iterative refinement over rewrites;** preserve working code and tests.
+- **Keep the live docs in sync in the same PR:** if architecture drifts, update `docs/ARCHITECTURE.md`;
+  if deploy/ops change, update `docs/INFRA.md`. (There is no roadmap to update — it's retired.)
 - **Do:** tag every figure (source+as_of+next_update+freshness+confidence) · route all data through the
-  gateway · draw gaps & show freshness · show the guardrail label · reuse the manifest/catalog and the
-  prompt-import clone pattern.
+  gateway · draw gaps & show freshness · show the guardrail label · reuse the manifest/catalog.
 - **Don't:** build prediction/forecasting · expose unsourced numbers · call the data plane outside the
   gateway · put keys client-side · render the graph with DOM nodes · use a non-Gemini model · fork the
-  router/tenancy/schema.
+  router/tenancy/schema · **build new features (the product is feature-frozen).**

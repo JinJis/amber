@@ -208,5 +208,5 @@ RPO ≈ 24h(덤프 기준). 결제가 본격화되면 §8의 Cloud SQL(PITR)로 
 | 배포 자동화 필요 | build-push.sh를 Cloud Build/GH Actions CI로 이관 (AR는 이미 기본) | ~$0–10/mo |
 | 복원 드릴 실패/디스크 성장 | 디스크 리사이즈(온라인) 또는 관리형 DB 조기 이전 | 상황별 |
 
-관련: [SCALING_AUDIT](./SCALING_AUDIT.md)(열린 tail: CR-8/CR-11·HI-12·ME-13·ME-6),
-[USER_TODO](./USER_TODO.md) §1(오너 액션), [QUALITY_SPEC](./QUALITY_SPEC.md) §D(QG-14 PG 동시성).
+관련(모두 `docs/deprecate/`로 이관됨 — 참고용, 링크 없음): SCALING_AUDIT(열린 tail: CR-8/CR-11·HI-12·ME-13·ME-6),
+USER_TODO §1(오너 액션), QUALITY_SPEC §D(QG-14 PG 동시성).

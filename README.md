@@ -9,10 +9,10 @@ construction**, **pull→push**, and a **clone-from-others ecosystem**.
 > The legacy ValueGraph engine (`/services`, `/apps`, CVE, Deep-Research acquisition) has been removed —
 > not a dependency here.
 
-📖 **Docs** (read before building): the engineering rules + docs map live in the repo-root
-[`CLAUDE.md`](./CLAUDE.md). Plan/tasks: [`docs/ROADMAP.md`](./docs/ROADMAP.md). Current design:
-[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md). Retired specs are in
-[`docs/deprecate/`](./docs/deprecate/) — reference only.
+📖 **Docs**: the engineering rules + docs map live in the repo-root [`CLAUDE.md`](./CLAUDE.md). Current
+architecture: [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md); deploy/ops: [`docs/INFRA.md`](./docs/INFRA.md).
+**The product is feature-frozen** — the roadmap and every feature/UX/idea spec are retired to
+[`docs/deprecate/`](./docs/deprecate/) (reference/history only; don't build from them).
 
 ## Services
 
@@ -97,8 +97,7 @@ docker run --rm -v "$PWD/agent-engine:/app" -w /app ghcr.io/astral-sh/uv:python3
 ```
 
 **~900 unit/component tests** pass + the web build. The **quality eval** (`eval/run_eval.py`, LLM-judge
-rubric — see [`eval/RUBRIC.md`](./eval/RUBRIC.md)) runs before every push and must stay above the bar; every
-new tool / endpoint / feature adds a scenario. Per-service test totals live in `docs/ROADMAP.md` §13.
+rubric — see [`eval/RUBRIC.md`](./eval/RUBRIC.md)) runs before every push and must stay above the bar.
 
 The e2e harnesses:
 - **`e2e.sh`** — Gemini planner, the whole chain (catalog → tenant → entitlement → data plane + RAG via

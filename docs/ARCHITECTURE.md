@@ -1,7 +1,8 @@
 # Platform Architecture & Progress
 
 > Detailed design + current state of the **Investment-Agent Data Platform**.
-> Companion: [`ROADMAP.md`](./ROADMAP.md) (what's next). Entry point: [`../README.md`](../README.md).
+> Entry point: [`../README.md`](../README.md). (The product is feature-frozen — there is no active
+> roadmap; retired planning docs live in [`deprecate/`](./deprecate/).)
 
 ---
 
